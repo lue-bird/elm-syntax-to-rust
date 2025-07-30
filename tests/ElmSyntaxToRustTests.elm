@@ -100,7 +100,6 @@ elmModuleSourceTranspileToRust source =
                                         { pattern : ElmSyntaxToRust.RustPattern
                                         , type_ : ElmSyntaxToRust.RustType
                                         }
-                                , statements : List ElmSyntaxToRust.RustStatement
                                 , result : ElmSyntaxToRust.RustExpression
                                 , resultType : ElmSyntaxToRust.RustType
                                 }
