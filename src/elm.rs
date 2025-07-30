@@ -7,8 +7,8 @@ pub type StringString<'a> = &'a str;
 
 #[derive(Copy, Clone /*, Debug is implemented below */, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub enum ListListGuts<'a, A> {
-    ListEmpty,
-    ListCons(A, ListList<'a, A>),
+    Empty,
+    Cons(A, ListList<'a, A>),
 }
 pub type ListList<'a, A> = &'a ListListGuts<'a, A>;
 
@@ -20,8 +20,8 @@ impl<'a, A: Copy> Iterator for ListIterator<'a, A> {
     type Item = A; // it might be better to return &A
     fn next(&mut self) -> Option<Self::Item> {
         match self.remaining_list {
-            &ListListGuts::ListEmpty => Option::None,
-            &ListListGuts::ListCons(head, tail) => {
+            &ListListGuts::Empty => Option::None,
+            &ListListGuts::Cons(head, tail) => {
                 self.remaining_list = tail;
                 Option::Some(head)
             }
@@ -185,27 +185,27 @@ pub fn basics_never<A>(never: Never) -> A {
 
 pub fn list_is_empty<A: Copy>(list: ListList<A>) -> bool {
     match list {
-        &ListListGuts::ListEmpty => true,
-        &ListListGuts::ListCons(_, _) => false,
+        &ListListGuts::Empty => true,
+        &ListListGuts::Cons(_, _) => false,
     }
 }
 pub fn list_head<A: Copy>(list: ListList<A>) -> Option<A> {
     match list {
-        &ListListGuts::ListEmpty => Option::None,
-        &ListListGuts::ListCons(head, _) => Option::Some(head),
+        &ListListGuts::Empty => Option::None,
+        &ListListGuts::Cons(head, _) => Option::Some(head),
     }
 }
 pub fn list_tail<A: Copy>(list: ListList<A>) -> Option<ListList<A>> {
     match list {
-        &ListListGuts::ListEmpty => Option::None,
-        &ListListGuts::ListCons(_, tail) => Option::Some(tail),
+        &ListListGuts::Empty => Option::None,
+        &ListListGuts::Cons(_, tail) => Option::Some(tail),
     }
 }
 pub fn list_cons<'a, A>(allocator: &'a Bump, head: A, tail: ListList<'a, A>) -> ListList<'a, A> {
-    allocator.alloc(ListListGuts::ListCons(head, tail))
+    allocator.alloc(ListListGuts::Cons(head, tail))
 }
 pub fn list_singleton<'a, A>(allocator: &'a Bump, only_element: A) -> ListList<'a, A> {
-    list_cons(allocator, only_element, &ListListGuts::ListEmpty)
+    list_cons(allocator, only_element, &ListListGuts::Empty)
 }
 pub fn list_repeat<'a, A: Copy>(allocator: &'a Bump, count: f64, element: A) -> ListList<'a, A> {
     double_ended_iterator_to_list(allocator, std::iter::repeat_n(element, count as usize))
@@ -217,7 +217,7 @@ pub fn double_ended_iterator_to_list<'a, A: Copy, AIterator: DoubleEndedIterator
     allocator: &'a Bump,
     iterator: AIterator,
 ) -> ListList<'a, A> {
-    let mut list_so_far: ListList<A> = &ListListGuts::ListEmpty;
+    let mut list_so_far: ListList<A> = &ListListGuts::Empty;
     for element in iterator.rev() {
         list_so_far = list_cons(allocator, element, list_so_far)
     }
@@ -269,7 +269,7 @@ pub fn list_drop<'a, A: Copy>(skip_count: f64, list: ListList<'a, A>) -> ListLis
     let mut iterator = list.iter();
     for () in std::iter::repeat_n((), skip_count as usize) {
         match iterator.next() {
-            None => return &ListListGuts::ListEmpty,
+            None => return &ListListGuts::Empty,
             Some(_) => {}
         }
     }
@@ -281,8 +281,8 @@ pub fn list_intersperse<'a, A: Copy>(
     list: ListList<A>,
 ) -> ListList<'a, A> {
     match list {
-        &ListListGuts::ListEmpty => &ListListGuts::ListEmpty,
-        &ListListGuts::ListCons(head, tail) => list_cons(
+        &ListListGuts::Empty => &ListListGuts::Empty,
+        &ListListGuts::Cons(head, tail) => list_cons(
             allocator,
             head,
             iterator_to_list(
@@ -331,7 +331,7 @@ pub fn list_foldr<A: Copy, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) -
 }
 
 pub fn list_reverse<'a, A: Copy>(allocator: &'a Bump, list: ListList<A>) -> ListList<'a, A> {
-    let mut reverse_list: ListList<A> = &ListListGuts::ListEmpty;
+    let mut reverse_list: ListList<A> = &ListListGuts::Empty;
     for new_head in list.iter() {
         reverse_list = list_cons(allocator, new_head, reverse_list)
     }
@@ -425,8 +425,8 @@ pub fn list_unzip<'a, A: Copy, B: Copy>(
     allocator: &'a Bump,
     list: ListList<(A, B)>,
 ) -> (ListList<'a, A>, ListList<'a, B>) {
-    let mut a_list: ListList<A> = &ListListGuts::ListEmpty;
-    let mut b_list: ListList<B> = &ListListGuts::ListEmpty;
+    let mut a_list: ListList<A> = &ListListGuts::Empty;
+    let mut b_list: ListList<B> = &ListListGuts::Empty;
     for (next_last_a, next_last_b) in list.iter().collect::<Vec<(A, B)>>().into_iter().rev() {
         a_list = list_cons(allocator, next_last_a, a_list);
         b_list = list_cons(allocator, next_last_b, b_list)
@@ -1048,8 +1048,8 @@ pub fn string_join<'a>(
     segments: ListList<StringString>,
 ) -> StringString<'a> {
     match segments {
-        &ListListGuts::ListEmpty => &"",
-        &ListListGuts::ListCons(head_segment, tail_segments) => {
+        &ListListGuts::Empty => &"",
+        &ListListGuts::Cons(head_segment, tail_segments) => {
             let mut string_builder = head_segment.to_owned();
             for segment in tail_segments.iter() {
                 string_builder.push_str(in_between);

@@ -24,7 +24,6 @@ const elmString =
             defaultDeclarationsRustFile.length
         )
         .replaceAll("\\", "\\\\")
-        .replaceAll("\n    ", "\n")
         .trim()
     + "\n\"\"\""
 const defaultDeclarationsDeclarationStartIndex =

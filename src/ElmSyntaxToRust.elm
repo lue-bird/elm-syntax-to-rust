@@ -33,7 +33,8 @@ import Unicode
 {-| The sub-set of rust type syntax used in generated code
 -}
 type RustType
-    = RustTypeConstruct
+    = RustTypeUnit
+    | RustTypeConstruct
         { moduleOrigin : Maybe String
         , name : String
         , arguments : List RustType
@@ -64,12 +65,12 @@ type RustPattern
     | RustPatternUnicodeScalar Char
     | RustPatternStringLiteral String
     | RustPatternVariable String
-    | RustPatternRecord
-        -- invariant: cannot have exactly one entry
-        (FastDict.Dict String RustPattern)
+    | RustPatternAlias { variable : String, pattern : RustPattern }
+    | RustPatternRecord (FastDict.Dict String RustPattern)
     | RustPatternVariant
-        { originTypeName : String
+        { originTypeName : List String
         , name : String
+        , isReference : Bool
         , values : List { label : Maybe String, value : RustPattern }
         }
     | RustPatternTuple
@@ -82,17 +83,18 @@ type RustPattern
 {-| The sub-set of rust expression syntax used in generated code
 -}
 type RustExpression
-    = RustExpressionDouble Float
+    = RustExpressionUnit
+    | RustExpressionDouble Float
     | -- NUMBER currently represented as Double | RustExpressionInt64 Int
       RustExpressionUnicodeScalar Char
     | RustExpressionStringLiteral String
     | RustExpressionSelf
     | RustExpressionReference
-        { moduleOrigin : Maybe String
+        { qualification : List String
         , name : String
         }
     | RustExpressionVariant
-        { originTypeName : String
+        { originTypeName : List String
         , name : String
         }
     | RustExpressionNegateOperation RustExpression
@@ -111,26 +113,25 @@ type RustExpression
         { called : RustExpression
         , arguments :
             List
-                { label : Maybe String
+                { label : {- TODO remove -} Maybe String
                 , value : RustExpression
                 }
         }
     | RustExpressionLambda
         { parameters :
             List
-                { name : String
+                { {- TODO RustPattern -} name : String
                 , type_ : RustType
                 }
         , statements : List RustStatement
         , result : RustExpression
         }
-    | -- can only be used as expression in return, throw, or as the source of an assignment
-      RustExpressionIfElse
+    | RustExpressionIfElse
         { condition : RustExpression
         , onTrue : RustExpression
         , onFalse : RustExpression
         }
-    | -- can only be used as expression in return, throw, or as the source of an assignment
+    | -- TODO add RustExpressionWithLocalDeclarations, RustExpressionReference (&)
       RustExpressionSwitch
         { matched : RustExpression
         , case0 :
@@ -839,8 +840,8 @@ type_ typeAliasesInModule inferredType =
 rustTypeDouble : RustType
 rustTypeDouble =
     RustTypeConstruct
-        { moduleOrigin = rustReferenceDouble.moduleOrigin
-        , name = rustReferenceDouble.name
+        { moduleOrigin = rustReferenceF64.moduleOrigin
+        , name = rustReferenceF64.name
         , arguments = []
         , isFunction = False
         }
@@ -864,7 +865,7 @@ typeNotVariable typeAliasesInModule inferredTypeNotVariable =
     -- IGNORE TCO
     case inferredTypeNotVariable of
         ElmSyntaxTypeInfer.TypeUnit ->
-            rustTypeUnit
+            RustTypeUnit
 
         ElmSyntaxTypeInfer.TypeConstruct typeConstruct ->
             let
@@ -1016,6 +1017,9 @@ printRustTypeNotParenthesized : Maybe TypeIncomingOrOutgoing -> RustType -> Prin
 printRustTypeNotParenthesized position rustType =
     -- IGNORE TCO
     case rustType of
+        RustTypeUnit ->
+            Print.exactly "()"
+
         RustTypeVariable variable ->
             Print.exactly variable
 
@@ -1216,6 +1220,11 @@ rustTypeExpandFunctionIntoReverse soFarReverse rustType =
                 (function.input :: soFarReverse)
                 function.output
 
+        RustTypeUnit ->
+            { inputs = soFarReverse |> List.reverse
+            , output = RustTypeUnit
+            }
+
         RustTypeConstruct construct ->
             { inputs = soFarReverse |> List.reverse
             , output = RustTypeConstruct construct
@@ -1241,6 +1250,9 @@ rustTypeIsEquatable : RustType -> Bool
 rustTypeIsEquatable rustType =
     -- IGNORE TCO
     case rustType of
+        RustTypeUnit ->
+            True
+
         RustTypeFunction _ ->
             False
 
@@ -1258,7 +1270,7 @@ rustTypeIsEquatable rustType =
                                 "BytesDecode_Decoder" ->
                                     False
 
-                                "JsonDecode_Decoder" ->
+                                "json_decode_Decoder" ->
                                     False
 
                                 _ ->
@@ -1590,6 +1602,9 @@ printExactlyGreaterThan =
 typeIsSpaceSeparated : RustType -> Bool
 typeIsSpaceSeparated rustType =
     case rustType of
+        RustTypeUnit ->
+            False
+
         RustTypeVariable _ ->
             False
 
@@ -2076,14 +2091,10 @@ inferredPatternUntilAsPatterns patternTypedNode =
                     parts.part2 |> inferredPatternUntilAsPatterns
             in
             { pattern =
-                RustPatternVariant
-                    { originTypeName = "Triple"
-                    , name = "Triple"
-                    , values =
-                        [ { label = Nothing, value = part0.pattern }
-                        , { label = Nothing, value = part1.pattern }
-                        , { label = Nothing, value = part2.pattern }
-                        ]
+                RustPatternTuple
+                    { part0 = part0.pattern
+                    , part1 = part1.pattern
+                    , part2Up = [ part2.pattern ]
                     }
             , patternAliases =
                 part0.patternAliases
@@ -2185,11 +2196,10 @@ inferredPatternUntilAsPatterns patternTypedNode =
                         fieldsDictEmptyIntroducedVariablesDictEmpty
             in
             { pattern =
-                RustPatternVariant
+                Debug.todo "RustPatternRecord"
                     { originTypeName =
                         generatedRecordTypeName
                             (combinedFieldNames.fields |> FastDict.keys)
-                    , name = "Record"
                     , values =
                         combinedFieldNames.fields
                             |> FastDict.foldr
@@ -2268,20 +2278,25 @@ inferredPatternUntilAsPatterns patternTypedNode =
 
                 Nothing ->
                     let
-                        reference : { moduleOrigin : Maybe String, name : String }
+                        reference : { originTypeName : List String, name : String, isReference : Bool }
                         reference =
                             case
                                 { moduleOrigin = variant.moduleOrigin
                                 , name = variant.name
                                 , type_ = patternTypedNode.type_
                                 }
-                                    |> referenceToCoreRust
+                                    |> variantToCoreRust
                             of
                                 Just rustReference ->
                                     rustReference
 
                                 Nothing ->
-                                    { moduleOrigin = Nothing
+                                    { originTypeName =
+                                        [ (variant.moduleOrigin |> String.replace "." "")
+                                            ++ (variant.choiceTypeName |> stringFirstCharToUpper)
+                                            |> normalizeToRustPascalCase
+                                        ]
+                                    , isReference = True
                                     , name =
                                         referenceToRustName
                                             { moduleOrigin = variant.moduleOrigin
@@ -2297,11 +2312,9 @@ inferredPatternUntilAsPatterns patternTypedNode =
                     in
                     { pattern =
                         RustPatternVariant
-                            { originTypeName =
-                                (variant.moduleOrigin |> String.replace "." "")
-                                    ++ "_"
-                                    ++ variant.choiceTypeName
+                            { originTypeName = reference.originTypeName
                             , name = reference.name
+                            , isReference = reference.isReference
                             , values =
                                 values
                                     |> List.map
@@ -2329,11 +2342,31 @@ inferredPatternUntilAsPatterns patternTypedNode =
             }
 
 
+normalizeToRustPascalCase : String -> String
+normalizeToRustPascalCase name =
+    -- TODO disambiguate?
+    name
+        |> String.split "_"
+        |> List.map stringFirstCharToUpper
+        |> String.concat
+
+
+stringFirstCharToUpper : String -> String
+stringFirstCharToUpper string =
+    case string |> String.uncons of
+        Nothing ->
+            ""
+
+        Just ( firstChar, tail ) ->
+            String.cons (firstChar |> Char.toUpper) tail
+
+
 rustPatternListEmpty : RustPattern
 rustPatternListEmpty =
     RustPatternVariant
-        { originTypeName = "List_List"
-        , name = "List_Empty"
+        { originTypeName = [ "ListListGuts" ]
+        , name = "Empty"
+        , isReference = True
         , values = []
         }
 
@@ -2341,8 +2374,9 @@ rustPatternListEmpty =
 rustPatternListCons : RustPattern -> RustPattern -> RustPattern
 rustPatternListCons head tail =
     RustPatternVariant
-        { originTypeName = "List_List"
-        , name = "List_Cons"
+        { originTypeName = [ "ListListGuts" ]
+        , name = "Cons"
+        , isReference = True
         , values =
             [ { label = Nothing, value = head }
             , { label = Nothing, value = tail }
@@ -2468,7 +2502,7 @@ destructuringToRustAssignmentStatements context toDestructure =
                         destructuringToRustAssignmentStatements context
                             { expression =
                                 RustExpressionReference
-                                    { moduleOrigin = Nothing
+                                    { qualification = []
                                     , name = variableAsPatternAlias.variable
                                     }
                             , pattern = variableAsPatternAlias.pattern
@@ -2485,7 +2519,7 @@ destructuringToRustAssignmentStatements context toDestructure =
                             { name = introducedVariableName
                             , assignedValue =
                                 RustExpressionReference
-                                    { moduleOrigin = Nothing
+                                    { qualification = []
                                     , name =
                                         generatedDestructuringVariableNameFor
                                             introducedVariableName
@@ -2549,6 +2583,10 @@ rustPatternIntroducedVariables rustPattern =
         RustPatternVariable variable ->
             [ variable ]
 
+        RustPatternAlias rustPatternAlias ->
+            rustPatternAlias.variable
+                :: (rustPatternAlias.pattern |> rustPatternIntroducedVariables)
+
         RustPatternTuple partPatterns ->
             (partPatterns.part0 |> rustPatternIntroducedVariables)
                 ++ (partPatterns.part1 |> rustPatternIntroducedVariables)
@@ -2583,6 +2621,12 @@ rustPatternAlterVariables variableNameChange rustPattern =
         RustPatternVariable variable ->
             RustPatternVariable (variable |> variableNameChange)
 
+        RustPatternAlias rustPatternAlias ->
+            RustPatternAlias
+                { variable = rustPatternAlias.variable |> variableNameChange
+                , pattern = rustPatternAlias.pattern |> rustPatternAlterVariables variableNameChange
+                }
+
         RustPatternBool _ ->
             rustPattern
 
@@ -2608,6 +2652,7 @@ rustPatternAlterVariables variableNameChange rustPattern =
             RustPatternVariant
                 { originTypeName = variant.originTypeName
                 , name = variant.name
+                , isReference = variant.isReference
                 , values =
                     variant.values
                         |> List.map
@@ -2633,49 +2678,11 @@ rustPatternAlterVariables variableNameChange rustPattern =
                 }
 
 
-{-| Only a subset of rust patterns can be used for destructuring values in simple variable, constant, and optional bindings.
-These include wildcard patterns, identifier patterns, and any value binding or tuple patterns containing them.
-
-Most importantly, they do not allow single-variant destructuring like `.NonEmptyList(head, tail)`
-(note that single-`case` `switch` does allow it, ugh).
-
+{-| TODO replace by True
 -}
 rustPatternCanBeUsedInRustDestructuring : RustPattern -> Bool
 rustPatternCanBeUsedInRustDestructuring rustPattern =
-    -- IGNORE TCO
-    case rustPattern of
-        RustPatternBool _ ->
-            False
-
-        RustPatternIgnore ->
-            True
-
-        RustPatternInteger _ ->
-            False
-
-        RustPatternUnicodeScalar _ ->
-            False
-
-        RustPatternStringLiteral _ ->
-            False
-
-        RustPatternVariable _ ->
-            True
-
-        RustPatternRecord fields ->
-            fields
-                |> fastDictAll
-                    (\_ fieldValue ->
-                        fieldValue |> rustPatternCanBeUsedInRustDestructuring
-                    )
-
-        RustPatternVariant _ ->
-            False
-
-        RustPatternTuple parts ->
-            (parts.part0 |> rustPatternCanBeUsedInRustDestructuring)
-                && (parts.part1 |> rustPatternCanBeUsedInRustDestructuring)
-                && (parts.part2Up |> List.all rustPatternCanBeUsedInRustDestructuring)
+    True
 
 
 casePattern :
@@ -2696,6 +2703,7 @@ casePattern patternInferred =
 
 
 casePatternInPath :
+    {- TODO unnecessary -}
     List String
     ->
         ElmSyntaxTypeInfer.TypedNode
@@ -2703,7 +2711,8 @@ casePatternInPath :
     ->
         { pattern : RustPattern
         , introducedVariables : FastSet.Set String
-        , variableAsPatternAliases :
+        , -- TODO remove
+          variableAsPatternAliases :
             FastDict.Dict
                 String
                 { pattern : RustPattern
@@ -2935,20 +2944,8 @@ casePatternInPath path patternInferred =
                         fieldsDictEmptyIntroducedVariablesDictEmpty
             in
             { pattern =
-                RustPatternVariant
-                    { originTypeName =
-                        generatedRecordTypeName
-                            (combinedFieldNames.fields |> FastDict.keys)
-                    , name = "Record"
-                    , values =
-                        combinedFieldNames.fields
-                            |> FastDict.foldr
-                                (\fieldName fieldValue soFar ->
-                                    { label = Just fieldName, value = fieldValue }
-                                        :: soFar
-                                )
-                                []
-                    }
+                RustPatternRecord
+                    combinedFieldNames.fields
             , introducedVariables = combinedFieldNames.introducedVariables
             , variableAsPatternAliases = FastDict.empty
             }
@@ -3056,25 +3053,28 @@ casePatternInPath path patternInferred =
 
                 Nothing ->
                     let
-                        reference : { moduleOrigin : Maybe String, name : String }
+                        reference : { originTypeName : List String, name : String, isReference : Bool }
                         reference =
                             case
                                 { moduleOrigin = variant.moduleOrigin
                                 , name = variant.name
                                 , type_ = patternInferred.type_
                                 }
-                                    |> referenceToCoreRust
+                                    |> variantToCoreRust
                             of
                                 Just rustReference ->
                                     rustReference
 
                                 Nothing ->
-                                    { moduleOrigin = Nothing
+                                    { originTypeName =
+                                        [ (variant.moduleOrigin |> String.replace "." "")
+                                            ++ "_"
+                                            ++ variant.choiceTypeName
+                                            ++ "Guts"
+                                        ]
                                     , name =
-                                        referenceToRustName
-                                            { moduleOrigin = variant.moduleOrigin
-                                            , name = variant.name
-                                            }
+                                        normalizeToRustPascalCase variant.name
+                                    , isReference = True
                                     }
 
                         values :
@@ -3097,11 +3097,9 @@ casePatternInPath path patternInferred =
                     in
                     { pattern =
                         RustPatternVariant
-                            { originTypeName =
-                                (variant.moduleOrigin |> String.replace "." "")
-                                    ++ "_"
-                                    ++ variant.choiceTypeName
+                            { originTypeName = reference.originTypeName
                             , name = reference.name
+                            , isReference = reference.isReference
                             , values =
                                 values
                                     |> List.map
@@ -3130,9 +3128,13 @@ casePatternInPath path patternInferred =
                             }
                     }
                 aliasedPattern =
-                    patternAs.pattern |> patternFillingOutIgnoredPartsWithNewVariables path
+                    patternAs.pattern |> casePatternInPath path
             in
-            { pattern = aliasedPattern.pattern
+            { pattern =
+                RustPatternAlias
+                    { variable = patternAs.variable.value
+                    , pattern = aliasedPattern.pattern
+                    }
             , introducedVariables =
                 aliasedPattern.introducedVariables
                     |> FastSet.insert patternAs.variable.value
@@ -3148,524 +3150,40 @@ casePatternInPath path patternInferred =
 
 rustPatternVariantTuple : RustPattern -> RustPattern -> RustPattern
 rustPatternVariantTuple part0 part1 =
-    RustPatternVariant
-        { originTypeName = "Tuple"
-        , name = "Tuple"
-        , values =
-            [ { label = Nothing, value = part0 }
-            , { label = Nothing, value = part1 }
-            ]
+    RustPatternTuple
+        { part0 = part0
+        , part1 = part1
+        , part2Up = []
         }
 
 
 rustPatternVariantTriple : RustPattern -> RustPattern -> RustPattern -> RustPattern
 rustPatternVariantTriple part0 part1 part2 =
-    RustPatternVariant
-        { originTypeName = "Triple"
-        , name = "Triple"
-        , values =
-            [ { label = Nothing, value = part0 }
-            , { label = Nothing, value = part1 }
-            , { label = Nothing, value = part2 }
-            ]
+    RustPatternTuple
+        { part0 = part0
+        , part1 = part1
+        , part2Up = [ part2 ]
         }
 
 
 rustExpressionCallTuple : RustExpression -> RustExpression -> RustExpression
 rustExpressionCallTuple part0 part1 =
-    RustExpressionCall
-        { called =
-            RustExpressionVariant
-                { originTypeName = "Tuple"
-                , name = "Tuple"
-                }
-        , arguments =
-            [ { label = Nothing, value = part0 }
-            , { label = Nothing, value = part1 }
-            ]
+    RustExpressionTuple
+        { part0 = part0
+        , part1 = part1
+        , part2Up = []
         }
 
 
+{-| TODO inline in uses
+-}
 rustExpressionCallTriple : RustExpression -> RustExpression -> RustExpression -> RustExpression
 rustExpressionCallTriple part0 part1 part2 =
-    RustExpressionCall
-        { called =
-            RustExpressionVariant
-                { originTypeName = "Triple"
-                , name = "Triple"
-                }
-        , arguments =
-            [ { label = Nothing, value = part0 }
-            , { label = Nothing, value = part1 }
-            , { label = Nothing, value = part2 }
-            ]
+    RustExpressionTuple
+        { part0 = part0
+        , part1 = part1
+        , part2Up = [ part2 ]
         }
-
-
-generatedRustFillingOutVariableAtPath : List String -> String
-generatedRustFillingOutVariableAtPath path =
-    "generated_" ++ (path |> String.join "_")
-
-
-patternFillingOutIgnoredPartsWithNewVariables :
-    List String
-    ->
-        ElmSyntaxTypeInfer.TypedNode
-            ElmSyntaxTypeInfer.Pattern
-    ->
-        { pattern : RustPattern
-        , introducedVariables : FastSet.Set String
-        , variableAsPatternAliases :
-            FastDict.Dict
-                String
-                { pattern : RustPattern
-                , type_ : ElmSyntaxTypeInfer.Type
-                }
-        }
-patternFillingOutIgnoredPartsWithNewVariables path patternInferred =
-    -- IGNORE TCO
-    case patternInferred.value of
-        ElmSyntaxTypeInfer.PatternIgnored ->
-            { pattern = RustPatternVariable (generatedRustFillingOutVariableAtPath path)
-            , introducedVariables = FastSet.empty
-            , variableAsPatternAliases = FastDict.empty
-            }
-
-        ElmSyntaxTypeInfer.PatternUnit ->
-            rustPatternIgnoreIntroducedVariablesSetEmptyVariableAsPatternAliasesDictEmpty
-
-        ElmSyntaxTypeInfer.PatternChar charValue ->
-            { pattern = RustPatternUnicodeScalar charValue
-            , introducedVariables = FastSet.empty
-            , variableAsPatternAliases = FastDict.empty
-            }
-
-        ElmSyntaxTypeInfer.PatternString stringValue ->
-            { pattern = RustPatternStringLiteral stringValue
-            , introducedVariables = FastSet.empty
-            , variableAsPatternAliases = FastDict.empty
-            }
-
-        ElmSyntaxTypeInfer.PatternInt intValue ->
-            { pattern = RustPatternInteger intValue.value
-            , introducedVariables = FastSet.empty
-            , variableAsPatternAliases = FastDict.empty
-            }
-
-        ElmSyntaxTypeInfer.PatternVariable variableName ->
-            { pattern =
-                RustPatternVariable
-                    (variableName |> variableNameDisambiguateFromRustKeywords)
-            , introducedVariables =
-                FastSet.singleton variableName
-            , variableAsPatternAliases = FastDict.empty
-            }
-
-        ElmSyntaxTypeInfer.PatternParenthesized inParens ->
-            patternFillingOutIgnoredPartsWithNewVariables path inParens
-
-        ElmSyntaxTypeInfer.PatternTuple parts ->
-            let
-                part0 :
-                    { pattern : RustPattern
-                    , introducedVariables : FastSet.Set String
-                    , variableAsPatternAliases :
-                        FastDict.Dict
-                            String
-                            { pattern : RustPattern
-                            , type_ : ElmSyntaxTypeInfer.Type
-                            }
-                    }
-                part0 =
-                    parts.part0 |> patternFillingOutIgnoredPartsWithNewVariables ("0" :: path)
-
-                part1 :
-                    { pattern : RustPattern
-                    , introducedVariables : FastSet.Set String
-                    , variableAsPatternAliases :
-                        FastDict.Dict
-                            String
-                            { pattern : RustPattern
-                            , type_ : ElmSyntaxTypeInfer.Type
-                            }
-                    }
-                part1 =
-                    parts.part1 |> patternFillingOutIgnoredPartsWithNewVariables ("1" :: path)
-            in
-            { pattern =
-                rustPatternVariantTuple part0.pattern part1.pattern
-            , introducedVariables =
-                FastSet.union
-                    part0.introducedVariables
-                    part1.introducedVariables
-            , variableAsPatternAliases =
-                part0.variableAsPatternAliases
-                    |> FastDict.union part1.variableAsPatternAliases
-            }
-
-        ElmSyntaxTypeInfer.PatternTriple parts ->
-            let
-                part0 :
-                    { pattern : RustPattern
-                    , introducedVariables : FastSet.Set String
-                    , variableAsPatternAliases :
-                        FastDict.Dict
-                            String
-                            { pattern : RustPattern
-                            , type_ : ElmSyntaxTypeInfer.Type
-                            }
-                    }
-                part0 =
-                    parts.part0 |> patternFillingOutIgnoredPartsWithNewVariables ("0" :: path)
-
-                part1 :
-                    { pattern : RustPattern
-                    , introducedVariables : FastSet.Set String
-                    , variableAsPatternAliases :
-                        FastDict.Dict
-                            String
-                            { pattern : RustPattern
-                            , type_ : ElmSyntaxTypeInfer.Type
-                            }
-                    }
-                part1 =
-                    parts.part1 |> patternFillingOutIgnoredPartsWithNewVariables ("1" :: path)
-
-                part2 :
-                    { pattern : RustPattern
-                    , introducedVariables : FastSet.Set String
-                    , variableAsPatternAliases :
-                        FastDict.Dict
-                            String
-                            { pattern : RustPattern
-                            , type_ : ElmSyntaxTypeInfer.Type
-                            }
-                    }
-                part2 =
-                    parts.part2 |> patternFillingOutIgnoredPartsWithNewVariables ("2" :: path)
-            in
-            { pattern =
-                rustPatternVariantTriple part0.pattern part1.pattern part2.pattern
-            , introducedVariables =
-                part0.introducedVariables
-                    |> FastSet.union part1.introducedVariables
-                    |> FastSet.union part2.introducedVariables
-            , variableAsPatternAliases =
-                part0.variableAsPatternAliases
-                    |> FastDict.union part1.variableAsPatternAliases
-                    |> FastDict.union part2.variableAsPatternAliases
-            }
-
-        ElmSyntaxTypeInfer.PatternRecord patternFields ->
-            let
-                allFields : FastDict.Dict String ElmSyntaxTypeInfer.Type
-                allFields =
-                    case patternInferred.type_ of
-                        ElmSyntaxTypeInfer.TypeVariable _ ->
-                            FastDict.empty
-
-                        ElmSyntaxTypeInfer.TypeNotVariable patternTypeNotVariable ->
-                            case patternTypeNotVariable of
-                                ElmSyntaxTypeInfer.TypeUnit ->
-                                    FastDict.empty
-
-                                ElmSyntaxTypeInfer.TypeConstruct _ ->
-                                    FastDict.empty
-
-                                ElmSyntaxTypeInfer.TypeTuple _ ->
-                                    FastDict.empty
-
-                                ElmSyntaxTypeInfer.TypeTriple _ ->
-                                    FastDict.empty
-
-                                ElmSyntaxTypeInfer.TypeRecord patternTypeRecordFields ->
-                                    patternTypeRecordFields
-
-                                ElmSyntaxTypeInfer.TypeRecordExtension _ ->
-                                    FastDict.empty
-
-                                ElmSyntaxTypeInfer.TypeFunction _ ->
-                                    FastDict.empty
-
-                combinedFieldNames :
-                    { fields : FastDict.Dict String RustPattern
-                    , introducedVariables : FastSet.Set String
-                    }
-                combinedFieldNames =
-                    FastDict.merge
-                        (\fieldName _ soFar ->
-                            { fields =
-                                soFar.fields
-                                    |> FastDict.insert
-                                        (fieldName |> variableNameDisambiguateFromRustKeywords)
-                                        (RustPatternVariable
-                                            (generatedRustFillingOutVariableAtPath
-                                                (fieldName :: path)
-                                            )
-                                        )
-                            , introducedVariables =
-                                soFar.introducedVariables
-                            }
-                        )
-                        (\fieldName _ () soFar ->
-                            let
-                                disambiguatedFieldName : String
-                                disambiguatedFieldName =
-                                    fieldName |> variableNameDisambiguateFromRustKeywords
-                            in
-                            { fields =
-                                soFar.fields
-                                    |> FastDict.insert
-                                        disambiguatedFieldName
-                                        (RustPatternVariable
-                                            disambiguatedFieldName
-                                        )
-                            , introducedVariables =
-                                soFar.introducedVariables
-                                    |> FastSet.insert fieldName
-                            }
-                        )
-                        (\fieldName () soFar ->
-                            let
-                                disambiguatedFieldName : String
-                                disambiguatedFieldName =
-                                    fieldName |> variableNameDisambiguateFromRustKeywords
-                            in
-                            { fields =
-                                soFar.fields
-                                    |> FastDict.insert
-                                        disambiguatedFieldName
-                                        (RustPatternVariable
-                                            disambiguatedFieldName
-                                        )
-                            , introducedVariables =
-                                soFar.introducedVariables
-                                    |> FastSet.insert fieldName
-                            }
-                        )
-                        allFields
-                        (patternFields
-                            |> List.foldl
-                                (\fieldNameTypedNode soFar ->
-                                    soFar |> FastDict.insert fieldNameTypedNode.value ()
-                                )
-                                FastDict.empty
-                        )
-                        fieldsDictEmptyIntroducedVariablesDictEmpty
-            in
-            { pattern =
-                RustPatternVariant
-                    { originTypeName =
-                        generatedRecordTypeName
-                            (combinedFieldNames.fields |> FastDict.keys)
-                    , name = "Record"
-                    , values =
-                        combinedFieldNames.fields
-                            |> FastDict.foldr
-                                (\fieldName fieldValue soFar ->
-                                    { label = Just fieldName, value = fieldValue }
-                                        :: soFar
-                                )
-                                []
-                    }
-            , introducedVariables = combinedFieldNames.introducedVariables
-            , variableAsPatternAliases = FastDict.empty
-            }
-
-        ElmSyntaxTypeInfer.PatternListCons listCons ->
-            let
-                head :
-                    { pattern : RustPattern
-                    , introducedVariables : FastSet.Set String
-                    , variableAsPatternAliases :
-                        FastDict.Dict
-                            String
-                            { pattern : RustPattern
-                            , type_ : ElmSyntaxTypeInfer.Type
-                            }
-                    }
-                head =
-                    listCons.head |> patternFillingOutIgnoredPartsWithNewVariables ("head" :: path)
-
-                tail :
-                    { pattern : RustPattern
-                    , introducedVariables : FastSet.Set String
-                    , variableAsPatternAliases :
-                        FastDict.Dict
-                            String
-                            { pattern : RustPattern
-                            , type_ : ElmSyntaxTypeInfer.Type
-                            }
-                    }
-                tail =
-                    listCons.tail |> patternFillingOutIgnoredPartsWithNewVariables ("tail" :: path)
-            in
-            { pattern =
-                rustPatternListCons head.pattern tail.pattern
-            , introducedVariables =
-                FastSet.union
-                    head.introducedVariables
-                    tail.introducedVariables
-            , variableAsPatternAliases =
-                head.variableAsPatternAliases
-                    |> FastDict.union tail.variableAsPatternAliases
-            }
-
-        ElmSyntaxTypeInfer.PatternListExact elementPatterns ->
-            let
-                elements :
-                    List
-                        { pattern : RustPattern
-                        , introducedVariables : FastSet.Set String
-                        , variableAsPatternAliases :
-                            FastDict.Dict
-                                String
-                                { pattern : RustPattern
-                                , type_ : ElmSyntaxTypeInfer.Type
-                                }
-                        }
-                elements =
-                    elementPatterns
-                        |> List.indexedMap
-                            (\elementIndex element ->
-                                element |> patternFillingOutIgnoredPartsWithNewVariables ((elementIndex |> String.fromInt) :: path)
-                            )
-            in
-            { pattern =
-                elements
-                    |> List.foldr
-                        (\element soFar ->
-                            rustPatternListCons element.pattern soFar
-                        )
-                        rustPatternListEmpty
-            , introducedVariables =
-                elements
-                    |> listMapToFastSetsAndUnify .introducedVariables
-            , variableAsPatternAliases =
-                elements
-                    |> listMapToFastDictsAndUnify
-                        .variableAsPatternAliases
-            }
-
-        ElmSyntaxTypeInfer.PatternVariant variant ->
-            let
-                asBool : Maybe Bool
-                asBool =
-                    case variant.moduleOrigin of
-                        "Basics" ->
-                            case variant.name of
-                                "True" ->
-                                    Just True
-
-                                "False" ->
-                                    Just False
-
-                                _ ->
-                                    Nothing
-
-                        _ ->
-                            Nothing
-            in
-            case asBool of
-                Just bool ->
-                    { pattern = RustPatternBool bool
-                    , introducedVariables = FastSet.empty
-                    , variableAsPatternAliases = FastDict.empty
-                    }
-
-                Nothing ->
-                    let
-                        values :
-                            List
-                                { pattern : RustPattern
-                                , introducedVariables : FastSet.Set String
-                                , variableAsPatternAliases :
-                                    FastDict.Dict
-                                        String
-                                        { pattern : RustPattern
-                                        , type_ : ElmSyntaxTypeInfer.Type
-                                        }
-                                }
-                        values =
-                            variant.values
-                                |> List.indexedMap
-                                    (\valueIndex value ->
-                                        value |> patternFillingOutIgnoredPartsWithNewVariables ((valueIndex |> String.fromInt) :: path)
-                                    )
-
-                        reference : { moduleOrigin : Maybe String, name : String }
-                        reference =
-                            case
-                                { moduleOrigin = variant.moduleOrigin
-                                , name = variant.name
-                                , type_ = patternInferred.type_
-                                }
-                                    |> referenceToCoreRust
-                            of
-                                Just rustReference ->
-                                    rustReference
-
-                                Nothing ->
-                                    { moduleOrigin = Nothing
-                                    , name =
-                                        referenceToRustName
-                                            { moduleOrigin = variant.moduleOrigin
-                                            , name = variant.name
-                                            }
-                                    }
-                    in
-                    { pattern =
-                        RustPatternVariant
-                            { originTypeName =
-                                (variant.moduleOrigin |> String.replace "." "")
-                                    ++ "_"
-                                    ++ variant.choiceTypeName
-                            , name = reference.name
-                            , values =
-                                values
-                                    |> List.map
-                                        (\value ->
-                                            { label = Nothing, value = value.pattern }
-                                        )
-                            }
-                    , introducedVariables =
-                        values
-                            |> listMapToFastSetsAndUnify .introducedVariables
-                    , variableAsPatternAliases =
-                        values
-                            |> listMapToFastDictsAndUnify .variableAsPatternAliases
-                    }
-
-        ElmSyntaxTypeInfer.PatternAs patternAs ->
-            let
-                aliasedPattern :
-                    { pattern : RustPattern
-                    , introducedVariables : FastSet.Set String
-                    , variableAsPatternAliases :
-                        FastDict.Dict
-                            String
-                            { pattern : RustPattern
-                            , type_ : ElmSyntaxTypeInfer.Type
-                            }
-                    }
-                aliasedPattern =
-                    patternAs.pattern |> patternFillingOutIgnoredPartsWithNewVariables path
-
-                variableDisambiguated : String
-                variableDisambiguated =
-                    patternAs.variable.value |> variableNameDisambiguateFromRustKeywords
-            in
-            { pattern = aliasedPattern.pattern
-            , introducedVariables =
-                aliasedPattern.introducedVariables
-                    |> FastSet.insert variableDisambiguated
-            , variableAsPatternAliases =
-                aliasedPattern.variableAsPatternAliases
-                    |> FastDict.insert variableDisambiguated
-                        { pattern = aliasedPattern.pattern
-                        , type_ = patternAs.pattern.type_
-                        }
-            }
 
 
 fieldsDictEmptyIntroducedVariablesDictEmpty :
@@ -3709,17 +3227,17 @@ typeConstructReferenceToCoreRust reference =
         "Basics" ->
             case reference.name of
                 "Order" ->
-                    Just { moduleOrigin = Nothing, name = "Basics_Order" }
+                    Just { moduleOrigin = Just "std::cmp", name = "Ordering" }
 
                 "Bool" ->
-                    Just { moduleOrigin = Nothing, name = "Bool" }
+                    Just { moduleOrigin = Nothing, name = "bool" }
 
                 "Int" ->
                     -- NUMBER currently Int is treated as Float
-                    justRustReferenceDouble
+                    justRustReferenceF64
 
                 "Float" ->
-                    justRustReferenceDouble
+                    justRustReferenceF64
 
                 "Never" ->
                     Just { moduleOrigin = Nothing, name = "Never" }
@@ -3733,7 +3251,7 @@ typeConstructReferenceToCoreRust reference =
 
         "Char" ->
             -- "Char" is the only possible reference.name
-            justRustReferenceUnicodeScalar
+            justRustReferenceChar
 
         "List" ->
             -- "List" is the only possible reference.name
@@ -3761,18 +3279,18 @@ typeConstructReferenceToCoreRust reference =
 
         "Json.Encode" ->
             -- "Value" is the only possible reference.name
-            Just { moduleOrigin = Nothing, name = "JsonEncode_Value" }
+            Just { moduleOrigin = Nothing, name = "json_encode_Value" }
 
         "Json.Decode" ->
             case reference.name of
                 "Value" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_Value" }
+                    Just { moduleOrigin = Nothing, name = "json_decode_Value" }
 
                 "Decoder" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_Decoder" }
+                    Just { moduleOrigin = Nothing, name = "json_decode_Decoder" }
 
                 "Error" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_Error" }
+                    Just { moduleOrigin = Nothing, name = "json_decode_Error" }
 
                 _ ->
                     Nothing
@@ -3780,13 +3298,13 @@ typeConstructReferenceToCoreRust reference =
         "Regex" ->
             case reference.name of
                 "Regex" ->
-                    Just { moduleOrigin = Nothing, name = "Regex_Regex" }
+                    Just { moduleOrigin = Nothing, name = "regex_Regex" }
 
                 "Options" ->
-                    Just { moduleOrigin = Nothing, name = "Regex_Options" }
+                    Just { moduleOrigin = Nothing, name = "regex_Options" }
 
                 "Match" ->
-                    Just { moduleOrigin = Nothing, name = "Regex_Match" }
+                    Just { moduleOrigin = Nothing, name = "regex_Match" }
 
                 _ ->
                     Nothing
@@ -3794,10 +3312,10 @@ typeConstructReferenceToCoreRust reference =
         "Random" ->
             case reference.name of
                 "Seed" ->
-                    Just { moduleOrigin = Nothing, name = "Random_Seed" }
+                    Just { moduleOrigin = Nothing, name = "random_Seed" }
 
                 "Generator" ->
-                    Just { moduleOrigin = Nothing, name = "Random_Generator" }
+                    Just { moduleOrigin = Nothing, name = "random_Generator" }
 
                 _ ->
                     Nothing
@@ -3805,19 +3323,19 @@ typeConstructReferenceToCoreRust reference =
         "Time" ->
             case reference.name of
                 "Posix" ->
-                    Just { moduleOrigin = Nothing, name = "Time_Posix" }
+                    Just { moduleOrigin = Nothing, name = "time_Posix" }
 
                 "Zone" ->
-                    Just { moduleOrigin = Nothing, name = "Time_Zone" }
+                    Just { moduleOrigin = Nothing, name = "time_Zone" }
 
                 "Month" ->
-                    Just { moduleOrigin = Nothing, name = "Time_Month" }
+                    Just { moduleOrigin = Nothing, name = "time_Month" }
 
                 "Weekday" ->
-                    Just { moduleOrigin = Nothing, name = "Time_Weekday" }
+                    Just { moduleOrigin = Nothing, name = "time_Weekday" }
 
-                "Time_ZoneName" ->
-                    Just { moduleOrigin = Nothing, name = "Time_ZoneName" }
+                "time_ZoneName" ->
+                    Just { moduleOrigin = Nothing, name = "time_ZoneName" }
 
                 _ ->
                     Nothing
@@ -3911,14 +3429,14 @@ typeConstructReferenceToCoreRust reference =
             Nothing
 
 
-justRustReferenceDouble : Maybe { moduleOrigin : Maybe String, name : String }
-justRustReferenceDouble =
-    Just rustReferenceDouble
+justRustReferenceF64 : Maybe { moduleOrigin : Maybe String, name : String }
+justRustReferenceF64 =
+    Just rustReferenceF64
 
 
-rustReferenceDouble : { moduleOrigin : Maybe String, name : String }
-rustReferenceDouble =
-    { moduleOrigin = Nothing, name = "Double" }
+rustReferenceF64 : { moduleOrigin : Maybe String, name : String }
+rustReferenceF64 =
+    { moduleOrigin = Nothing, name = "f64" }
 
 
 justRustReferenceString : Maybe { moduleOrigin : Maybe String, name : String }
@@ -3926,14 +3444,14 @@ justRustReferenceString =
     Just { moduleOrigin = Nothing, name = "String" }
 
 
-justRustReferenceUnicodeScalar : Maybe { moduleOrigin : Maybe String, name : String }
-justRustReferenceUnicodeScalar =
-    Just { moduleOrigin = Nothing, name = "UnicodeScalar" }
+justRustReferenceChar : Maybe { moduleOrigin : Maybe String, name : String }
+justRustReferenceChar =
+    Just { moduleOrigin = Nothing, name = "char" }
 
 
 justRustReferenceListList : Maybe { moduleOrigin : Maybe String, name : String }
 justRustReferenceListList =
-    Just { moduleOrigin = Nothing, name = "List_List" }
+    Just { moduleOrigin = Nothing, name = "list_List" }
 
 
 justRustReferenceMaybeMaybe : Maybe { moduleOrigin : Maybe String, name : String }
@@ -3946,7 +3464,97 @@ justRustReferenceResultResult =
     Just { moduleOrigin = Nothing, name = "Result_Result" }
 
 
+variantToCoreRust :
+    { moduleOrigin : String
+    , name : String
+    , type_ : ElmSyntaxTypeInfer.Type
+    }
+    ->
+        Maybe
+            { originTypeName : List String
+            , name : String
+            , isReference : Bool
+            }
+variantToCoreRust reference =
+    case reference.moduleOrigin of
+        "Basics" ->
+            case reference.name of
+                "LT" ->
+                    Just { originTypeName = [ "std", "cmp", "Ordering" ], name = "Less", isReference = False }
+
+                "EQ" ->
+                    Just { originTypeName = [ "std", "cmp", "Ordering" ], name = "Equal", isReference = False }
+
+                "GT" ->
+                    Just { originTypeName = [ "std", "cmp", "Ordering" ], name = "Greater", isReference = False }
+
+                "True" ->
+                    Just { originTypeName = [], name = "true", isReference = False }
+
+                "False" ->
+                    Just { originTypeName = [], name = "false", isReference = False }
+
+                _ ->
+                    Nothing
+
+        "Maybe" ->
+            case reference.name of
+                "Nothing" ->
+                    Just { originTypeName = [ "Option" ], name = "None", isReference = False }
+
+                "Just" ->
+                    Just { originTypeName = [ "Option" ], name = "Some", isReference = False }
+
+                _ ->
+                    Nothing
+
+        "Result" ->
+            case reference.name of
+                "Err" ->
+                    Just { originTypeName = [ "Result" ], name = "Err", isReference = False }
+
+                "Ok" ->
+                    Just { originTypeName = [ "Result" ], name = "Ok", isReference = False }
+
+                _ ->
+                    Nothing
+
+        "Json.Decode" ->
+            case reference.name of
+                "Field" ->
+                    Just { originTypeName = [ "JsonDecodeErrorGuts" ], name = "Field", isReference = True }
+
+                "Index" ->
+                    Just { originTypeName = [ "JsonDecodeErrorGuts" ], name = "Index", isReference = True }
+
+                "OneOf" ->
+                    Just { originTypeName = [ "JsonDecodeErrorGuts" ], name = "OneOf", isReference = True }
+
+                "Failure" ->
+                    Just { originTypeName = [ "JsonDecodeErrorGuts" ], name = "Failure", isReference = True }
+
+                _ ->
+                    Nothing
+
+        "Bytes" ->
+            case reference.name of
+                "LE" ->
+                    Just { originTypeName = [ "BytesEndianness" ], name = "LE", isReference = False }
+
+                "BE" ->
+                    Just { originTypeName = [ "BytesEndianness" ], name = "BE", isReference = False }
+
+                _ ->
+                    Nothing
+
+        _ ->
+            Nothing
+
+
 {-| Use `typeConstructReferenceToCoreRust` for types
+
+TODO use variantToCoreRust for variants
+
 -}
 referenceToCoreRust :
     { moduleOrigin : String
@@ -3955,135 +3563,122 @@ referenceToCoreRust :
     }
     ->
         Maybe
-            { moduleOrigin : Maybe String
+            { qualification : List String
             , name : String
+
+            -- TODO , requiresAllocator : Bool
             }
 referenceToCoreRust reference =
     case reference.moduleOrigin of
         "Basics" ->
             case reference.name of
                 "identity" ->
-                    Just { moduleOrigin = Nothing, name = "Basics_identity" }
+                    Just { qualification = [], name = "basics_identity" }
 
                 "always" ->
-                    Just { moduleOrigin = Nothing, name = "Basics_always" }
+                    Just { qualification = [], name = "basics_always" }
 
                 "compare" ->
-                    Just { moduleOrigin = Nothing, name = "Basics_compare" }
+                    Just { qualification = [], name = "basics_compare" }
 
                 "max" ->
-                    Just { moduleOrigin = Nothing, name = "max" }
+                    Just { qualification = [], name = "basics_max" }
 
                 "min" ->
-                    Just { moduleOrigin = Nothing, name = "min" }
-
-                "LT" ->
-                    Just { moduleOrigin = Just "Basics_Order", name = "Basics_LT" }
-
-                "EQ" ->
-                    Just { moduleOrigin = Just "Basics_Order", name = "Basics_EQ" }
-
-                "GT" ->
-                    Just { moduleOrigin = Just "Basics_Order", name = "Basics_GT" }
-
-                "True" ->
-                    Just { moduleOrigin = Nothing, name = "true" }
-
-                "False" ->
-                    Just { moduleOrigin = Nothing, name = "false" }
+                    Just { qualification = [], name = "basics_min" }
 
                 "not" ->
-                    Just { moduleOrigin = Nothing, name = "Basics_not" }
+                    Just { qualification = [], name = "basics_not" }
 
                 "xor" ->
-                    Just { moduleOrigin = Nothing, name = "Basics_neq" }
+                    Just { qualification = [], name = "basics_neq" }
 
                 "e" ->
-                    Just { moduleOrigin = Nothing, name = "Basics_e" }
+                    Just { qualification = [ "std", "f64", "consts" ], name = "E" }
 
                 "pi" ->
-                    Just { moduleOrigin = Just "Double", name = "pi" }
+                    Just { qualification = [ "std", "f64", "consts" ], name = "PI" }
 
                 "ceiling" ->
-                    Just { moduleOrigin = Nothing, name = "Basics_ceiling" }
+                    Just { qualification = [ "f64" ], name = "ceil" }
 
                 "floor" ->
-                    Just { moduleOrigin = Nothing, name = "Basics_floor" }
+                    Just { qualification = [ "f64" ], name = "floor" }
 
                 "round" ->
-                    Just { moduleOrigin = Nothing, name = "Basics_round" }
+                    Just { qualification = [ "f64" ], name = "round" }
 
                 "truncate" ->
-                    Just { moduleOrigin = Nothing, name = "Basics_truncate" }
+                    Just { qualification = [ "f64" ], name = "trunc" }
 
                 "negate" ->
-                    Just { moduleOrigin = Nothing, name = "Basics_negate" }
+                    Just { qualification = [ "std", "ops", "Neg" ], name = "neg" }
 
                 "abs" ->
-                    Just { moduleOrigin = Nothing, name = "abs" }
+                    Just { qualification = [ "f64" ], name = "abs" }
 
                 "toFloat" ->
-                    Just { moduleOrigin = Nothing, name = "Basics_identity" }
+                    Just { qualification = [], name = "basics_identity" }
 
                 "isNaN" ->
-                    Just { moduleOrigin = Nothing, name = "Basics_isNaN" }
+                    Just { qualification = [ "f64" ], name = "is_nan" }
 
                 "isInfinite" ->
-                    Just { moduleOrigin = Nothing, name = "Basics_isInfinite" }
+                    Just { qualification = [ "f64" ], name = "is_infinite" }
 
                 "remainderBy" ->
-                    Just { moduleOrigin = Nothing, name = "Basics_remainderBy" }
+                    Just { qualification = [], name = "basics_remainder_by" }
 
                 "modBy" ->
-                    Just { moduleOrigin = Nothing, name = "Basics_modBy" }
+                    Just { qualification = [], name = "basics_mod_by" }
 
                 "sin" ->
-                    Just { moduleOrigin = Nothing, name = "sin" }
+                    Just { qualification = [ "f64" ], name = "sin" }
 
                 "cos" ->
-                    Just { moduleOrigin = Nothing, name = "cos" }
+                    Just { qualification = [ "f64" ], name = "cos" }
 
                 "tan" ->
-                    Just { moduleOrigin = Nothing, name = "tan" }
+                    Just { qualification = [ "f64" ], name = "tan" }
 
                 "asin" ->
-                    Just { moduleOrigin = Nothing, name = "asin" }
+                    Just { qualification = [ "f64" ], name = "asin" }
 
                 "acos" ->
-                    Just { moduleOrigin = Nothing, name = "acos" }
+                    Just { qualification = [ "f64" ], name = "acos" }
 
                 "atan" ->
-                    Just { moduleOrigin = Nothing, name = "atan" }
+                    Just { qualification = [ "f64" ], name = "atan" }
 
                 "atan2" ->
-                    Just { moduleOrigin = Nothing, name = "atan2" }
+                    Just { qualification = [ "f64" ], name = "atan2" }
 
                 "sqrt" ->
-                    Just { moduleOrigin = Nothing, name = "sqrt" }
+                    Just { qualification = [ "f64" ], name = "sqrt" }
 
                 "logBase" ->
-                    Just { moduleOrigin = Nothing, name = "Basics_logBase" }
+                    Just { qualification = [], name = "basics_log_base" }
 
                 "radians" ->
-                    Just { moduleOrigin = Nothing, name = "Basics_identity" }
+                    Just { qualification = [], name = "basics_identity" }
 
                 "degrees" ->
-                    Just { moduleOrigin = Nothing, name = "Basics_degrees" }
+                    Just { qualification = [], name = "basics_degrees" }
 
                 "turns" ->
-                    Just { moduleOrigin = Nothing, name = "Basics_turns" }
+                    Just { qualification = [], name = "basics_turns" }
 
                 "fromPolar" ->
-                    Just { moduleOrigin = Nothing, name = "Basics_fromPolar" }
+                    Just { qualification = [], name = "basics_from_polar" }
 
                 "toPolar" ->
-                    Just { moduleOrigin = Nothing, name = "Basics_toPolar" }
+                    Just { qualification = [], name = "basics_to_polar" }
 
                 "clamp" ->
-                    Just { moduleOrigin = Nothing, name = "Basics_clamp" }
+                    Just { qualification = [], name = "basics_clamp" }
 
                 "never" ->
-                    Just { moduleOrigin = Nothing, name = "Basics_never" }
+                    Just { qualification = [], name = "basics_never" }
 
                 _ ->
                     Nothing
@@ -4091,25 +3686,25 @@ referenceToCoreRust reference =
         "Bitwise" ->
             case reference.name of
                 "complement" ->
-                    Just { moduleOrigin = Nothing, name = "Bitwise_complement" }
+                    Just { qualification = [], name = "Bitwise_complement" }
 
                 "and" ->
-                    Just { moduleOrigin = Nothing, name = "Bitwise_and" }
+                    Just { qualification = [], name = "Bitwise_and" }
 
                 "or" ->
-                    Just { moduleOrigin = Nothing, name = "Bitwise_or" }
+                    Just { qualification = [], name = "Bitwise_or" }
 
                 "xor" ->
-                    Just { moduleOrigin = Nothing, name = "Bitwise_xor" }
+                    Just { qualification = [], name = "Bitwise_xor" }
 
                 "shiftLeftBy" ->
-                    Just { moduleOrigin = Nothing, name = "Bitwise_shiftLeftBy" }
+                    Just { qualification = [], name = "Bitwise_shiftLeftBy" }
 
                 "shiftRightBy" ->
-                    Just { moduleOrigin = Nothing, name = "Bitwise_shiftRightBy" }
+                    Just { qualification = [], name = "Bitwise_shiftRightBy" }
 
                 "shiftRightZfBy" ->
-                    Just { moduleOrigin = Nothing, name = "Bitwise_shiftRightZfBy" }
+                    Just { qualification = [], name = "Bitwise_shiftRightZfBy" }
 
                 _ ->
                     Nothing
@@ -4117,118 +3712,118 @@ referenceToCoreRust reference =
         "String" ->
             case reference.name of
                 "isEmpty" ->
-                    Just { moduleOrigin = Nothing, name = "String_isEmpty" }
+                    Just { qualification = [], name = "string_is_empty" }
 
                 "length" ->
-                    Just { moduleOrigin = Nothing, name = "String_length" }
+                    Just { qualification = [], name = "string_length" }
 
                 "append" ->
-                    Just { moduleOrigin = Nothing, name = "String_concat" }
+                    Just { qualification = [], name = "string_concat" }
 
                 "trim" ->
-                    Just { moduleOrigin = Nothing, name = "String_trim" }
+                    Just { qualification = [], name = "string_trim" }
 
                 "trimLeft" ->
-                    Just { moduleOrigin = Nothing, name = "String_trimLeft" }
+                    Just { qualification = [], name = "string_trim_left" }
 
                 "trimRight" ->
-                    Just { moduleOrigin = Nothing, name = "String_trimRight" }
+                    Just { qualification = [], name = "string_trim_right" }
 
                 "left" ->
-                    Just { moduleOrigin = Nothing, name = "String_left" }
+                    Just { qualification = [], name = "string_left" }
 
                 "right" ->
-                    Just { moduleOrigin = Nothing, name = "String_right" }
+                    Just { qualification = [], name = "string_right" }
 
                 "dropLeft" ->
-                    Just { moduleOrigin = Nothing, name = "String_dropLeft" }
+                    Just { qualification = [], name = "string_drop_left" }
 
                 "dropRight" ->
-                    Just { moduleOrigin = Nothing, name = "String_dropRight" }
+                    Just { qualification = [], name = "string_drop_right" }
 
                 "padLeft" ->
-                    Just { moduleOrigin = Nothing, name = "String_padLeft" }
+                    Just { qualification = [], name = "string_pad_left" }
 
                 "padRight" ->
-                    Just { moduleOrigin = Nothing, name = "String_padRight" }
+                    Just { qualification = [], name = "string_pad_right" }
 
                 "replace" ->
-                    Just { moduleOrigin = Nothing, name = "String_replace" }
+                    Just { qualification = [], name = "string_replace" }
 
                 "toList" ->
-                    Just { moduleOrigin = Nothing, name = "String_toList" }
+                    Just { qualification = [], name = "string_toList" }
 
                 "foldl" ->
-                    Just { moduleOrigin = Nothing, name = "String_foldl" }
+                    Just { qualification = [], name = "string_foldl" }
 
                 "foldr" ->
-                    Just { moduleOrigin = Nothing, name = "String_foldr" }
+                    Just { qualification = [], name = "string_foldr" }
 
                 "join" ->
-                    Just { moduleOrigin = Nothing, name = "String_join" }
+                    Just { qualification = [], name = "string_join" }
 
                 "filter" ->
-                    Just { moduleOrigin = Nothing, name = "String_filter" }
+                    Just { qualification = [], name = "string_filter" }
 
                 "any" ->
-                    Just { moduleOrigin = Nothing, name = "String_any" }
+                    Just { qualification = [], name = "string_any" }
 
                 "all" ->
-                    Just { moduleOrigin = Nothing, name = "String_all" }
+                    Just { qualification = [], name = "string_all" }
 
                 "map" ->
-                    Just { moduleOrigin = Nothing, name = "String_map" }
+                    Just { qualification = [], name = "string_map" }
 
                 "repeat" ->
-                    Just { moduleOrigin = Nothing, name = "String_repeat" }
+                    Just { qualification = [], name = "string_repeat" }
 
                 "split" ->
-                    Just { moduleOrigin = Nothing, name = "String_split" }
+                    Just { qualification = [], name = "string_split" }
 
                 "lines" ->
-                    Just { moduleOrigin = Nothing, name = "String_lines" }
+                    Just { qualification = [], name = "string_lines" }
 
                 "words" ->
-                    Just { moduleOrigin = Nothing, name = "String_words" }
+                    Just { qualification = [], name = "string_words" }
 
                 "startsWith" ->
-                    Just { moduleOrigin = Nothing, name = "String_startsWith" }
+                    Just { qualification = [], name = "string_starts_with" }
 
                 "endsWith" ->
-                    Just { moduleOrigin = Nothing, name = "String_endsWith" }
+                    Just { qualification = [], name = "string_ends_with" }
 
                 "toInt" ->
-                    Just { moduleOrigin = Nothing, name = "String_toInt" }
+                    Just { qualification = [], name = "string_to_int" }
 
                 "toFloat" ->
-                    Just { moduleOrigin = Nothing, name = "String_toFloat" }
+                    Just { qualification = [], name = "string_to_float" }
 
                 "fromInt" ->
-                    Just { moduleOrigin = Nothing, name = "String_fromInt" }
+                    Just { qualification = [], name = "string_from_int" }
 
                 "fromFloat" ->
-                    Just { moduleOrigin = Nothing, name = "String_fromFloat" }
+                    Just { qualification = [], name = "string_from_float" }
 
                 "contains" ->
-                    Just { moduleOrigin = Nothing, name = "String_contains" }
+                    Just { qualification = [], name = "string_contains" }
 
                 "fromChar" ->
-                    Just { moduleOrigin = Nothing, name = "String_fromChar" }
+                    Just { qualification = [], name = "string_from_char" }
 
                 "cons" ->
-                    Just { moduleOrigin = Nothing, name = "String_cons" }
+                    Just { qualification = [], name = "string_cons" }
 
                 "uncons" ->
-                    Just { moduleOrigin = Nothing, name = "String_uncons" }
+                    Just { qualification = [], name = "string_uncons" }
 
                 "slice" ->
-                    Just { moduleOrigin = Nothing, name = "String_slice" }
+                    Just { qualification = [], name = "string_slice" }
 
                 "toLower" ->
-                    Just { moduleOrigin = Nothing, name = "String_toLower" }
+                    Just { qualification = [], name = "string_to_lower" }
 
                 "toUpper" ->
-                    Just { moduleOrigin = Nothing, name = "String_toUpper" }
+                    Just { qualification = [], name = "string_to_upper" }
 
                 _ ->
                     Nothing
@@ -4236,43 +3831,43 @@ referenceToCoreRust reference =
         "Char" ->
             case reference.name of
                 "toCode" ->
-                    Just { moduleOrigin = Nothing, name = "Char_toCode" }
+                    Just { qualification = [], name = "Char_to_code" }
 
                 "fromCode" ->
-                    Just { moduleOrigin = Nothing, name = "Char_fromCode" }
+                    Just { qualification = [], name = "Char_from_code" }
 
                 "toLower" ->
-                    Just { moduleOrigin = Nothing, name = "Char_toLower" }
+                    Just { qualification = [], name = "Char_to_lower" }
 
                 "toUpper" ->
-                    Just { moduleOrigin = Nothing, name = "Char_toUpper" }
+                    Just { qualification = [], name = "Char_to_upper" }
 
                 "toLocaleLower" ->
-                    Just { moduleOrigin = Nothing, name = "Char_toLocaleLower" }
+                    Just { qualification = [], name = "Char_to_lower" }
 
                 "toLocaleUpper" ->
-                    Just { moduleOrigin = Nothing, name = "Char_toLocaleUpper" }
+                    Just { qualification = [], name = "Char_to_upper" }
 
                 "isLower" ->
-                    Just { moduleOrigin = Nothing, name = "Char_isLower" }
+                    Just { qualification = [], name = "Char_isLower" }
 
                 "isUpper" ->
-                    Just { moduleOrigin = Nothing, name = "Char_isUpper" }
+                    Just { qualification = [], name = "Char_isUpper" }
 
                 "isHexDigit" ->
-                    Just { moduleOrigin = Nothing, name = "Char_isHexDigit" }
+                    Just { qualification = [], name = "Char_isHexDigit" }
 
                 "isOctDigit" ->
-                    Just { moduleOrigin = Nothing, name = "Char_isOctDigit" }
+                    Just { qualification = [], name = "Char_isOctDigit" }
 
                 "isDigit" ->
-                    Just { moduleOrigin = Nothing, name = "Char_isDigit" }
+                    Just { qualification = [], name = "Char_isDigit" }
 
                 "isAlpha" ->
-                    Just { moduleOrigin = Nothing, name = "Char_isAlpha" }
+                    Just { qualification = [], name = "Char_isAlpha" }
 
                 "isAlphaNum" ->
-                    Just { moduleOrigin = Nothing, name = "Char_isAlphaNum" }
+                    Just { qualification = [], name = "Char_isAlphaNum" }
 
                 _ ->
                     Nothing
@@ -4280,185 +3875,173 @@ referenceToCoreRust reference =
         "List" ->
             case reference.name of
                 "singleton" ->
-                    Just { moduleOrigin = Nothing, name = "List_singleton" }
+                    Just { qualification = [], name = "list_singleton" }
 
                 "isEmpty" ->
-                    Just { moduleOrigin = Nothing, name = "List_isEmpty" }
+                    Just { qualification = [], name = "list_isEmpty" }
 
                 "length" ->
-                    Just { moduleOrigin = Nothing, name = "List_length" }
+                    Just { qualification = [], name = "list_length" }
 
                 "member" ->
-                    Just { moduleOrigin = Nothing, name = "List_member" }
+                    Just { qualification = [], name = "list_member" }
 
                 "minimum" ->
-                    Just { moduleOrigin = Nothing, name = "List_minimum" }
+                    Just { qualification = [], name = "list_minimum" }
 
                 "maximum" ->
-                    Just { moduleOrigin = Nothing, name = "List_maximum" }
+                    Just { qualification = [], name = "list_maximum" }
 
                 "sum" ->
-                    Just { moduleOrigin = Nothing, name = "List_sum" }
+                    Just { qualification = [], name = "list_sum" }
 
                 "product" ->
-                    Just { moduleOrigin = Nothing, name = "List_product" }
+                    Just { qualification = [], name = "list_product" }
 
                 "append" ->
-                    Just { moduleOrigin = Nothing, name = "List_append" }
+                    Just { qualification = [], name = "list_append" }
 
                 "concat" ->
-                    Just { moduleOrigin = Nothing, name = "List_concat" }
+                    Just { qualification = [], name = "list_concat" }
 
                 "reverse" ->
-                    Just { moduleOrigin = Nothing, name = "List_reverse" }
+                    Just { qualification = [], name = "list_reverse" }
 
                 "repeat" ->
-                    Just { moduleOrigin = Nothing, name = "List_repeat" }
+                    Just { qualification = [], name = "list_repeat" }
 
                 "head" ->
-                    Just { moduleOrigin = Nothing, name = "List_head" }
+                    Just { qualification = [], name = "list_head" }
 
                 "tail" ->
-                    Just { moduleOrigin = Nothing, name = "List_tail" }
+                    Just { qualification = [], name = "list_tail" }
 
                 "all" ->
-                    Just { moduleOrigin = Nothing, name = "List_all" }
+                    Just { qualification = [], name = "list_all" }
 
                 "any" ->
-                    Just { moduleOrigin = Nothing, name = "List_any" }
+                    Just { qualification = [], name = "list_any" }
 
                 "filter" ->
-                    Just { moduleOrigin = Nothing, name = "List_filter" }
+                    Just { qualification = [], name = "list_filter" }
 
                 "filterMap" ->
-                    Just { moduleOrigin = Nothing, name = "List_filterMap" }
+                    Just { qualification = [], name = "list_filterMap" }
 
                 "map" ->
-                    Just { moduleOrigin = Nothing, name = "List_map" }
+                    Just { qualification = [], name = "list_map" }
 
                 "indexedMap" ->
-                    Just { moduleOrigin = Nothing, name = "List_indexedMap" }
+                    Just { qualification = [], name = "list_indexedMap" }
 
                 "map2" ->
-                    Just { moduleOrigin = Nothing, name = "List_map2" }
+                    Just { qualification = [], name = "list_map2" }
 
                 "zip" ->
-                    Just { moduleOrigin = Nothing, name = "List_zip" }
+                    Just { qualification = [], name = "list_zip" }
 
                 "map3" ->
-                    Just { moduleOrigin = Nothing, name = "List_map3" }
+                    Just { qualification = [], name = "list_map3" }
 
                 "map4" ->
-                    Just { moduleOrigin = Nothing, name = "List_map4" }
+                    Just { qualification = [], name = "list_map4" }
 
                 "map5" ->
-                    Just { moduleOrigin = Nothing, name = "List_map5" }
+                    Just { qualification = [], name = "list_map5" }
 
                 "unzip" ->
-                    Just { moduleOrigin = Nothing, name = "List_unzip" }
+                    Just { qualification = [], name = "list_unzip" }
 
                 "concatMap" ->
-                    Just { moduleOrigin = Nothing, name = "List_concatMap" }
+                    Just { qualification = [], name = "list_concatMap" }
 
                 "sort" ->
-                    Just { moduleOrigin = Nothing, name = "List_sort" }
+                    Just { qualification = [], name = "list_sort" }
 
                 "sortBy" ->
-                    Just { moduleOrigin = Nothing, name = "List_sortBy" }
+                    Just { qualification = [], name = "list_sortBy" }
 
                 "sortWith" ->
-                    Just { moduleOrigin = Nothing, name = "List_sortWith" }
+                    Just { qualification = [], name = "list_sortWith" }
 
                 "range" ->
-                    Just { moduleOrigin = Nothing, name = "List_range" }
+                    Just { qualification = [], name = "list_range" }
 
                 "take" ->
-                    Just { moduleOrigin = Nothing, name = "List_take" }
+                    Just { qualification = [], name = "list_take" }
 
                 "drop" ->
-                    Just { moduleOrigin = Nothing, name = "List_drop" }
+                    Just { qualification = [], name = "list_drop" }
 
                 "intersperse" ->
-                    Just { moduleOrigin = Nothing, name = "List_intersperse" }
+                    Just { qualification = [], name = "list_intersperse" }
 
                 "foldl" ->
-                    Just { moduleOrigin = Nothing, name = "List_foldl" }
+                    Just { qualification = [], name = "list_foldl" }
 
                 "foldr" ->
-                    Just { moduleOrigin = Nothing, name = "List_foldr" }
+                    Just { qualification = [], name = "list_foldr" }
 
                 _ ->
                     Nothing
 
         "Maybe" ->
             case reference.name of
-                "Nothing" ->
-                    Just { moduleOrigin = Nothing, name = "Maybe_Nothing" }
-
-                "Just" ->
-                    Just { moduleOrigin = Nothing, name = "Maybe_Just" }
-
                 "withDefault" ->
-                    Just { moduleOrigin = Nothing, name = "Maybe_withDefault" }
+                    Just { qualification = [], name = "Maybe_withDefault" }
 
                 "map" ->
-                    Just { moduleOrigin = Nothing, name = "Maybe_map" }
+                    Just { qualification = [], name = "Maybe_map" }
 
                 "map2" ->
-                    Just { moduleOrigin = Nothing, name = "Maybe_map2" }
+                    Just { qualification = [], name = "Maybe_map2" }
 
                 "map3" ->
-                    Just { moduleOrigin = Nothing, name = "Maybe_map3" }
+                    Just { qualification = [], name = "Maybe_map3" }
 
                 "map4" ->
-                    Just { moduleOrigin = Nothing, name = "Maybe_map4" }
+                    Just { qualification = [], name = "Maybe_map4" }
 
                 "map5" ->
-                    Just { moduleOrigin = Nothing, name = "Maybe_map5" }
+                    Just { qualification = [], name = "Maybe_map5" }
 
                 "andThen" ->
-                    Just { moduleOrigin = Nothing, name = "Maybe_andThen" }
+                    Just { qualification = [], name = "Maybe_andThen" }
 
                 _ ->
                     Nothing
 
         "Result" ->
             case reference.name of
-                "Err" ->
-                    Just { moduleOrigin = Nothing, name = "Result_Err" }
-
-                "Ok" ->
-                    Just { moduleOrigin = Nothing, name = "Result_Ok" }
-
                 "map" ->
-                    Just { moduleOrigin = Nothing, name = "Result_map" }
+                    Just { qualification = [], name = "Result_map" }
 
                 "map2" ->
-                    Just { moduleOrigin = Nothing, name = "Result_map2" }
+                    Just { qualification = [], name = "Result_map2" }
 
                 "map3" ->
-                    Just { moduleOrigin = Nothing, name = "Result_map3" }
+                    Just { qualification = [], name = "Result_map3" }
 
                 "map4" ->
-                    Just { moduleOrigin = Nothing, name = "Result_map4" }
+                    Just { qualification = [], name = "Result_map4" }
 
                 "map5" ->
-                    Just { moduleOrigin = Nothing, name = "Result_map5" }
+                    Just { qualification = [], name = "Result_map5" }
 
                 "andThen" ->
-                    Just { moduleOrigin = Nothing, name = "Result_andThen" }
+                    Just { qualification = [], name = "Result_andThen" }
 
                 "withDefault" ->
-                    Just { moduleOrigin = Nothing, name = "Result_withDefault" }
+                    Just { qualification = [], name = "Result_withDefault" }
 
                 "toMaybe" ->
-                    Just { moduleOrigin = Nothing, name = "Result_toMaybe" }
+                    Just { qualification = [], name = "Result_toMaybe" }
 
                 "fromMaybe" ->
-                    Just { moduleOrigin = Nothing, name = "Result_fromMaybe" }
+                    Just { qualification = [], name = "Result_fromMaybe" }
 
                 "mapError" ->
-                    Just { moduleOrigin = Nothing, name = "Result_mapError" }
+                    Just { qualification = [], name = "Result_mapError" }
 
                 _ ->
                     Nothing
@@ -4466,188 +4049,61 @@ referenceToCoreRust reference =
         "Array" ->
             case reference.name of
                 "isEmpty" ->
-                    Just { moduleOrigin = Nothing, name = "Array_isEmpty" }
+                    Just { qualification = [], name = "array_isEmpty" }
 
                 "length" ->
-                    Just { moduleOrigin = Nothing, name = "Array_length" }
+                    Just { qualification = [], name = "array_length" }
 
                 "get" ->
-                    Just { moduleOrigin = Nothing, name = "Array_get" }
+                    Just { qualification = [], name = "array_get" }
 
                 "empty" ->
-                    Just { moduleOrigin = Nothing, name = "Array_empty" }
+                    Just { qualification = [], name = "array_empty" }
 
                 "initialize" ->
-                    Just { moduleOrigin = Nothing, name = "Array_initialize" }
+                    Just { qualification = [], name = "array_initialize" }
 
                 "repeat" ->
-                    Just { moduleOrigin = Nothing, name = "Array_repeat" }
+                    Just { qualification = [], name = "array_repeat" }
 
                 "fromList" ->
-                    Just { moduleOrigin = Nothing, name = "Array_fromList" }
+                    Just { qualification = [], name = "array_fromList" }
 
                 "reverse" ->
-                    Just { moduleOrigin = Nothing, name = "Array_reverse" }
+                    Just { qualification = [], name = "array_reverse" }
 
                 "filter" ->
-                    Just { moduleOrigin = Nothing, name = "Array_filter" }
+                    Just { qualification = [], name = "array_filter" }
 
                 "push" ->
-                    Just { moduleOrigin = Nothing, name = "Array_push" }
+                    Just { qualification = [], name = "array_push" }
 
                 "set" ->
-                    Just { moduleOrigin = Nothing, name = "Array_set" }
+                    Just { qualification = [], name = "array_set" }
 
                 "slice" ->
-                    Just { moduleOrigin = Nothing, name = "Array_slice" }
+                    Just { qualification = [], name = "array_slice" }
 
                 "map" ->
-                    Just { moduleOrigin = Nothing, name = "Array_map" }
+                    Just { qualification = [], name = "array_map" }
 
                 "indexedMap" ->
-                    Just { moduleOrigin = Nothing, name = "Array_indexedMap" }
+                    Just { qualification = [], name = "array_indexedMap" }
 
                 "append" ->
-                    Just { moduleOrigin = Nothing, name = "Array_append" }
+                    Just { qualification = [], name = "array_append" }
 
                 "toList" ->
-                    Just { moduleOrigin = Nothing, name = "Array_toList" }
+                    Just { qualification = [], name = "array_toList" }
 
                 "toIndexedList" ->
-                    Just { moduleOrigin = Nothing, name = "Array_toIndexedList" }
+                    Just { qualification = [], name = "array_toIndexedList" }
 
                 "foldl" ->
-                    Just { moduleOrigin = Nothing, name = "Array_foldl" }
+                    Just { qualification = [], name = "array_foldl" }
 
                 "foldr" ->
-                    Just { moduleOrigin = Nothing, name = "Array_foldr" }
-
-                _ ->
-                    Nothing
-
-        "Dict" ->
-            case reference.name of
-                "size" ->
-                    Just { moduleOrigin = Nothing, name = "Dict_size" }
-
-                "empty" ->
-                    Just { moduleOrigin = Nothing, name = "Dict_empty" }
-
-                "singleton" ->
-                    Just { moduleOrigin = Nothing, name = "Dict_singleton" }
-
-                "fromList" ->
-                    Just { moduleOrigin = Nothing, name = "Dict_fromList" }
-
-                "toList" ->
-                    Just { moduleOrigin = Nothing, name = "Dict_toList" }
-
-                "keys" ->
-                    Just { moduleOrigin = Nothing, name = "Dict_keys" }
-
-                "values" ->
-                    Just { moduleOrigin = Nothing, name = "Dict_values" }
-
-                "isEmpty" ->
-                    Just { moduleOrigin = Nothing, name = "Dict_isEmpty" }
-
-                "map" ->
-                    Just { moduleOrigin = Nothing, name = "Dict_map" }
-
-                "partition" ->
-                    Just { moduleOrigin = Nothing, name = "Dict_partition" }
-
-                "foldl" ->
-                    Just { moduleOrigin = Nothing, name = "Dict_foldl" }
-
-                "foldr" ->
-                    Just { moduleOrigin = Nothing, name = "Dict_foldr" }
-
-                "filter" ->
-                    Just { moduleOrigin = Nothing, name = "Dict_filter" }
-
-                "get" ->
-                    Just { moduleOrigin = Nothing, name = "Dict_get" }
-
-                "member" ->
-                    Just { moduleOrigin = Nothing, name = "Dict_member" }
-
-                "insert" ->
-                    Just { moduleOrigin = Nothing, name = "Dict_insert" }
-
-                "update" ->
-                    Just { moduleOrigin = Nothing, name = "Dict_update" }
-
-                "remove" ->
-                    Just { moduleOrigin = Nothing, name = "Dict_remove" }
-
-                "union" ->
-                    Just { moduleOrigin = Nothing, name = "Dict_union" }
-
-                "diff" ->
-                    Just { moduleOrigin = Nothing, name = "Dict_diff" }
-
-                "intersect" ->
-                    Just { moduleOrigin = Nothing, name = "Dict_intersect" }
-
-                "merge" ->
-                    Just { moduleOrigin = Nothing, name = "Dict_merge" }
-
-                _ ->
-                    Nothing
-
-        "Set" ->
-            case reference.name of
-                "size" ->
-                    Just { moduleOrigin = Nothing, name = "Set_size" }
-
-                "empty" ->
-                    Just { moduleOrigin = Nothing, name = "Set_empty" }
-
-                "singleton" ->
-                    Just { moduleOrigin = Nothing, name = "Set_singleton" }
-
-                "fromList" ->
-                    Just { moduleOrigin = Nothing, name = "Set_fromList" }
-
-                "toList" ->
-                    Just { moduleOrigin = Nothing, name = "Set_toList" }
-
-                "isEmpty" ->
-                    Just { moduleOrigin = Nothing, name = "Set_isEmpty" }
-
-                "insert" ->
-                    Just { moduleOrigin = Nothing, name = "Set_insert" }
-
-                "partition" ->
-                    Just { moduleOrigin = Nothing, name = "Set_partition" }
-
-                "foldl" ->
-                    Just { moduleOrigin = Nothing, name = "Set_foldl" }
-
-                "foldr" ->
-                    Just { moduleOrigin = Nothing, name = "Set_foldr" }
-
-                "map" ->
-                    Just { moduleOrigin = Nothing, name = "Set_map" }
-
-                "filter" ->
-                    Just { moduleOrigin = Nothing, name = "Set_filter" }
-
-                "member" ->
-                    Just { moduleOrigin = Nothing, name = "Set_member" }
-
-                "remove" ->
-                    Just { moduleOrigin = Nothing, name = "Set_remove" }
-
-                "union" ->
-                    Just { moduleOrigin = Nothing, name = "Set_union" }
-
-                "diff" ->
-                    Just { moduleOrigin = Nothing, name = "Set_diff" }
-
-                "intersect" ->
-                    Just { moduleOrigin = Nothing, name = "Set_intersect" }
+                    Just { qualification = [], name = "array_foldr" }
 
                 _ ->
                     Nothing
@@ -4655,150 +4111,138 @@ referenceToCoreRust reference =
         "Json.Encode" ->
             case reference.name of
                 "encode" ->
-                    Just { moduleOrigin = Nothing, name = "JsonEncode_encode" }
+                    Just { qualification = [], name = "json_encode_encode" }
 
                 "null" ->
-                    Just { moduleOrigin = Nothing, name = "JsonEncode_null" }
+                    Just { qualification = [], name = "json_encode_null" }
 
                 "bool" ->
-                    Just { moduleOrigin = Nothing, name = "JsonEncode_bool" }
+                    Just { qualification = [], name = "json_encode_bool" }
 
                 "string" ->
-                    Just { moduleOrigin = Nothing, name = "JsonEncode_string" }
+                    Just { qualification = [], name = "json_encode_string" }
 
                 "int" ->
-                    Just { moduleOrigin = Nothing, name = "JsonEncode_int" }
+                    Just { qualification = [], name = "json_encode_int" }
 
                 "float" ->
-                    Just { moduleOrigin = Nothing, name = "JsonEncode_float" }
+                    Just { qualification = [], name = "json_encode_float" }
 
                 "list" ->
-                    Just { moduleOrigin = Nothing, name = "JsonEncode_list" }
+                    Just { qualification = [], name = "json_encode_list" }
 
                 "array" ->
-                    Just { moduleOrigin = Nothing, name = "JsonEncode_array" }
+                    Just { qualification = [], name = "json_encode_array" }
 
                 "set" ->
-                    Just { moduleOrigin = Nothing, name = "JsonEncode_set" }
+                    Just { qualification = [], name = "json_encode_set" }
 
                 "object" ->
-                    Just { moduleOrigin = Nothing, name = "JsonEncode_object" }
+                    Just { qualification = [], name = "json_encode_object" }
 
                 "dict" ->
-                    Just { moduleOrigin = Nothing, name = "JsonEncode_dict" }
+                    Just { qualification = [], name = "json_encode_dict" }
 
                 _ ->
                     Nothing
 
         "Json.Decode" ->
             case reference.name of
-                "Field" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_Field" }
-
-                "Index" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_Index" }
-
-                "OneOf" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_OneOf" }
-
-                "Failure" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_Failure" }
-
                 "string" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_string" }
+                    Just { qualification = [], name = "json_decode_string" }
 
                 "bool" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_bool" }
+                    Just { qualification = [], name = "json_decode_bool" }
 
                 "int" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_int" }
+                    Just { qualification = [], name = "json_decode_int" }
 
                 "float" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_float" }
+                    Just { qualification = [], name = "json_decode_float" }
 
                 "nullable" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_nullable" }
+                    Just { qualification = [], name = "json_decode_nullable" }
 
                 "list" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_list" }
+                    Just { qualification = [], name = "json_decode_list" }
 
                 "array" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_array" }
+                    Just { qualification = [], name = "json_decode_array" }
 
                 "dict" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_dict" }
+                    Just { qualification = [], name = "json_decode_dict" }
 
                 "keyValuePairs" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_keyValuePairs" }
+                    Just { qualification = [], name = "json_decode_keyValuePairs" }
 
                 "oneOrMore" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_oneOrMore" }
+                    Just { qualification = [], name = "json_decode_oneOrMore" }
 
                 "field" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_field" }
+                    Just { qualification = [], name = "json_decode_field" }
 
                 "at" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_at" }
+                    Just { qualification = [], name = "json_decode_at" }
 
                 "index" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_index" }
+                    Just { qualification = [], name = "json_decode_index" }
 
                 "maybe" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_maybe" }
+                    Just { qualification = [], name = "json_decode_maybe" }
 
                 "oneOf" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_oneOf" }
+                    Just { qualification = [], name = "json_decode_oneOf" }
 
                 "decodeString" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_decodeString" }
+                    Just { qualification = [], name = "json_decode_decodeString" }
 
                 "decodeValue" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_decodeValue" }
+                    Just { qualification = [], name = "json_decode_decodeValue" }
 
                 "errorToString" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_errorToString" }
+                    Just { qualification = [], name = "json_decode_errorToString" }
 
                 "map" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_map" }
+                    Just { qualification = [], name = "json_decode_map" }
 
                 "map2" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_map2" }
+                    Just { qualification = [], name = "json_decode_map2" }
 
                 "map3" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_map3" }
+                    Just { qualification = [], name = "json_decode_map3" }
 
                 "map4" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_map4" }
+                    Just { qualification = [], name = "json_decode_map4" }
 
                 "map5" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_map5" }
+                    Just { qualification = [], name = "json_decode_map5" }
 
                 "map6" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_map6" }
+                    Just { qualification = [], name = "json_decode_map6" }
 
                 "map7" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_map7" }
+                    Just { qualification = [], name = "json_decode_map7" }
 
                 "map8" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_map8" }
+                    Just { qualification = [], name = "json_decode_map8" }
 
                 "lazy" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_lazy" }
+                    Just { qualification = [], name = "json_decode_lazy" }
 
                 "value" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_value" }
+                    Just { qualification = [], name = "json_decode_value" }
 
                 "null" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_null" }
+                    Just { qualification = [], name = "json_decode_null" }
 
                 "succeed" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_succeed" }
+                    Just { qualification = [], name = "json_decode_succeed" }
 
                 "fail" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_fail" }
+                    Just { qualification = [], name = "json_decode_fail" }
 
                 "andThen" ->
-                    Just { moduleOrigin = Nothing, name = "JsonDecode_andThen" }
+                    Just { qualification = [], name = "json_decode_andThen" }
 
                 _ ->
                     Nothing
@@ -4806,34 +4250,34 @@ referenceToCoreRust reference =
         "Regex" ->
             case reference.name of
                 "fromString" ->
-                    Just { moduleOrigin = Nothing, name = "Regex_fromString" }
+                    Just { qualification = [], name = "regex_fromString" }
 
                 "fromStringWith" ->
-                    Just { moduleOrigin = Nothing, name = "Regex_fromStringWith" }
+                    Just { qualification = [], name = "regex_fromStringWith" }
 
                 "never" ->
-                    Just { moduleOrigin = Nothing, name = "Regex_never" }
+                    Just { qualification = [], name = "regex_never" }
 
                 "contains" ->
-                    Just { moduleOrigin = Nothing, name = "Regex_contains" }
+                    Just { qualification = [], name = "regex_contains" }
 
                 "split" ->
-                    Just { moduleOrigin = Nothing, name = "Regex_split" }
+                    Just { qualification = [], name = "regex_split" }
 
                 "find" ->
-                    Just { moduleOrigin = Nothing, name = "Regex_find" }
+                    Just { qualification = [], name = "regex_find" }
 
                 "replace" ->
-                    Just { moduleOrigin = Nothing, name = "Regex_replace" }
+                    Just { qualification = [], name = "regex_replace" }
 
                 "splitAtMost" ->
-                    Just { moduleOrigin = Nothing, name = "Regex_splitAtMost" }
+                    Just { qualification = [], name = "regex_splitAtMost" }
 
                 "findAtMost" ->
-                    Just { moduleOrigin = Nothing, name = "Regex_findAtMost" }
+                    Just { qualification = [], name = "regex_findAtMost" }
 
                 "replaceAtMost" ->
-                    Just { moduleOrigin = Nothing, name = "Regex_replaceAtMost" }
+                    Just { qualification = [], name = "regex_replaceAtMost" }
 
                 _ ->
                     Nothing
@@ -4841,61 +4285,61 @@ referenceToCoreRust reference =
         "Random" ->
             case reference.name of
                 "int" ->
-                    Just { moduleOrigin = Nothing, name = "Random_int" }
+                    Just { qualification = [], name = "random_int" }
 
                 "float" ->
-                    Just { moduleOrigin = Nothing, name = "Random_float" }
+                    Just { qualification = [], name = "random_float" }
 
                 "uniform" ->
-                    Just { moduleOrigin = Nothing, name = "Random_uniform" }
+                    Just { qualification = [], name = "random_uniform" }
 
                 "weighted" ->
-                    Just { moduleOrigin = Nothing, name = "Random_weighted" }
+                    Just { qualification = [], name = "random_weighted" }
 
                 "constant" ->
-                    Just { moduleOrigin = Nothing, name = "Random_constant" }
+                    Just { qualification = [], name = "random_constant" }
 
                 "list" ->
-                    Just { moduleOrigin = Nothing, name = "Random_list" }
+                    Just { qualification = [], name = "random_list" }
 
                 "pair" ->
-                    Just { moduleOrigin = Nothing, name = "Random_pair" }
+                    Just { qualification = [], name = "random_pair" }
 
                 "map" ->
-                    Just { moduleOrigin = Nothing, name = "Random_map" }
+                    Just { qualification = [], name = "random_map" }
 
                 "map2" ->
-                    Just { moduleOrigin = Nothing, name = "Random_map2" }
+                    Just { qualification = [], name = "random_map2" }
 
                 "map3" ->
-                    Just { moduleOrigin = Nothing, name = "Random_map3" }
+                    Just { qualification = [], name = "random_map3" }
 
                 "map4" ->
-                    Just { moduleOrigin = Nothing, name = "Random_map4" }
+                    Just { qualification = [], name = "random_map4" }
 
                 "map5" ->
-                    Just { moduleOrigin = Nothing, name = "Random_map5" }
+                    Just { qualification = [], name = "random_map5" }
 
                 "andThen" ->
-                    Just { moduleOrigin = Nothing, name = "Random_andThen" }
+                    Just { qualification = [], name = "random_andThen" }
 
                 "lazy" ->
-                    Just { moduleOrigin = Nothing, name = "Random_lazy" }
+                    Just { qualification = [], name = "random_lazy" }
 
                 "minInt" ->
-                    Just { moduleOrigin = Nothing, name = "Random_minInt" }
+                    Just { qualification = [], name = "random_minInt" }
 
                 "maxInt" ->
-                    Just { moduleOrigin = Nothing, name = "Random_maxInt" }
+                    Just { qualification = [], name = "random_maxInt" }
 
                 "step" ->
-                    Just { moduleOrigin = Nothing, name = "Random_step" }
+                    Just { qualification = [], name = "random_step" }
 
                 "initialSeed" ->
-                    Just { moduleOrigin = Nothing, name = "Random_initialSeed" }
+                    Just { qualification = [], name = "random_initialSeed" }
 
                 "independentSeed" ->
-                    Just { moduleOrigin = Nothing, name = "Random_independentSeed" }
+                    Just { qualification = [], name = "random_independentSeed" }
 
                 _ ->
                     Nothing
@@ -4903,54 +4347,48 @@ referenceToCoreRust reference =
         "Time" ->
             case reference.name of
                 "posixToMillis" ->
-                    Just { moduleOrigin = Nothing, name = "Time_posixToMillis" }
+                    Just { qualification = [], name = "time_posixToMillis" }
 
                 "millisToPosix" ->
-                    Just { moduleOrigin = Nothing, name = "Time_millisToPosix" }
+                    Just { qualification = [], name = "time_millisToPosix" }
 
                 "utc" ->
-                    Just { moduleOrigin = Nothing, name = "Time_utc" }
+                    Just { qualification = [], name = "time_utc" }
 
                 "toYear" ->
-                    Just { moduleOrigin = Nothing, name = "Time_toYear" }
+                    Just { qualification = [], name = "time_toYear" }
 
                 "toMonth" ->
-                    Just { moduleOrigin = Nothing, name = "Time_toMonth" }
+                    Just { qualification = [], name = "time_toMonth" }
 
                 "toDay" ->
-                    Just { moduleOrigin = Nothing, name = "Time_toDay" }
+                    Just { qualification = [], name = "time_toDay" }
 
                 "toWeekday" ->
-                    Just { moduleOrigin = Nothing, name = "Time_toWeekday" }
+                    Just { qualification = [], name = "time_toWeekday" }
 
                 "toHour" ->
-                    Just { moduleOrigin = Nothing, name = "Time_toHour" }
+                    Just { qualification = [], name = "time_toHour" }
 
                 "toMinute" ->
-                    Just { moduleOrigin = Nothing, name = "Time_toMinute" }
+                    Just { qualification = [], name = "time_toMinute" }
 
                 "toSecond" ->
-                    Just { moduleOrigin = Nothing, name = "Time_toSecond" }
+                    Just { qualification = [], name = "time_toSecond" }
 
                 "toMillis" ->
-                    Just { moduleOrigin = Nothing, name = "Time_toMillis" }
+                    Just { qualification = [], name = "time_toMillis" }
 
                 "customZone" ->
-                    Just { moduleOrigin = Nothing, name = "Time_customZone" }
+                    Just { qualification = [], name = "time_customZone" }
 
                 _ ->
                     Nothing
 
         "Bytes" ->
             case reference.name of
-                "LE" ->
-                    Just { moduleOrigin = Nothing, name = "Bytes_LE" }
-
-                "BE" ->
-                    Just { moduleOrigin = Nothing, name = "Bytes_BE" }
-
                 "width" ->
-                    Just { moduleOrigin = Nothing, name = "Bytes_width" }
+                    Just { qualification = [], name = "bytes_width" }
 
                 _ ->
                     Nothing
@@ -4958,70 +4396,70 @@ referenceToCoreRust reference =
         "Bytes.Decode" ->
             case reference.name of
                 "Loop" ->
-                    Just { moduleOrigin = Nothing, name = "BytesDecode_Loop" }
+                    Just { qualification = [], name = "BytesDecode_Loop" }
 
                 "Done" ->
-                    Just { moduleOrigin = Nothing, name = "BytesDecode_Done" }
+                    Just { qualification = [], name = "BytesDecode_Done" }
 
                 "decode" ->
-                    Just { moduleOrigin = Nothing, name = "BytesDecode_decode" }
+                    Just { qualification = [], name = "BytesDecode_decode" }
 
                 "signedInt8" ->
-                    Just { moduleOrigin = Nothing, name = "BytesDecode_signedInt8" }
+                    Just { qualification = [], name = "BytesDecode_signedInt8" }
 
                 "signedInt16" ->
-                    Just { moduleOrigin = Nothing, name = "BytesDecode_signedInt16" }
+                    Just { qualification = [], name = "BytesDecode_signedInt16" }
 
                 "signedInt32" ->
-                    Just { moduleOrigin = Nothing, name = "BytesDecode_signedInt32" }
+                    Just { qualification = [], name = "BytesDecode_signedInt32" }
 
                 "unsignedInt8" ->
-                    Just { moduleOrigin = Nothing, name = "BytesDecode_unsignedInt8" }
+                    Just { qualification = [], name = "BytesDecode_unsignedInt8" }
 
                 "unsignedInt16" ->
-                    Just { moduleOrigin = Nothing, name = "BytesDecode_unsignedInt16" }
+                    Just { qualification = [], name = "BytesDecode_unsignedInt16" }
 
                 "unsignedInt32" ->
-                    Just { moduleOrigin = Nothing, name = "BytesDecode_unsignedInt32" }
+                    Just { qualification = [], name = "BytesDecode_unsignedInt32" }
 
                 "float32" ->
-                    Just { moduleOrigin = Nothing, name = "BytesDecode_float32" }
+                    Just { qualification = [], name = "BytesDecode_float32" }
 
                 "float64" ->
-                    Just { moduleOrigin = Nothing, name = "BytesDecode_float64" }
+                    Just { qualification = [], name = "BytesDecode_float64" }
 
                 "string" ->
-                    Just { moduleOrigin = Nothing, name = "BytesDecode_string" }
+                    Just { qualification = [], name = "BytesDecode_string" }
 
                 "bytes" ->
-                    Just { moduleOrigin = Nothing, name = "BytesDecode_bytes" }
+                    Just { qualification = [], name = "BytesDecode_bytes" }
 
                 "map" ->
-                    Just { moduleOrigin = Nothing, name = "BytesDecode_map" }
+                    Just { qualification = [], name = "BytesDecode_map" }
 
                 "map2" ->
-                    Just { moduleOrigin = Nothing, name = "BytesDecode_map2" }
+                    Just { qualification = [], name = "BytesDecode_map2" }
 
                 "map3" ->
-                    Just { moduleOrigin = Nothing, name = "BytesDecode_map3" }
+                    Just { qualification = [], name = "BytesDecode_map3" }
 
                 "map4" ->
-                    Just { moduleOrigin = Nothing, name = "BytesDecode_map4" }
+                    Just { qualification = [], name = "BytesDecode_map4" }
 
                 "map5" ->
-                    Just { moduleOrigin = Nothing, name = "BytesDecode_map5" }
+                    Just { qualification = [], name = "BytesDecode_map5" }
 
                 "andThen" ->
-                    Just { moduleOrigin = Nothing, name = "BytesDecode_andThen" }
+                    Just { qualification = [], name = "BytesDecode_andThen" }
 
                 "succeed" ->
-                    Just { moduleOrigin = Nothing, name = "BytesDecode_succeed" }
+                    Just { qualification = [], name = "BytesDecode_succeed" }
 
                 "fail" ->
-                    Just { moduleOrigin = Nothing, name = "BytesDecode_fail" }
+                    Just { qualification = [], name = "BytesDecode_fail" }
 
                 "loop" ->
-                    Just { moduleOrigin = Nothing, name = "BytesDecode_loop" }
+                    Just { qualification = [], name = "BytesDecode_loop" }
 
                 _ ->
                     Nothing
@@ -5029,43 +4467,43 @@ referenceToCoreRust reference =
         "Bytes.Encode" ->
             case reference.name of
                 "encode" ->
-                    Just { moduleOrigin = Nothing, name = "BytesEncode_encode" }
+                    Just { qualification = [], name = "BytesEncode_encode" }
 
                 "signedInt8" ->
-                    Just { moduleOrigin = Nothing, name = "BytesEncode_signedInt8" }
+                    Just { qualification = [], name = "BytesEncode_signedInt8" }
 
                 "signedInt16" ->
-                    Just { moduleOrigin = Nothing, name = "BytesEncode_signedInt16" }
+                    Just { qualification = [], name = "BytesEncode_signedInt16" }
 
                 "signedInt32" ->
-                    Just { moduleOrigin = Nothing, name = "BytesEncode_signedInt32" }
+                    Just { qualification = [], name = "BytesEncode_signedInt32" }
 
                 "unsignedInt8" ->
-                    Just { moduleOrigin = Nothing, name = "BytesEncode_unsignedInt8" }
+                    Just { qualification = [], name = "BytesEncode_unsignedInt8" }
 
                 "unsignedInt16" ->
-                    Just { moduleOrigin = Nothing, name = "BytesEncode_unsignedInt16" }
+                    Just { qualification = [], name = "BytesEncode_unsignedInt16" }
 
                 "unsignedInt32" ->
-                    Just { moduleOrigin = Nothing, name = "BytesEncode_unsignedInt32" }
+                    Just { qualification = [], name = "BytesEncode_unsignedInt32" }
 
                 "float32" ->
-                    Just { moduleOrigin = Nothing, name = "BytesEncode_float32" }
+                    Just { qualification = [], name = "BytesEncode_float32" }
 
                 "float64" ->
-                    Just { moduleOrigin = Nothing, name = "BytesEncode_float64" }
+                    Just { qualification = [], name = "BytesEncode_float64" }
 
                 "bytes" ->
-                    Just { moduleOrigin = Nothing, name = "BytesEncode_bytes" }
+                    Just { qualification = [], name = "BytesEncode_bytes" }
 
                 "string" ->
-                    Just { moduleOrigin = Nothing, name = "BytesEncode_string" }
+                    Just { qualification = [], name = "BytesEncode_string" }
 
                 "getStringWidth" ->
-                    Just { moduleOrigin = Nothing, name = "BytesEncode_getStringWidth" }
+                    Just { qualification = [], name = "BytesEncode_getStringWidth" }
 
                 "sequence" ->
-                    Just { moduleOrigin = Nothing, name = "BytesEncode_sequence" }
+                    Just { qualification = [], name = "BytesEncode_sequence" }
 
                 _ ->
                     Nothing
@@ -5073,25 +4511,25 @@ referenceToCoreRust reference =
         "Elm.Kernel.Parser" ->
             case reference.name of
                 "isSubString" ->
-                    Just { moduleOrigin = Nothing, name = "ElmKernelParser_isSubString" }
+                    Just { qualification = [], name = "ElmKernelParser_isSubString" }
 
                 "isSubChar" ->
-                    Just { moduleOrigin = Nothing, name = "ElmKernelParser_isSubChar" }
+                    Just { qualification = [], name = "ElmKernelParser_isSubChar" }
 
                 "isAsciiCode" ->
-                    Just { moduleOrigin = Nothing, name = "ElmKernelParser_isAsciiCode" }
+                    Just { qualification = [], name = "ElmKernelParser_isAsciiCode" }
 
                 "chompBase10" ->
-                    Just { moduleOrigin = Nothing, name = "ElmKernelParser_chompBase10" }
+                    Just { qualification = [], name = "ElmKernelParser_chompBase10" }
 
                 "consumeBase" ->
-                    Just { moduleOrigin = Nothing, name = "ElmKernelParser_consumeBase" }
+                    Just { qualification = [], name = "ElmKernelParser_consumeBase" }
 
                 "consumeBase16" ->
-                    Just { moduleOrigin = Nothing, name = "ElmKernelParser_consumeBase16" }
+                    Just { qualification = [], name = "ElmKernelParser_consumeBase16" }
 
                 "findSubString" ->
-                    Just { moduleOrigin = Nothing, name = "ElmKernelParser_findSubString" }
+                    Just { qualification = [], name = "ElmKernelParser_findSubString" }
 
                 _ ->
                     Nothing
@@ -5099,25 +4537,25 @@ referenceToCoreRust reference =
         "Elm.Kernel.VirtualDom" ->
             case reference.name of
                 "property" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_property" }
+                    Just { qualification = [], name = "VirtualDom_property" }
 
                 "attribute" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_attribute" }
+                    Just { qualification = [], name = "VirtualDom_attribute" }
 
                 "attributeNS" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_attributeNS" }
+                    Just { qualification = [], name = "VirtualDom_attributeNS" }
 
                 "node" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_node" }
+                    Just { qualification = [], name = "VirtualDom_node" }
 
                 "nodeNS" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_nodeNS" }
+                    Just { qualification = [], name = "VirtualDom_nodeNS" }
 
                 "noJavaScriptOrHtmlUri" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_noJavaScriptOrHtmlUri" }
+                    Just { qualification = [], name = "VirtualDom_noJavaScriptOrHtmlUri" }
 
                 "noJavaScriptUri" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_noJavaScriptUri" }
+                    Just { qualification = [], name = "VirtualDom_noJavaScriptUri" }
 
                 _ ->
                     Nothing
@@ -5125,76 +4563,76 @@ referenceToCoreRust reference =
         "VirtualDom" ->
             case reference.name of
                 "Normal" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_Normal" }
+                    Just { qualification = [], name = "VirtualDom_Normal" }
 
                 "MayStopPropagation" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_MayStopPropagation" }
+                    Just { qualification = [], name = "VirtualDom_MayStopPropagation" }
 
                 "MayPreventDefault" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_MayPreventDefault" }
+                    Just { qualification = [], name = "VirtualDom_MayPreventDefault" }
 
                 "Custom" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_Custom" }
+                    Just { qualification = [], name = "VirtualDom_Custom" }
 
                 "text" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_text" }
+                    Just { qualification = [], name = "VirtualDom_text" }
 
                 "node" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_node" }
+                    Just { qualification = [], name = "VirtualDom_node" }
 
                 "nodeNS" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_nodeNS" }
+                    Just { qualification = [], name = "VirtualDom_nodeNS" }
 
                 "style" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_style" }
+                    Just { qualification = [], name = "VirtualDom_style" }
 
                 "property" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_property" }
+                    Just { qualification = [], name = "VirtualDom_property" }
 
                 "attribute" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_attribute" }
+                    Just { qualification = [], name = "VirtualDom_attribute" }
 
                 "attributeNS" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_attributeNS" }
+                    Just { qualification = [], name = "VirtualDom_attributeNS" }
 
                 "on" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_on" }
+                    Just { qualification = [], name = "VirtualDom_on" }
 
                 "map" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_map" }
+                    Just { qualification = [], name = "VirtualDom_map" }
 
                 "mapAttribute" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_mapAttribute" }
+                    Just { qualification = [], name = "VirtualDom_mapAttribute" }
 
                 "keyedNode" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_keyedNode" }
+                    Just { qualification = [], name = "VirtualDom_keyedNode" }
 
                 "keyedNodeNS" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_keyedNodeNS" }
+                    Just { qualification = [], name = "VirtualDom_keyedNodeNS" }
 
                 "lazy" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_lazy" }
+                    Just { qualification = [], name = "VirtualDom_lazy" }
 
                 "lazy2" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_lazy2" }
+                    Just { qualification = [], name = "VirtualDom_lazy2" }
 
                 "lazy3" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_lazy3" }
+                    Just { qualification = [], name = "VirtualDom_lazy3" }
 
                 "lazy4" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_lazy4" }
+                    Just { qualification = [], name = "VirtualDom_lazy4" }
 
                 "lazy5" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_lazy5" }
+                    Just { qualification = [], name = "VirtualDom_lazy5" }
 
                 "lazy6" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_lazy6" }
+                    Just { qualification = [], name = "VirtualDom_lazy6" }
 
                 "lazy7" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_lazy7" }
+                    Just { qualification = [], name = "VirtualDom_lazy7" }
 
                 "lazy8" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_lazy8" }
+                    Just { qualification = [], name = "VirtualDom_lazy8" }
 
                 _ ->
                     Nothing
@@ -5202,13 +4640,13 @@ referenceToCoreRust reference =
         "Debug" ->
             case reference.name of
                 "log" ->
-                    Just { moduleOrigin = Nothing, name = "Debug_log" }
+                    Just { qualification = [], name = "Debug_log" }
 
                 "toString" ->
-                    Just { moduleOrigin = Nothing, name = "Debug_toString" }
+                    Just { qualification = [], name = "Debug_toString" }
 
                 "todo" ->
-                    Just { moduleOrigin = Nothing, name = "Debug_todo" }
+                    Just { qualification = [], name = "Debug_todo" }
 
                 _ ->
                     Nothing
@@ -5216,58 +4654,58 @@ referenceToCoreRust reference =
         "Math.Vector2" ->
             case reference.name of
                 "add" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector2_add" }
+                    Just { qualification = [], name = "MathVector2_add" }
 
                 "direction" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector2_direction" }
+                    Just { qualification = [], name = "MathVector2_direction" }
 
                 "distance" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector2_distance" }
+                    Just { qualification = [], name = "MathVector2_distance" }
 
                 "distanceSquared" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector2_distanceSquared" }
+                    Just { qualification = [], name = "MathVector2_distanceSquared" }
 
                 "dot" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector2_dot" }
+                    Just { qualification = [], name = "MathVector2_dot" }
 
                 "fromRecord" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector2_fromRecord" }
+                    Just { qualification = [], name = "MathVector2_fromRecord" }
 
                 "getX" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector2_getX" }
+                    Just { qualification = [], name = "MathVector2_getX" }
 
                 "getY" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector2_getY" }
+                    Just { qualification = [], name = "MathVector2_getY" }
 
                 "length" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector2_length" }
+                    Just { qualification = [], name = "MathVector2_length" }
 
                 "lengthSquared" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector2_lengthSquared" }
+                    Just { qualification = [], name = "MathVector2_lengthSquared" }
 
                 "negate" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector2_negate" }
+                    Just { qualification = [], name = "MathVector2_negate" }
 
                 "normalize" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector2_normalize" }
+                    Just { qualification = [], name = "MathVector2_normalize" }
 
                 "scale" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector2_scale" }
+                    Just { qualification = [], name = "MathVector2_scale" }
 
                 "setX" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector2_setX" }
+                    Just { qualification = [], name = "MathVector2_setX" }
 
                 "setY" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector2_setY" }
+                    Just { qualification = [], name = "MathVector2_setY" }
 
                 "sub" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector2_sub" }
+                    Just { qualification = [], name = "MathVector2_sub" }
 
                 "toRecord" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector2_toRecord" }
+                    Just { qualification = [], name = "MathVector2_toRecord" }
 
                 "vec2" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector2_vec2" }
+                    Just { qualification = [], name = "MathVector2_vec2" }
 
                 _ ->
                     Nothing
@@ -5275,76 +4713,76 @@ referenceToCoreRust reference =
         "Math.Vector3" ->
             case reference.name of
                 "add" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector3_add" }
+                    Just { qualification = [], name = "MathVector3_add" }
 
                 "cross" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector3_cross" }
+                    Just { qualification = [], name = "MathVector3_cross" }
 
                 "direction" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector3_direction" }
+                    Just { qualification = [], name = "MathVector3_direction" }
 
                 "distance" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector3_distance" }
+                    Just { qualification = [], name = "MathVector3_distance" }
 
                 "distanceSquared" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector3_distanceSquared" }
+                    Just { qualification = [], name = "MathVector3_distanceSquared" }
 
                 "dot" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector3_dot" }
+                    Just { qualification = [], name = "MathVector3_dot" }
 
                 "fromRecord" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector3_fromRecord" }
+                    Just { qualification = [], name = "MathVector3_fromRecord" }
 
                 "getX" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector3_getX" }
+                    Just { qualification = [], name = "MathVector3_getX" }
 
                 "getY" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector3_getY" }
+                    Just { qualification = [], name = "MathVector3_getY" }
 
                 "getZ" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector3_getZ" }
+                    Just { qualification = [], name = "MathVector3_getZ" }
 
                 "i" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector3_i" }
+                    Just { qualification = [], name = "MathVector3_i" }
 
                 "j" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector3_j" }
+                    Just { qualification = [], name = "MathVector3_j" }
 
                 "k" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector3_k" }
+                    Just { qualification = [], name = "MathVector3_k" }
 
                 "length" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector3_length" }
+                    Just { qualification = [], name = "MathVector3_length" }
 
                 "lengthSquared" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector3_lengthSquared" }
+                    Just { qualification = [], name = "MathVector3_lengthSquared" }
 
                 "negate" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector3_negate" }
+                    Just { qualification = [], name = "MathVector3_negate" }
 
                 "normalize" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector3_normalize" }
+                    Just { qualification = [], name = "MathVector3_normalize" }
 
                 "scale" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector3_scale" }
+                    Just { qualification = [], name = "MathVector3_scale" }
 
                 "setX" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector3_setX" }
+                    Just { qualification = [], name = "MathVector3_setX" }
 
                 "setY" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector3_setY" }
+                    Just { qualification = [], name = "MathVector3_setY" }
 
                 "setZ" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector3_setZ" }
+                    Just { qualification = [], name = "MathVector3_setZ" }
 
                 "sub" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector3_sub" }
+                    Just { qualification = [], name = "MathVector3_sub" }
 
                 "toRecord" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector3_toRecord" }
+                    Just { qualification = [], name = "MathVector3_toRecord" }
 
                 "vec3" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector3_vec3" }
+                    Just { qualification = [], name = "MathVector3_vec3" }
 
                 _ ->
                     Nothing
@@ -5352,70 +4790,70 @@ referenceToCoreRust reference =
         "Math.Vector4" ->
             case reference.name of
                 "add" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector4_add" }
+                    Just { qualification = [], name = "MathVector4_add" }
 
                 "direction" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector4_direction" }
+                    Just { qualification = [], name = "MathVector4_direction" }
 
                 "distance" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector4_distance" }
+                    Just { qualification = [], name = "MathVector4_distance" }
 
                 "distanceSquared" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector4_distanceSquared" }
+                    Just { qualification = [], name = "MathVector4_distanceSquared" }
 
                 "dot" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector4_dot" }
+                    Just { qualification = [], name = "MathVector4_dot" }
 
                 "fromRecord" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector4_fromRecord" }
+                    Just { qualification = [], name = "MathVector4_fromRecord" }
 
                 "getW" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector4_getW" }
+                    Just { qualification = [], name = "MathVector4_getW" }
 
                 "getX" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector4_getX" }
+                    Just { qualification = [], name = "MathVector4_getX" }
 
                 "getY" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector4_getY" }
+                    Just { qualification = [], name = "MathVector4_getY" }
 
                 "getZ" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector4_getZ" }
+                    Just { qualification = [], name = "MathVector4_getZ" }
 
                 "length" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector4_length" }
+                    Just { qualification = [], name = "MathVector4_length" }
 
                 "lengthSquared" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector4_lengthSquared" }
+                    Just { qualification = [], name = "MathVector4_lengthSquared" }
 
                 "negate" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector3_negate" }
+                    Just { qualification = [], name = "MathVector3_negate" }
 
                 "normalize" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector3_normalize" }
+                    Just { qualification = [], name = "MathVector3_normalize" }
 
                 "scale" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector4_scale" }
+                    Just { qualification = [], name = "MathVector4_scale" }
 
                 "setW" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector4_setW" }
+                    Just { qualification = [], name = "MathVector4_setW" }
 
                 "setX" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector4_setX" }
+                    Just { qualification = [], name = "MathVector4_setX" }
 
                 "setY" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector4_setY" }
+                    Just { qualification = [], name = "MathVector4_setY" }
 
                 "setZ" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector4_setZ" }
+                    Just { qualification = [], name = "MathVector4_setZ" }
 
                 "sub" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector4_sub" }
+                    Just { qualification = [], name = "MathVector4_sub" }
 
                 "toRecord" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector4_toRecord" }
+                    Just { qualification = [], name = "MathVector4_toRecord" }
 
                 "vec4" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector4_vec4" }
+                    Just { qualification = [], name = "MathVector4_vec4" }
 
                 _ ->
                     Nothing
@@ -5427,7 +4865,7 @@ referenceToCoreRust reference =
         "Platform" ->
             case reference.name of
                 "worker" ->
-                    Just { moduleOrigin = Nothing, name = "Platform_worker" }
+                    Just { qualification = [], name = "Platform_worker" }
 
                 _ ->
                     Nothing
@@ -5435,13 +4873,13 @@ referenceToCoreRust reference =
         "Platform.Cmd" ->
             case reference.name of
                 "none" ->
-                    Just { moduleOrigin = Nothing, name = "PlatformCmd_none" }
+                    Just { qualification = [], name = "PlatformCmd_none" }
 
                 "batch" ->
-                    Just { moduleOrigin = Nothing, name = "PlatformCmd_batch" }
+                    Just { qualification = [], name = "PlatformCmd_batch" }
 
                 "map" ->
-                    Just { moduleOrigin = Nothing, name = "PlatformCmd_map" }
+                    Just { qualification = [], name = "PlatformCmd_map" }
 
                 _ ->
                     Nothing
@@ -5449,13 +4887,13 @@ referenceToCoreRust reference =
         "Platform.Sub" ->
             case reference.name of
                 "none" ->
-                    Just { moduleOrigin = Nothing, name = "PlatformSub_none" }
+                    Just { qualification = [], name = "PlatformSub_none" }
 
                 "batch" ->
-                    Just { moduleOrigin = Nothing, name = "PlatformSub_batch" }
+                    Just { qualification = [], name = "PlatformSub_batch" }
 
                 "map" ->
-                    Just { moduleOrigin = Nothing, name = "PlatformSub_map" }
+                    Just { qualification = [], name = "PlatformSub_map" }
 
                 _ ->
                     Nothing
@@ -5507,14 +4945,30 @@ printRustPatternNotParenthesized rustPattern =
         RustPatternVariable name ->
             Print.exactly name
 
+        RustPatternAlias rustPatternAlias ->
+            let
+                patternPrint : Print
+                patternPrint =
+                    rustPatternAlias.pattern |> printRustPatternParenthesizedIfSpaceSeparated
+            in
+            Print.exactly (rustPatternAlias.variable ++ " @")
+                |> Print.followedBy
+                    (Print.withIndentAtNextMultipleOf4
+                        (Print.spaceOrLinebreakIndented (patternPrint |> Print.lineSpread)
+                            |> Print.followedBy
+                                patternPrint
+                        )
+                    )
+
         RustPatternRecord recordFields ->
             printRustPatternRecord recordFields
 
         RustPatternVariant patternVariant ->
             Print.exactly
-                (patternVariant.originTypeName
-                    ++ "."
-                    ++ patternVariant.name
+                (qualifiedReferenceToRustName
+                    { qualification = patternVariant.originTypeName
+                    , name = patternVariant.name
+                    }
                 )
                 |> Print.followedBy
                     (case patternVariant.values of
@@ -6947,26 +6401,23 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                         { matched = RustExpressionSelf
                                                                                         , case0 =
                                                                                             { pattern =
-                                                                                                RustPatternVariant
-                                                                                                    { originTypeName = rustTypeName
-                                                                                                    , name = "Record"
-                                                                                                    , values =
-                                                                                                        rustRecordFields
-                                                                                                            |> List.map
-                                                                                                                (\valueName ->
-                                                                                                                    { label = Just valueName
-                                                                                                                    , value =
-                                                                                                                        if valueName == rustRecordField then
-                                                                                                                            RustPatternVariable "result"
+                                                                                                RustPatternRecord
+                                                                                                    (rustRecordFields
+                                                                                                        |> List.map
+                                                                                                            (\valueName ->
+                                                                                                                ( valueName
+                                                                                                                , if valueName == rustRecordField then
+                                                                                                                    RustPatternVariable "result"
 
-                                                                                                                        else
-                                                                                                                            RustPatternIgnore
-                                                                                                                    }
+                                                                                                                  else
+                                                                                                                    RustPatternIgnore
                                                                                                                 )
-                                                                                                    }
+                                                                                                            )
+                                                                                                        |> FastDict.fromList
+                                                                                                    )
                                                                                             , result =
                                                                                                 RustExpressionReference
-                                                                                                    { moduleOrigin = Nothing
+                                                                                                    { qualification = []
                                                                                                     , name = "result"
                                                                                                     }
                                                                                             }
@@ -6998,7 +6449,11 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
 
 generatedRecordTypeName : List String -> String
 generatedRecordTypeName rustFieldNames =
-    "Generated_" ++ (rustFieldNames |> String.join "_")
+    "Generated"
+        ++ (rustFieldNames
+                |> List.map stringFirstCharToUpper
+                |> String.concat
+           )
 
 
 portsOutgoingDictEmptyPortsIncomingDictEmpty : { portsOutgoing : FastSet.Set a, portsIncoming : FastSet.Set a }
@@ -7355,7 +6810,7 @@ valueOrFunctionDeclaration moduleContext syntaxDeclarationValueOrFunction =
                                                     { called = soFar.result
                                                     , argument =
                                                         RustExpressionReference
-                                                            { moduleOrigin = Nothing
+                                                            { qualification = []
                                                             , name = additionalGeneratedParameter.name
                                                             }
                                                     }
@@ -7382,7 +6837,7 @@ valueOrFunctionDeclaration moduleContext syntaxDeclarationValueOrFunction =
                                                                 { pattern = parameter
                                                                 , expression =
                                                                     RustExpressionReference
-                                                                        { moduleOrigin = Nothing
+                                                                        { qualification = []
                                                                         , name = generatedParameterNameForIndex parameterIndex
                                                                         }
                                                                 }
@@ -7438,6 +6893,8 @@ generatedParameterNameForIndex parameterIndex =
     "generated_" ++ (parameterIndex |> String.fromInt)
 
 
+{-| TODO on each use, check if needs to be normalized
+-}
 variableNameDisambiguateFromRustKeywords : String -> String
 variableNameDisambiguateFromRustKeywords variableName =
     if
@@ -7616,7 +7073,7 @@ expression context expressionTypedNode =
                                     RustExpressionRecordAccess
                                         { record =
                                             RustExpressionReference
-                                                { moduleOrigin = Nothing
+                                                { qualification = []
                                                 , name = generatedAccessedRecordVariableName
                                                 }
                                         , field =
@@ -7670,12 +7127,12 @@ expression context expressionTypedNode =
                                                         [ { label = Nothing
                                                           , value =
                                                                 RustExpressionReference
-                                                                    { moduleOrigin = Nothing, name = "generated_left" }
+                                                                    { qualification = [], name = "generated_left" }
                                                           }
                                                         , { label = Nothing
                                                           , value =
                                                                 RustExpressionReference
-                                                                    { moduleOrigin = Nothing, name = "generated_right" }
+                                                                    { qualification = [], name = "generated_right" }
                                                           }
                                                         ]
                                                     }
@@ -7944,7 +7401,7 @@ expression context expressionTypedNode =
                                 "True" ->
                                     Just
                                         (RustExpressionReference
-                                            { moduleOrigin = Nothing
+                                            { qualification = []
                                             , name = "true"
                                             }
                                         )
@@ -7952,7 +7409,7 @@ expression context expressionTypedNode =
                                 "False" ->
                                     Just
                                         (RustExpressionReference
-                                            { moduleOrigin = Nothing
+                                            { qualification = []
                                             , name = "false"
                                             }
                                         )
@@ -7995,6 +7452,8 @@ expression context expressionTypedNode =
                             (reference.moduleOrigin |> String.replace "." "")
                                 ++ "_"
                                 ++ reference.choiceTypeName
+                                ++ "Guts"
+                                |> normalizeToRustPascalCase
                     in
                     Ok
                         { statements = []
@@ -8016,7 +7475,7 @@ expression context expressionTypedNode =
                             of
                                 [] ->
                                     RustExpressionVariant
-                                        { originTypeName = rustOriginTypeName
+                                        { originTypeName = [ rustOriginTypeName ]
                                         , name = rustVariantName
                                         }
 
@@ -8049,7 +7508,7 @@ expression context expressionTypedNode =
                                             (RustExpressionCall
                                                 { called =
                                                     RustExpressionVariant
-                                                        { originTypeName = rustOriginTypeName
+                                                        { originTypeName = [ rustOriginTypeName ]
                                                         , name = rustVariantName
                                                         }
                                                 , arguments =
@@ -8059,7 +7518,7 @@ expression context expressionTypedNode =
                                                                 { label = Nothing
                                                                 , value =
                                                                     RustExpressionReference
-                                                                        { moduleOrigin = Nothing
+                                                                        { qualification = []
                                                                         , name = generatedValueParameterName valueIndex
                                                                         }
                                                                 }
@@ -8101,7 +7560,7 @@ expression context expressionTypedNode =
                                                     |> FastDict.insert
                                                         (fieldName |> variableNameDisambiguateFromRustKeywords)
                                                         (RustExpressionReference
-                                                            { moduleOrigin = Nothing
+                                                            { qualification = []
                                                             , name = generatedFieldValueParameterName fieldName
                                                             }
                                                         )
@@ -8138,23 +7597,8 @@ expression context expressionTypedNode =
                                                     , result = resultSoFar
                                                     }
                                             )
-                                            (RustExpressionCall
-                                                { called =
-                                                    RustExpressionVariant
-                                                        { originTypeName =
-                                                            generatedRecordTypeName
-                                                                (resultRecordFields |> FastDict.keys)
-                                                        , name = "Record"
-                                                        }
-                                                , arguments =
-                                                    resultRecordFields
-                                                        |> FastDict.foldr
-                                                            (\fieldName fieldValue soFar ->
-                                                                { label = Just fieldName, value = fieldValue }
-                                                                    :: soFar
-                                                            )
-                                                            []
-                                                }
+                                            (RustExpressionRecord
+                                                resultRecordFields
                                             )
                                 }
 
@@ -8194,13 +7638,13 @@ expression context expressionTypedNode =
                                 Nothing ->
                                     -- variable from pattern
                                     RustExpressionReference
-                                        { moduleOrigin = Nothing
+                                        { qualification = []
                                         , name = variableFromWithinDeclaration
                                         }
 
                                 Just letDeclaredValueOrFunctionType ->
                                     rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary context
-                                        { moduleOrigin = Nothing
+                                        { qualification = []
                                         , name = variableFromWithinDeclaration
                                         , inferredType = expressionTypedNode.type_
                                         , originDeclarationTypeWithExpandedAliases =
@@ -8218,7 +7662,7 @@ expression context expressionTypedNode =
                                 Nothing ->
                                     -- error?
                                     RustExpressionReference
-                                        { moduleOrigin = Nothing
+                                        { qualification = []
                                         , name =
                                             referenceToRustName
                                                 { moduleOrigin = reference.moduleOrigin
@@ -8240,8 +7684,8 @@ expression context expressionTypedNode =
                                                     [ RustExpressionCall
                                                         { called =
                                                             RustExpressionVariant
-                                                                { originTypeName = "PlatformCmd_CmdSingle"
-                                                                , name = "PlatformCmd_PortOutgoing"
+                                                                { originTypeName = [ "PlatformCmdSingle" ]
+                                                                , name = "PortOutgoing"
                                                                 }
                                                         , arguments =
                                                             [ { label = Just "name"
@@ -8251,7 +7695,7 @@ expression context expressionTypedNode =
                                                             , { label = Just "value"
                                                               , value =
                                                                     RustExpressionReference
-                                                                        { moduleOrigin = Nothing
+                                                                        { qualification = []
                                                                         , name = "generated_value"
                                                                         }
                                                               }
@@ -8289,8 +7733,8 @@ expression context expressionTypedNode =
                                                     [ RustExpressionCall
                                                         { called =
                                                             RustExpressionVariant
-                                                                { originTypeName = "PlatformSub_SubSingle"
-                                                                , name = "PlatformSub_PortIncoming"
+                                                                { originTypeName = [ "PlatformSubSingle" ]
+                                                                , name = "PortIncoming"
                                                                 }
                                                         , arguments =
                                                             [ { label = Just "name"
@@ -8300,7 +7744,7 @@ expression context expressionTypedNode =
                                                             , { label = Just "onValue"
                                                               , value =
                                                                     RustExpressionReference
-                                                                        { moduleOrigin = Nothing
+                                                                        { qualification = []
                                                                         , name = "generated_onValue"
                                                                         }
                                                               }
@@ -8316,7 +7760,7 @@ expression context expressionTypedNode =
                                         of
                                             Nothing ->
                                                 RustExpressionReference
-                                                    { moduleOrigin = Nothing
+                                                    { qualification = []
                                                     , name =
                                                         referenceToRustName
                                                             { moduleOrigin = reference.moduleOrigin
@@ -8338,7 +7782,7 @@ expression context expressionTypedNode =
                                                             |> inferredTypeExpandInnerAliases
                                                                 typeAliasesInModule
 
-                                                    rustReference : { moduleOrigin : Maybe String, name : String }
+                                                    rustReference : { qualification : List String, name : String }
                                                     rustReference =
                                                         case
                                                             { moduleOrigin = reference.moduleOrigin
@@ -8351,7 +7795,7 @@ expression context expressionTypedNode =
                                                                 coreRustReference
 
                                                             Nothing ->
-                                                                { moduleOrigin = Nothing
+                                                                { qualification = []
                                                                 , name =
                                                                     referenceToRustName
                                                                         { moduleOrigin = reference.moduleOrigin
@@ -8368,7 +7812,7 @@ expression context expressionTypedNode =
                                                                 }
                                                 in
                                                 rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary context
-                                                    { moduleOrigin = rustReference.moduleOrigin
+                                                    { qualification = rustReference.qualification
                                                     , name = rustReference.name
                                                     , inferredType = expressionTypedNode.type_
                                                     , originDeclarationTypeWithExpandedAliases =
@@ -8432,7 +7876,7 @@ expression context expressionTypedNode =
                                    ]
                         , result =
                             RustExpressionReference
-                                { moduleOrigin = Nothing
+                                { qualification = []
                                 , name = ifLocalResultVariableToInitialize
                                 }
                         }
@@ -8586,7 +8030,7 @@ expression context expressionTypedNode =
                                 RustExpressionCall
                                     { called =
                                         RustExpressionReference
-                                            { moduleOrigin = Nothing, name = "List_singleton" }
+                                            { qualification = [], name = "list_singleton" }
                                     , arguments =
                                         [ { label = Nothing
                                           , value = onlyElement.result
@@ -8595,11 +8039,11 @@ expression context expressionTypedNode =
                                     }
 
                             element0 :: element1 :: element2Up ->
-                                -- check if slow. If yes, replace with .List_Cons | .List_Empty
+                                -- check if slow. If yes, replace with .list_Cons | .list_Empty
                                 RustExpressionCall
                                     { called =
                                         RustExpressionReference
-                                            { moduleOrigin = Nothing, name = "Array_toList" }
+                                            { qualification = [], name = "array_toList" }
                                     , arguments =
                                         [ { label = Nothing
                                           , value =
@@ -8650,23 +8094,8 @@ expression context expressionTypedNode =
                                     fieldValue.statements
                                 )
                     , result =
-                        RustExpressionCall
-                            { called =
-                                RustExpressionVariant
-                                    { originTypeName =
-                                        generatedRecordTypeName
-                                            (fieldResults |> FastDict.keys)
-                                    , name = "Record"
-                                    }
-                            , arguments =
-                                fieldResults
-                                    |> FastDict.foldr
-                                        (\fieldName fieldValue soFar ->
-                                            { label = Just fieldName, value = fieldValue }
-                                                :: soFar
-                                        )
-                                        []
-                            }
+                        RustExpressionRecord
+                            fieldResults
                     }
                 )
                 (fieldNodes
@@ -8711,7 +8140,7 @@ expression context expressionTypedNode =
                                 rustOriginalRecordVariableReferenceExpression : RustExpression
                                 rustOriginalRecordVariableReferenceExpression =
                                     RustExpressionReference
-                                        { moduleOrigin = Nothing, name = originalRecordVariable }
+                                        { qualification = [], name = originalRecordVariable }
 
                                 fieldsToSetDict : FastDict.Dict String RustExpression
                                 fieldsToSetDict =
@@ -8729,41 +8158,21 @@ expression context expressionTypedNode =
                                             fieldValue.statements
                                         )
                             , result =
-                                RustExpressionCall
-                                    { called =
-                                        RustExpressionVariant
-                                            { originTypeName =
-                                                generatedRecordTypeName
-                                                    (allFields
-                                                        |> FastDict.foldr
-                                                            (\fieldName _ soFar ->
-                                                                (fieldName |> variableNameDisambiguateFromRustKeywords)
-                                                                    :: soFar
-                                                            )
-                                                            []
-                                                    )
-                                            , name = "Record"
-                                            }
-                                    , arguments =
-                                        allFields
-                                            |> FastDict.foldr
-                                                (\fieldName _ soFar ->
-                                                    { label = Just fieldName
-                                                    , value =
-                                                        case fieldsToSetDict |> FastDict.get fieldName of
-                                                            Just valueToSet ->
-                                                                valueToSet
+                                RustExpressionRecord
+                                    (allFields
+                                        |> FastDict.map
+                                            (\fieldName _ ->
+                                                case fieldsToSetDict |> FastDict.get fieldName of
+                                                    Just valueToSet ->
+                                                        valueToSet
 
-                                                            Nothing ->
-                                                                RustExpressionRecordAccess
-                                                                    { record = rustOriginalRecordVariableReferenceExpression
-                                                                    , field = fieldName
-                                                                    }
-                                                    }
-                                                        :: soFar
-                                                )
-                                                []
-                                    }
+                                                    Nothing ->
+                                                        RustExpressionRecordAccess
+                                                            { record = rustOriginalRecordVariableReferenceExpression
+                                                            , field = fieldName
+                                                            }
+                                            )
+                                    )
                             }
                         )
                         ((recordUpdate.field0 :: recordUpdate.field1Up)
@@ -8863,7 +8272,7 @@ expression context expressionTypedNode =
                                                                 { pattern = parameter
                                                                 , expression =
                                                                     RustExpressionReference
-                                                                        { moduleOrigin = Nothing
+                                                                        { qualification = []
                                                                         , name =
                                                                             generatedParameterNameForIndexAtPath
                                                                                 parameterIndex
@@ -8997,7 +8406,7 @@ expression context expressionTypedNode =
                                    ]
                         , result =
                             RustExpressionReference
-                                { moduleOrigin = Nothing
+                                { qualification = []
                                 , name = switchLocalResultVariableToInitialize
                                 }
                         }
@@ -9152,8 +8561,8 @@ expression context expressionTypedNode =
 rustExpressionListEmpty : RustExpression
 rustExpressionListEmpty =
     RustExpressionVariant
-        { originTypeName = "List_List"
-        , name = "List_Empty"
+        { originTypeName = [ "ListListGuts" ]
+        , name = "Empty"
         }
 
 
@@ -9226,6 +8635,8 @@ expressionWrappingInLetIfOrSwitchResult context expressionTypedNode =
                 }
 
 
+{-| TODO remove
+-}
 rustExpressionWrapInLetIfOrSwitchResult :
     List String
     ->
@@ -9246,6 +8657,9 @@ rustExpressionWrapInLetIfOrSwitchResult path rustExpressionTyped =
 
                 RustExpressionIfElse _ ->
                     True
+
+                RustExpressionUnit ->
+                    False
 
                 RustExpressionDouble _ ->
                     False
@@ -9302,7 +8716,7 @@ rustExpressionWrapInLetIfOrSwitchResult path rustExpressionTyped =
             ]
         , result =
             RustExpressionReference
-                { moduleOrigin = Nothing
+                { qualification = []
                 , name = switchLocalResultVariableToInitialize
                 }
         }
@@ -9318,7 +8732,7 @@ rustTypeJsonEncodeValue =
     RustTypeConstruct
         { moduleOrigin = Nothing
         , isFunction = False
-        , name = "JsonEncode_Value"
+        , name = "json_encode_Value"
         , arguments = []
         }
 
@@ -9346,7 +8760,7 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
     , path : List String
     }
     ->
-        { moduleOrigin : Maybe String
+        { qualification : List String
         , name : String
         , inferredType : ElmSyntaxTypeInfer.Type
         , originDeclarationTypeWithExpandedAliases : ElmSyntaxTypeInfer.Type
@@ -9364,7 +8778,7 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
     case parameterCount of
         1 ->
             RustExpressionReference
-                { moduleOrigin = rustReference.moduleOrigin
+                { qualification = rustReference.qualification
                 , name = rustReference.name
                 }
 
@@ -9374,7 +8788,7 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
                     |> inferredTypeIsConcreteRustType
             then
                 RustExpressionReference
-                    { moduleOrigin = rustReference.moduleOrigin
+                    { qualification = rustReference.qualification
                     , name = rustReference.name
                     }
 
@@ -9382,7 +8796,7 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
                 RustExpressionCall
                     { called =
                         RustExpressionReference
-                            { moduleOrigin = rustReference.moduleOrigin
+                            { qualification = rustReference.qualification
                             , name = rustReference.name
                             }
                     , arguments = []
@@ -9422,7 +8836,7 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
                     (RustExpressionCall
                         { called =
                             RustExpressionReference
-                                { moduleOrigin = rustReference.moduleOrigin
+                                { qualification = rustReference.qualification
                                 , name = rustReference.name
                                 }
                         , arguments =
@@ -9432,7 +8846,7 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
                                         { label = Nothing
                                         , value =
                                             RustExpressionReference
-                                                { moduleOrigin = Nothing
+                                                { qualification = []
                                                 , name =
                                                     generatedParameterNameForIndexAtPath
                                                         parameterIndex
@@ -9475,6 +8889,9 @@ rustExpressionAlterBindingNames :
 rustExpressionAlterBindingNames variableNameChange rustExpression =
     -- IGNORE TCO
     case rustExpression of
+        RustExpressionUnit ->
+            RustExpressionUnit
+
         RustExpressionDouble _ ->
             rustExpression
 
@@ -9491,13 +8908,13 @@ rustExpressionAlterBindingNames variableNameChange rustExpression =
             rustExpression
 
         RustExpressionReference reference ->
-            case reference.moduleOrigin of
-                Just _ ->
+            case reference.qualification of
+                _ :: _ ->
                     rustExpression
 
-                Nothing ->
+                [] ->
                     RustExpressionReference
-                        { moduleOrigin = Nothing
+                        { qualification = []
                         , name = reference.name |> variableNameChange
                         }
 
@@ -9805,6 +9222,13 @@ rustPatternAlterBindingNames variableNameChange inferredPattern =
             RustPatternVariable
                 (existingVariable |> variableNameChange)
 
+        RustPatternAlias rustPatternAlias ->
+            RustPatternAlias
+                { variable = rustPatternAlias.variable |> variableNameChange
+                , pattern =
+                    rustPatternAlias.pattern |> rustPatternAlterBindingNames variableNameChange
+                }
+
         RustPatternRecord fields ->
             RustPatternRecord
                 (fields
@@ -9819,6 +9243,7 @@ rustPatternAlterBindingNames variableNameChange inferredPattern =
             RustPatternVariant
                 { originTypeName = variant.originTypeName
                 , name = variant.name
+                , isReference = variant.isReference
                 , values =
                     variant.values
                         |> List.map
@@ -10341,15 +9766,7 @@ okResultRustExpressionUnitStatementsEmpty :
 okResultRustExpressionUnitStatementsEmpty =
     Ok
         { statements = []
-        , result = rustExpressionUnit
-        }
-
-
-rustExpressionUnit : RustExpression
-rustExpressionUnit =
-    RustExpressionVariant
-        { originTypeName = "Unit"
-        , name = "Unit"
+        , result = RustExpressionUnit
         }
 
 
@@ -10369,16 +9786,16 @@ okResultRustExpressionRecordEmptyStatementsEmpty =
 rustExpressionReferenceListAppend : RustExpression
 rustExpressionReferenceListAppend =
     RustExpressionReference
-        { moduleOrigin = Nothing
-        , name = "List_append"
+        { qualification = []
+        , name = "list_append"
         }
 
 
 rustExpressionReferenceStringAppend : RustExpression
 rustExpressionReferenceStringAppend =
     RustExpressionReference
-        { moduleOrigin = Nothing
-        , name = "String_append"
+        { qualification = []
+        , name = "string_append"
         }
 
 
@@ -10545,7 +9962,7 @@ rustExpressionCallCondense call =
                         (call.argument |> rustExpressionIsConstant)
                             || (((call.called
                                     |> rustExpressionCountUsesOfReference
-                                        { moduleOrigin = Nothing, name = parameter.name }
+                                        { qualification = [], name = parameter.name }
                                  )
                                     == 1
                                 )
@@ -10560,28 +9977,28 @@ rustExpressionCallCondense call =
                                          in
                                          (calledLambdaResultInnermostLambdaResult.result
                                             |> rustExpressionUsesReferenceInLambdaOrFuncDeclaration
-                                                { moduleOrigin = Nothing, name = parameter.name }
+                                                { qualification = [], name = parameter.name }
                                          )
                                             || (calledLambdaResultInnermostLambdaResult.statements
                                                     |> List.any
                                                         (\statement ->
                                                             statement
                                                                 |> rustStatementUsesReferenceInLambdaOrFuncDeclaration
-                                                                    { moduleOrigin = Nothing, name = parameter.name }
+                                                                    { qualification = [], name = parameter.name }
                                                         )
                                                )
                                         )
                                )
                     then
                         let
-                            substituteReferences : { moduleOrigin : Maybe String, name : String } -> RustExpression
+                            substituteReferences : { qualification : List String, name : String } -> RustExpression
                             substituteReferences existingReference =
                                 if
-                                    case existingReference.moduleOrigin of
-                                        Just _ ->
+                                    case existingReference.qualification of
+                                        _ :: _ ->
                                             False
 
-                                        Nothing ->
+                                        [] ->
                                             existingReference.name == parameter.name
                                 then
                                     call.argument
@@ -10622,13 +10039,13 @@ rustExpressionCallCondense call =
         RustExpressionReference reference ->
             case
                 case reference.name of
-                    "Array_fromList" ->
+                    "array_fromList" ->
                         case call.argument of
                             RustExpressionCall argumentCall ->
                                 case argumentCall.called of
                                     RustExpressionReference argumentReference ->
                                         case argumentReference.name of
-                                            "Array_toList" ->
+                                            "array_toList" ->
                                                 case argumentCall.arguments |> List.map .value of
                                                     [ RustExpressionArrayLiteral elements ] ->
                                                         Just elements
@@ -10661,6 +10078,15 @@ rustExpressionCallCondense call =
                             , arguments = [ { label = Nothing, value = call.argument } ]
                             }
                     }
+
+        RustExpressionUnit ->
+            { statements = []
+            , result =
+                RustExpressionCall
+                    { called = call.called
+                    , arguments = [ { label = Nothing, value = call.argument } ]
+                    }
+            }
 
         RustExpressionCall _ ->
             { statements = []
@@ -10781,12 +10207,15 @@ rustExpressionCallCondense call =
 
 
 rustExpressionUsesReferenceInLambdaOrFuncDeclaration :
-    { moduleOrigin : Maybe String, name : String }
+    { qualification : List String, name : String }
     -> RustExpression
     -> Bool
 rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck rustExpression =
     -- IGNORE TCO
     case rustExpression of
+        RustExpressionUnit ->
+            False
+
         RustExpressionDouble _ ->
             False
 
@@ -10902,6 +10331,9 @@ rustExpressionInnermostLambdaResult rustExpression =
             , result = resultInnermostLambdaResult.result
             }
 
+        RustExpressionUnit ->
+            { statements = [], result = rustExpression }
+
         RustExpressionDouble _ ->
             { statements = [], result = rustExpression }
 
@@ -10946,7 +10378,7 @@ rustExpressionInnermostLambdaResult rustExpression =
 
 
 rustStatementUsesReferenceInLambdaOrFuncDeclaration :
-    { moduleOrigin : Maybe String, name : String }
+    { qualification : List String, name : String }
     -> RustStatement
     -> Bool
 rustStatementUsesReferenceInLambdaOrFuncDeclaration referenceToCheck rustStatement =
@@ -11029,6 +10461,9 @@ rustStatementUsesReferenceInLambdaOrFuncDeclaration referenceToCheck rustStateme
 rustExpressionIsConstant : RustExpression -> Bool
 rustExpressionIsConstant rustExpression =
     case rustExpression of
+        RustExpressionUnit ->
+            True
+
         RustExpressionDouble _ ->
             True
 
@@ -11076,7 +10511,7 @@ rustExpressionIsConstant rustExpression =
 
 
 rustExpressionCountUsesOfReference :
-    { moduleOrigin : Maybe String, name : String }
+    { qualification : List String, name : String }
     -> RustExpression
     -> Int
 rustExpressionCountUsesOfReference referenceToCountUsesOf rustExpression =
@@ -11084,13 +10519,16 @@ rustExpressionCountUsesOfReference referenceToCountUsesOf rustExpression =
     case rustExpression of
         RustExpressionReference reference ->
             if
-                (reference.moduleOrigin == referenceToCountUsesOf.moduleOrigin)
+                (reference.qualification == referenceToCountUsesOf.qualification)
                     && (reference.name == referenceToCountUsesOf.name)
             then
                 1
 
             else
                 0
+
+        RustExpressionUnit ->
+            0
 
         RustExpressionSelf ->
             0
@@ -11188,7 +10626,7 @@ rustExpressionCountUsesOfReference referenceToCountUsesOf rustExpression =
 
 
 rustStatementCountUsesOfReference :
-    { moduleOrigin : Maybe String, name : String }
+    { qualification : List String, name : String }
     -> RustStatement
     -> Int
 rustStatementCountUsesOfReference referenceToCountUsesOf rustStatement =
@@ -11285,12 +10723,15 @@ listMapAndSumPlus soFar elementToInt list =
 
 
 rustExpressionSubstituteReferences :
-    ({ moduleOrigin : Maybe String, name : String } -> RustExpression)
+    ({ qualification : List String, name : String } -> RustExpression)
     -> RustExpression
     -> RustExpression
 rustExpressionSubstituteReferences referenceToExpression rustExpression =
     -- IGNORE TCO
     case rustExpression of
+        RustExpressionUnit ->
+            RustExpressionUnit
+
         RustExpressionDouble _ ->
             rustExpression
 
@@ -11400,7 +10841,7 @@ rustExpressionSubstituteReferences referenceToExpression rustExpression =
 
 
 rustExpressionSwitchCaseSubstituteReferences :
-    ({ moduleOrigin : Maybe String, name : String } -> RustExpression)
+    ({ qualification : List String, name : String } -> RustExpression)
     ->
         { pattern : RustPattern
         , result : RustExpression
@@ -11416,7 +10857,7 @@ rustExpressionSwitchCaseSubstituteReferences referenceToExpression rustCase =
 
 
 rustStatementSubstituteReferences :
-    ({ moduleOrigin : Maybe String, name : String } -> RustExpression)
+    ({ qualification : List String, name : String } -> RustExpression)
     -> RustStatement
     -> RustStatement
 rustStatementSubstituteReferences referenceToExpression rustStatement =
@@ -11522,7 +10963,7 @@ rustStatementSubstituteReferences referenceToExpression rustStatement =
 
 
 rustStatementSwitchCaseSubstituteReferences :
-    ({ moduleOrigin : Maybe String, name : String } -> RustExpression)
+    ({ qualification : List String, name : String } -> RustExpression)
     ->
         { pattern : RustPattern
         , statements : List RustStatement
@@ -11867,7 +11308,7 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
                                                     { called = soFar.result
                                                     , argument =
                                                         RustExpressionReference
-                                                            { moduleOrigin = Nothing
+                                                            { qualification = []
                                                             , name = additionalGeneratedParameter.name
                                                             }
                                                     }
@@ -11896,7 +11337,7 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
                                                                 { pattern = parameter
                                                                 , expression =
                                                                     RustExpressionReference
-                                                                        { moduleOrigin = Nothing
+                                                                        { qualification = []
                                                                         , name =
                                                                             generatedParameterNameForIndexAtPath
                                                                                 parameterIndex
@@ -12038,7 +11479,14 @@ expressionOperatorToRustFunctionReference :
     , moduleOrigin : String
     , type_ : ElmSyntaxTypeInfer.Type
     }
-    -> Result String { moduleOrigin : Maybe String, name : String }
+    ->
+        Result
+            String
+            { qualification : List String
+            , name : String
+
+            -- TODO , requiresAllocator : Bool
+            }
 expressionOperatorToRustFunctionReference operator =
     case operator.symbol of
         "+" ->
@@ -12128,129 +11576,129 @@ expressionOperatorToRustFunctionReference operator =
             Err ("unknown/unsupported operator " ++ unknownOrUnsupportedOperator)
 
 
-okReferencePow : Result error_ { moduleOrigin : Maybe String, name : String }
+okReferencePow : Result error_ { qualification : List String, name : String }
 okReferencePow =
-    Ok { moduleOrigin = Nothing, name = "Basics_pow" }
+    Ok { qualification = [], name = "basics_pow" }
 
 
-okReferenceNeq : Result error_ { moduleOrigin : Maybe String, name : String }
+okReferenceNeq : Result error_ { qualification : List String, name : String }
 okReferenceNeq =
-    Ok { moduleOrigin = Nothing, name = "Basics_neq" }
+    Ok { qualification = [], name = "basics_neq" }
 
 
-okReferenceEq : Result error_ { moduleOrigin : Maybe String, name : String }
+okReferenceEq : Result error_ { qualification : List String, name : String }
 okReferenceEq =
-    Ok { moduleOrigin = Nothing, name = "Basics_eq" }
+    Ok { qualification = [], name = "basics_eq" }
 
 
-okReferenceOr : Result error_ { moduleOrigin : Maybe String, name : String }
+okReferenceOr : Result error_ { qualification : List String, name : String }
 okReferenceOr =
-    Ok { moduleOrigin = Nothing, name = "Basics_or" }
+    Ok { qualification = [], name = "basics_or" }
 
 
-okReferenceAnd : Result error_ { moduleOrigin : Maybe String, name : String }
+okReferenceAnd : Result error_ { qualification : List String, name : String }
 okReferenceAnd =
-    Ok { moduleOrigin = Nothing, name = "Basics_and" }
+    Ok { qualification = [], name = "basics_and" }
 
 
-okReferenceLt : Result error_ { moduleOrigin : Maybe String, name : String }
+okReferenceLt : Result error_ { qualification : List String, name : String }
 okReferenceLt =
-    Ok { moduleOrigin = Nothing, name = "Basics_lt" }
+    Ok { qualification = [], name = "basics_lt" }
 
 
-okReferenceGt : Result error_ { moduleOrigin : Maybe String, name : String }
+okReferenceGt : Result error_ { qualification : List String, name : String }
 okReferenceGt =
-    Ok { moduleOrigin = Nothing, name = "Basics_gt" }
+    Ok { qualification = [], name = "basics_gt" }
 
 
-okReferenceLe : Result error_ { moduleOrigin : Maybe String, name : String }
+okReferenceLe : Result error_ { qualification : List String, name : String }
 okReferenceLe =
-    Ok { moduleOrigin = Nothing, name = "Basics_le" }
+    Ok { qualification = [], name = "basics_le" }
 
 
-okReferenceGe : Result error_ { moduleOrigin : Maybe String, name : String }
+okReferenceGe : Result error_ { qualification : List String, name : String }
 okReferenceGe =
-    Ok { moduleOrigin = Nothing, name = "Basics_ge" }
+    Ok { qualification = [], name = "basics_ge" }
 
 
-okReferenceMul : Result error_ { moduleOrigin : Maybe String, name : String }
+okReferenceMul : Result error_ { qualification : List String, name : String }
 okReferenceMul =
-    Ok { moduleOrigin = Nothing, name = "Basics_mul" }
+    Ok { qualification = [], name = "basics_mul" }
 
 
-okReferenceIdiv : Result error_ { moduleOrigin : Maybe String, name : String }
+okReferenceIdiv : Result error_ { qualification : List String, name : String }
 okReferenceIdiv =
-    Ok { moduleOrigin = Nothing, name = "Basics_idiv" }
+    Ok { qualification = [], name = "basics_idiv" }
 
 
-okReferenceFdiv : Result error_ { moduleOrigin : Maybe String, name : String }
+okReferenceFdiv : Result error_ { qualification : List String, name : String }
 okReferenceFdiv =
-    Ok { moduleOrigin = Nothing, name = "Basics_fdiv" }
+    Ok { qualification = [], name = "basics_fdiv" }
 
 
-okReferenceSub : Result error_ { moduleOrigin : Maybe String, name : String }
+okReferenceSub : Result error_ { qualification : List String, name : String }
 okReferenceSub =
-    Ok { moduleOrigin = Nothing, name = "Basics_sub" }
+    Ok { qualification = [], name = "basics_sub" }
 
 
-okReferenceAdd : Result error_ { moduleOrigin : Maybe String, name : String }
+okReferenceAdd : Result error_ { qualification : List String, name : String }
 okReferenceAdd =
-    Ok { moduleOrigin = Nothing, name = "Basics_add" }
+    Ok { qualification = [], name = "basics_add" }
 
 
-okReferenceApR : Result error_ { moduleOrigin : Maybe String, name : String }
+okReferenceApR : Result error_ { qualification : List String, name : String }
 okReferenceApR =
-    Ok { moduleOrigin = Nothing, name = "Basics_apR" }
+    Ok { qualification = [], name = "basics_apr" }
 
 
-okReferenceApL : Result error_ { moduleOrigin : Maybe String, name : String }
+okReferenceApL : Result error_ { qualification : List String, name : String }
 okReferenceApL =
-    Ok { moduleOrigin = Nothing, name = "Basics_apL" }
+    Ok { qualification = [], name = "basics_apl" }
 
 
-okReferenceComposeR : Result error_ { moduleOrigin : Maybe String, name : String }
+okReferenceComposeR : Result error_ { qualification : List String, name : String }
 okReferenceComposeR =
-    Ok { moduleOrigin = Nothing, name = "Basics_composeR" }
+    Ok { qualification = [], name = "basics_composer" }
 
 
-okReferenceComposeL : Result error_ { moduleOrigin : Maybe String, name : String }
+okReferenceComposeL : Result error_ { qualification : List String, name : String }
 okReferenceComposeL =
-    Ok { moduleOrigin = Nothing, name = "Basics_composeL" }
+    Ok { qualification = [], name = "basics_composel" }
 
 
-okReferenceParserAdvancedKeeper : Result error_ { moduleOrigin : Maybe String, name : String }
+okReferenceParserAdvancedKeeper : Result error_ { qualification : List String, name : String }
 okReferenceParserAdvancedKeeper =
-    Ok { moduleOrigin = Nothing, name = "ParserAdvanced_keeper" }
+    Ok { qualification = [], name = "parser_advanced_keeper" }
 
 
-okReferenceParserAdvancedIgnorer : Result error_ { moduleOrigin : Maybe String, name : String }
+okReferenceParserAdvancedIgnorer : Result error_ { qualification : List String, name : String }
 okReferenceParserAdvancedIgnorer =
-    Ok { moduleOrigin = Nothing, name = "ParserAdvanced_ignorer" }
+    Ok { qualification = [], name = "parser_advanced_ignorer" }
 
 
-okReferenceUrlParserSlash : Result error_ { moduleOrigin : Maybe String, name : String }
+okReferenceUrlParserSlash : Result error_ { qualification : List String, name : String }
 okReferenceUrlParserSlash =
-    Ok { moduleOrigin = Nothing, name = "UrlParser_slash" }
+    Ok { qualification = [], name = "url_parser_slash" }
 
 
-okReferenceUrlParserQuestionMark : Result error_ { moduleOrigin : Maybe String, name : String }
+okReferenceUrlParserQuestionMark : Result error_ { qualification : List String, name : String }
 okReferenceUrlParserQuestionMark =
-    Ok { moduleOrigin = Nothing, name = "UrlParser_questionMark" }
+    Ok { qualification = [], name = "url_parser_question_mark" }
 
 
-okReferenceListCons : Result error_ { moduleOrigin : Maybe String, name : String }
+okReferenceListCons : Result error_ { qualification : List String, name : String }
 okReferenceListCons =
-    Ok { moduleOrigin = Nothing, name = "List_cons" }
+    Ok { qualification = [], name = "list_cons" }
 
 
-okReferenceStringAppend : Result error_ { moduleOrigin : Maybe String, name : String }
+okReferenceStringAppend : Result error_ { qualification : List String, name : String }
 okReferenceStringAppend =
-    Ok { moduleOrigin = Nothing, name = "String_append" }
+    Ok { qualification = [], name = "string_append" }
 
 
-okReferenceListAppend : Result error_ { moduleOrigin : Maybe String, name : String }
+okReferenceListAppend : Result error_ { qualification : List String, name : String }
 okReferenceListAppend =
-    Ok { moduleOrigin = Nothing, name = "List_append" }
+    Ok { qualification = [], name = "list_append" }
 
 
 inferredTypeString : ElmSyntaxTypeInfer.Type
@@ -12475,6 +11923,9 @@ rustTypeContainedVariables : RustType -> FastSet.Set String
 rustTypeContainedVariables rustType =
     -- IGNORE TCO
     case rustType of
+        RustTypeUnit ->
+            FastSet.empty
+
         RustTypeVariable variable ->
             FastSet.singleton variable
 
@@ -12521,6 +11972,9 @@ rustTypeIsConcrete : RustType -> Bool
 rustTypeIsConcrete rustType =
     -- IGNORE TCO
     case rustType of
+        RustTypeUnit ->
+            True
+
         RustTypeVariable _ ->
             False
 
@@ -12767,7 +12221,7 @@ rustTypeDeclarationsGroupByDependencies rustTypeDeclarations =
                     ( RustTypeAliasDeclaration aliasDeclaration
                     , aliasDeclaration.name
                     , aliasDeclaration.type_
-                        |> rustTypeContainedLocalReferences
+                        |> rustTypeContainedReferences
                         |> FastSet.toList
                     )
                         :: soFar
@@ -12785,7 +12239,7 @@ rustTypeDeclarationsGroupByDependencies rustTypeDeclarations =
                                                 |> listMapToFastSetsAndUnify
                                                     (\variantValue ->
                                                         variantValue.value
-                                                            |> rustTypeContainedLocalReferences
+                                                            |> rustTypeContainedReferences
                                                     )
                                             )
                                     )
@@ -12798,29 +12252,34 @@ rustTypeDeclarationsGroupByDependencies rustTypeDeclarations =
     }
 
 
-rustTypeContainedLocalReferences : RustType -> FastSet.Set String
-rustTypeContainedLocalReferences rustType =
+{-| TODO what is this used for?
+-}
+rustTypeContainedReferences : RustType -> FastSet.Set String
+rustTypeContainedReferences rustType =
     -- IGNORE TCO
     case rustType of
+        RustTypeUnit ->
+            FastSet.empty
+
         RustTypeVariable _ ->
             FastSet.empty
 
         RustTypeTuple parts ->
             parts.part0
-                |> rustTypeContainedLocalReferences
+                |> rustTypeContainedReferences
                 |> FastSet.union
-                    (parts.part1 |> rustTypeContainedLocalReferences)
+                    (parts.part1 |> rustTypeContainedReferences)
                 |> FastSet.union
                     (parts.part2Up
                         |> listMapToFastSetsAndUnify
-                            rustTypeContainedLocalReferences
+                            rustTypeContainedReferences
                     )
 
         RustTypeRecord fields ->
             fields
                 |> FastDict.values
                 |> listMapToFastSetsAndUnify
-                    rustTypeContainedLocalReferences
+                    rustTypeContainedReferences
 
         RustTypeConstruct typeConstruct ->
             FastSet.union
@@ -12832,15 +12291,15 @@ rustTypeContainedLocalReferences rustType =
                         FastSet.empty
                 )
                 (typeConstruct.arguments
-                    |> listMapToFastSetsAndUnify rustTypeContainedLocalReferences
+                    |> listMapToFastSetsAndUnify rustTypeContainedReferences
                 )
 
         RustTypeFunction typeFunction ->
             FastSet.union
                 (typeFunction.input
-                    |> listMapToFastSetsAndUnify rustTypeContainedLocalReferences
+                    |> listMapToFastSetsAndUnify rustTypeContainedReferences
                 )
-                (typeFunction.output |> rustTypeContainedLocalReferences)
+                (typeFunction.output |> rustTypeContainedReferences)
 
 
 {-| Choose one element in the list for each key.
@@ -14507,18 +13966,18 @@ inferredTypeSpecializedVariablesFromNotVariable originalTypeNotVariable speciali
 
 
 qualifiedReferenceToRustName :
-    { moduleOrigin : Maybe String
+    { qualification : List String
     , name : String
     }
     -> String
 qualifiedReferenceToRustName reference =
-    case reference.moduleOrigin of
-        Nothing ->
+    case reference.qualification of
+        [] ->
             reference.name
 
-        Just moduleOrigin ->
-            moduleOrigin
-                ++ "."
+        qualificationPart0 :: qualificationPart1Up ->
+            ((qualificationPart0 :: qualificationPart1Up) |> String.join "::")
+                ++ "::"
                 ++ reference.name
 
 
@@ -14539,6 +13998,9 @@ printRustExpressionParenthesizedIfSpaceSeparated rustExpression =
 rustExpressionIsSpaceSeparated : RustExpression -> Bool
 rustExpressionIsSpaceSeparated rustExpression =
     case rustExpression of
+        RustExpressionUnit ->
+            False
+
         RustExpressionUnicodeScalar _ ->
             False
 
@@ -14591,6 +14053,9 @@ printRustExpressionNotParenthesized : RustExpression -> Print
 printRustExpressionNotParenthesized rustExpression =
     -- IGNORE TCO
     case rustExpression of
+        RustExpressionUnit ->
+            Print.exactly "()"
+
         RustExpressionCall call ->
             printRustExpressionCall call
 
@@ -14603,9 +14068,10 @@ printRustExpressionNotParenthesized rustExpression =
 
         RustExpressionVariant reference ->
             Print.exactly
-                (reference.originTypeName
-                    ++ "."
-                    ++ reference.name
+                (qualifiedReferenceToRustName
+                    { qualification = reference.originTypeName
+                    , name = reference.name
+                    }
                 )
 
         RustExpressionIfElse ifElse ->
@@ -14860,6 +14326,9 @@ printExactlyCurlyOpeningSpace =
 patternIsSpaceSeparated : RustPattern -> Bool
 patternIsSpaceSeparated rustPattern =
     case rustPattern of
+        RustPatternAlias _ ->
+            True
+
         RustPatternIgnore ->
             False
 
@@ -15307,6 +14776,9 @@ rustPatternContainsBindings rustPattern =
         RustPatternVariable _ ->
             True
 
+        RustPatternAlias _ ->
+            True
+
         RustPatternIgnore ->
             False
 
@@ -15451,7 +14923,7 @@ printRustStatementLetDeclarationUninitialized letDeclarationUnassigned =
 rustExpressionReferenceTrue : RustExpression
 rustExpressionReferenceTrue =
     RustExpressionReference
-        { moduleOrigin = Nothing
+        { qualification = []
         , name = "true"
         }
 
@@ -15459,17 +14931,19 @@ rustExpressionReferenceTrue =
 rustExpressionReferenceFalse : RustExpression
 rustExpressionReferenceFalse =
     RustExpressionReference
-        { moduleOrigin = Nothing
+        { qualification = []
         , name = "false"
         }
 
 
+{-| TODO remove
+-}
 rustPatternAsExpression : RustPattern -> RustExpression
 rustPatternAsExpression rustPattern =
     -- IGNORE TCO
     case rustPattern of
         RustPatternIgnore ->
-            rustExpressionUnit
+            RustExpressionUnit
 
         RustPatternBool bool ->
             if bool then
@@ -15490,9 +14964,12 @@ rustPatternAsExpression rustPattern =
 
         RustPatternVariable name ->
             RustExpressionReference
-                { moduleOrigin = Nothing
+                { qualification = []
                 , name = name
                 }
+
+        RustPatternAlias rustPatternAlias ->
+            rustPatternAlias.pattern |> rustPatternAsExpression
 
         RustPatternTuple parts ->
             RustExpressionTuple
@@ -15583,16 +15060,8 @@ printExactlySpaceCurlyOpening =
     Print.exactly " {"
 
 
-rustTypeUnit : RustType
-rustTypeUnit =
-    RustTypeConstruct
-        { moduleOrigin = Nothing
-        , name = "Unit"
-        , isFunction = False
-        , arguments = []
-        }
-
-
+{-| TODO remove
+-}
 deriveProtocolConformanceToString :
     String
     -> { name : String, parameters : List String }
@@ -15749,9 +15218,9 @@ import Foundation
 
 extension Elm.Maybe_Maybe: Equatable where a: Equatable {}
 extension Elm.Result_Result: Equatable where error: Equatable, success: Equatable {}
-extension Elm.List_List: Equatable where a: Equatable {}
-extension Elm.List_List: Hashable where a: Hashable {}
-extension Elm.List_List: Comparable where a: Comparable {}
+extension Elm.list_List: Equatable where a: Equatable {}
+extension Elm.list_List: Hashable where a: Hashable {}
+extension Elm.list_List: Comparable where a: Comparable {}
 extension Elm.Tuple: Equatable where first: Equatable, second: Equatable {}
 extension Elm.Tuple: Hashable where first: Hashable, second: Hashable {}
 extension Elm.Tuple: Comparable where first: Comparable, second: Comparable {}
@@ -29384,5391 +28853,1381 @@ defaultDeclarations : String
 defaultDeclarations =
     -- update with `node src/updateDefaultDeclarations.js`
     """
-public enum Unit: Sendable, Equatable { case Unit }
-public enum Tuple<first: Sendable, second: Sendable>: Sendable {
-    case Tuple(first, second)
-    var first: first {
-        switch self {
-        case let .Tuple(result, _): result
-        }
-    }
-    var second: second {
-        switch self {
-        case let .Tuple(_, result): result
-        }
-    }
+pub type ResultResult<X, A> = Result<A, X>;
+
+pub type StringString<'a> = &'a str;
+
+#[derive(Copy, Clone /*, Debug is implemented below */, Eq, PartialEq, Hash, PartialOrd, Ord)]
+pub enum ListListGuts<'a, A> {
+    ListEmpty,
+    ListCons(A, ListList<'a, A>),
 }
-public enum Triple<first: Sendable, second: Sendable, third: Sendable>: Sendable {
-    case Triple(first, second, third)
-    var first: first {
-        switch self {
-        case let .Triple(result, _, _): result
-        }
-    }
-    var second: second {
-        switch self {
-        case let .Triple(_, result, _): result
-        }
-    }
-    var third: third {
-        switch self {
-        case let .Triple(_, _, result): result
-        }
-    }
-}
-public enum Basics_Order: Sendable, Equatable {
-    case Basics_LT
-    case Basics_EQ
-    case Basics_GT
+pub type ListList<'a, A> = &'a ListListGuts<'a, A>;
+
+pub struct ListIterator<'a, A> {
+    remaining_list: ListList<'a, A>,
 }
 
-// in theory Optional.none and Optional.some exist
-// and they even correctly adhere to
-//     Optional<Optional<Int>>.none == Optional.some(Optional<Int>.none))
-//     being false
-// However, since they are
-//   - both displayed as nil
-//   - Optional.some(x) has the same type as x (hand-wave)
-// I'm a bit worried about how shaky to use they might be though
-public enum Maybe_Maybe<a: Sendable>: Sendable {
-    case Maybe_Nothing
-    case Maybe_Just(_ value: a)
-}
-
-// needed because
-// rust Result type requires the error to be : Error
-public enum Result_Result<error: Sendable, success: Sendable>: Sendable {
-    case Result_Err(error)
-    case Result_Ok(success)
-}
-
-// somewhat needed because
-// rust array does not support pattern matching
-public indirect enum List_List<a: Sendable>: Sendable, Sequence {
-    case List_Empty
-    case List_Cons(_ head: a, _ tail: List_List<a>)
-
-    public func makeIterator() -> List_Iterator<a> {
-        List_Iterator(remainingList: self)
-    }
-}
-public struct List_Iterator<a: Sendable>: IteratorProtocol {
-    var remainingList: List_List<a>
-    public mutating func next() -> a? {
-        switch self.remainingList {
-        case .List_Empty:
-            return .none
-        case let .List_Cons(head, tail):
-            self.remainingList = tail
-            return .some(head)
+impl<'a, A: Copy> Iterator for ListIterator<'a, A> {
+    type Item = A; // it might be better to return &A
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.remaining_list {
+            &ListListGuts::ListEmpty => Option::None,
+            &ListListGuts::ListCons(head, tail) => {
+                self.remaining_list = tail;
+                Option::Some(head)
+            }
         }
     }
 }
 
-@Sendable public static func Debug_toString<a>(_ data: a) -> String {
-    String(reflecting: data)
+impl<'a, A> ListListGuts<'a, A> {
+    fn iter(&self) -> ListIterator<'_, A> {
+        ListIterator {
+            remaining_list: self,
+        }
+    }
+}
+impl<'a, A: Copy + std::fmt::Debug> std::fmt::Debug for ListListGuts<'a, A> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("List[")?;
+        let mut is_tail_element: bool = false;
+        for element in self.iter() {
+            if is_tail_element {
+                f.write_str(", ")?;
+            } else {
+                is_tail_element = true;
+            }
+            element.fmt(f)?;
+        }
+        f.write_str("]")
+    }
 }
 
-@Sendable public static func Debug_log<a>(_ tag: String, data: a) -> a {
-    print(tag, data)
-    return data
-}
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum Never {}
 
-@Sendable public static func Debug_todo<a>(_ message: String) -> a {
-    fatalError("TODO \\(message)")
-}
-
-@Sendable public static func Basics_identity<a>(_ a: a) -> a {
+pub fn basics_identity<A>(a: A) -> A {
     a
 }
-
-@Sendable public static func Basics_always<ignored, kept>(_ kept: kept, _: ignored) -> kept {
+pub fn basics_always<Kept, Ignored>(kept: Kept, _: Ignored) -> Kept {
     kept
 }
-@Sendable public static func Basics_apR<a, b>(_ food: a, _ eat: (a) -> b) -> b {
+pub fn basics_apr<A, B, AToB: Fn(A) -> B>(food: A, eat: AToB) -> B {
     eat(food)
 }
-@Sendable public static func Basics_apL<a, b>(_ eat: (a) -> b, _ food: a) -> b {
+pub fn basics_apl<A, B, AToB: Fn(A) -> B>(eat: AToB, food: A) -> B {
     eat(food)
 }
-@Sendable public static func Basics_composeR<a, b, c>(
-    _ earlier: @escaping @Sendable (a) -> b,
-    _ later: @escaping @Sendable (b) -> c
-)
-    -> @Sendable (a) -> c
-{
-    { food in later(earlier(food)) }
+pub fn basics_composer<A, B, C, AToB: Fn(A) -> B, BToC: Fn(B) -> C>(
+    earlier: AToB,
+    later: BToC,
+) -> impl Fn(A) -> C {
+    move |food| later(earlier(food))
 }
-@Sendable public static func Basics_composeL<a, b, c>(
-    _ later: @escaping @Sendable (b) -> c,
-    _ earlier: @escaping @Sendable (a) -> b
-)
-    -> @Sendable (a) -> c
-{
-    { food in later(earlier(food)) }
+pub fn basics_composel<A, B, C, AToB: Fn(A) -> B, BToC: Fn(B) -> C>(
+    later: BToC,
+    earlier: AToB,
+) -> impl Fn(A) -> C {
+    move |food| later(earlier(food))
+}
+pub fn basics_eq<A: PartialEq>(a: A, b: A) -> bool {
+    a == b
+}
+pub fn basics_neq<A: PartialEq>(a: A, b: A) -> bool {
+    a != b
+}
+pub fn basics_lt<A: PartialOrd>(a: A, b: A) -> bool {
+    a < b
+}
+pub fn basics_le<A: PartialOrd>(a: A, b: A) -> bool {
+    a <= b
+}
+pub fn basics_gt<A: PartialOrd>(a: A, b: A) -> bool {
+    a > b
+}
+pub fn basics_ge<A: PartialOrd>(a: A, b: A) -> bool {
+    a >= b
+}
+pub fn basics_max<A: PartialOrd>(a: A, b: A) -> A {
+    // std::cmp::max(a, b) requires Ord (which f64 and others are not)
+    if a > b { a } else { b }
+}
+pub fn basics_min<A: PartialOrd>(a: A, b: A) -> A {
+    // std::cmp::max(a, b) requires Ord (which f64 and others are not)
+    if a < b { a } else { b }
+}
+pub fn basics_compare<A: PartialOrd>(a: A, b: A) -> std::cmp::Ordering {
+    match a.partial_cmp(&b) {
+        Option::None => std::cmp::Ordering::Greater,
+        Option::Some(order) => order,
+    }
 }
 
-@Sendable public static func Basics_never<a>(_: Never) -> a {
+pub fn basics_and(a: bool, b: bool) -> bool {
+    a && b
 }
-
-@Sendable public static func Basics_not(_ bool: Bool) -> Bool {
+pub fn basics_or(a: bool, b: bool) -> bool {
+    a || b
+}
+pub fn basics_xor(a: bool, b: bool) -> bool {
+    a ^ b
+}
+pub fn basics_not(bool: bool) -> bool {
     !bool
 }
 
-@Sendable public static func Basics_or(_ a: Bool, _ b: Bool) -> Bool {
-    a || b
+pub fn basics_clamp(min: f64, max: f64, n: f64) -> f64 {
+    n.clamp(min, max)
 }
-
-@Sendable public static func Basics_and(_ a: Bool, _ b: Bool) -> Bool {
-    a && b
+pub fn basics_log_base(base: f64, n: f64) -> f64 {
+    n.log(base)
 }
-
-@Sendable public static func Basics_eq<a: Equatable>(_ a: a, _ b: a) -> Bool {
-    a == b
-}
-// necessary because elm type variables do not have information about being equatable
-@Sendable public static func Basics_eq<a>(_ a: a, _ b: a) -> Bool {
-    if let a: any Equatable = a as? any Equatable,
-        let b: any Equatable = b as? any Equatable
-    {
-        typeErasedEq(a, b)
-    } else {
-        fatalError("== on non-Equatable types")
-    }
-}
-
-@Sendable public static func Basics_neq<a: Equatable>(_ a: a, _ b: a) -> Bool {
-    a != b
-}
-// necessary because elm type variables do not have information about being equatable
-@Sendable public static func Basics_neq<a>(_ a: a, _ b: a) -> Bool {
-    if let a: any Equatable = a as? any Equatable,
-        let b: any Equatable = b as? any Equatable
-    {
-        typeErasedNeq(a, b)
-    } else {
-        fatalError("/= on non-Equatable types")
-    }
-}
-
-// https://rustunwrap.com/article/comparing-equatable-using-opened-existentials/
-static func typeErasedEq<a: Equatable, b: Equatable>(_ a: a, _ b: b) -> Bool {
-    if let b: a = b as? a {
-        a == b
-    } else {
-        fatalError("== on non-Equatable types")
-    }
-}
-static func typeErasedNeq<a: Equatable, b: Equatable>(_ a: a, _ b: b) -> Bool {
-    if let b: a = b as? a {
-        a != b
-    } else {
-        fatalError("/= on non-Equatable types")
-    }
-}
-
-@Sendable public static func Basics_lt<a: Comparable>(_ a: a, _ b: a) -> Bool {
-    a < b
-}
-
-@Sendable public static func Basics_gt<a: Comparable>(_ a: a, _ b: a) -> Bool {
-    a > b
-}
-
-@Sendable public static func Basics_le<a: Comparable>(_ a: a, _ b: a) -> Bool {
-    a <= b
-}
-
-@Sendable public static func Basics_ge<a: Comparable>(_ a: a, _ b: a) -> Bool {
-    a >= b
-}
-
-@Sendable public static func Basics_compare<a: Comparable>(_ a: a, _ b: a) -> Basics_Order {
-    if a < b {
-        .Basics_LT
-    } else if a > b {
-        .Basics_GT
-    } else {
-        .Basics_EQ
-    }
-}
-
-public static let Basics_e: Double = exp(1.0)
-
-@Sendable public static func Basics_clamp(_ low: Double, _ high: Double, _ number: Double)
-    -> Double
-{
-    if number < low { low } else if number > high { high } else { number }
-}
-
-@Sendable public static func Basics_negate(_ float: Double) -> Double {
-    -float
-}
-
-@Sendable public static func Basics_truncate(_ float: Double) -> Double {
-    float.rounded(.towardZero)
-}
-
-@Sendable public static func Basics_round(_ float: Double) -> Double {
-    float.rounded()
-}
-
-@Sendable public static func Basics_floor(_ float: Double) -> Double {
-    float.rounded(.down)
-}
-
-@Sendable public static func Basics_ceiling(_ float: Double) -> Double {
-    float.rounded(.up)
-}
-
-@Sendable public static func Basics_isInfinite(_ float: Double) -> Bool {
-    float.isInfinite
-}
-
-@Sendable public static func Basics_isNaN(_ float: Double) -> Bool {
-    float.isNaN
-}
-
-@Sendable public static func Basics_add(_ a: Double, _ b: Double) -> Double {
+pub fn basics_add(a: f64, b: f64) -> f64 {
     a + b
 }
-
-@Sendable public static func Basics_sub(_ base: Double, _ toSubtract: Double) -> Double {
-    base - toSubtract
+pub fn basics_sub(base: f64, reduction: f64) -> f64 {
+    base - reduction
 }
-
-@Sendable public static func Basics_mul(_ a: Double, _ b: Double) -> Double {
+pub fn basics_mul(a: f64, b: f64) -> f64 {
     a * b
 }
-
-@Sendable public static func Basics_idiv(_ toDivide: Double, _ divisor: Double) -> Double {
-    (toDivide / divisor).rounded(.towardZero)
+pub fn basics_fdiv(base: f64, by: f64) -> f64 {
+    base / by
 }
-
-@Sendable public static func Basics_fdiv(_ toDivide: Double, _ divisor: Double) -> Double {
-    toDivide / divisor
+pub fn basics_idiv(base: f64, by: f64) -> f64 {
+    (base / by).trunc()
 }
-
-@Sendable public static func Basics_remainderBy(_ divisor: Double, _ toDivide: Double) -> Double
-{
-    toDivide.truncatingRemainder(dividingBy: divisor)
+pub fn basics_pow(base: f64, by: f64) -> f64 {
+    base.powf(by)
 }
-
-@Sendable public static func Basics_modBy(_ divisor: Double, _ toDivide: Double) -> Double {
-    toDivide.remainder(dividingBy: divisor)
+pub fn basics_remainder_by(by: f64, base: f64) -> f64 {
+    std::ops::Rem::rem(base, by)
 }
-
-@Sendable public static func Basics_pow(_ base: Double, _ exponent: Double) -> Double {
-    pow(base, exponent)
-}
-@Sendable public static func Basics_logBase(_ base: Double, _ float: Double) -> Double {
-    log(float) / log(base)
-}
-@Sendable public static func Basics_degrees(_ angleInDegrees: Double) -> Double {
-    (angleInDegrees * Double.pi) / 180
-}
-@Sendable public static func Basics_turns(_ angleInTurns: Double) -> Double {
-    angleInTurns * Double.pi * 2
-}
-@Sendable public static func Basics_fromPolar(_ polar: Tuple<Double, Double>)
-    -> Tuple<Double, Double>
-{
-    switch polar {
-    case let .Tuple(radius, theta):
-        .Tuple(radius * (cos(theta)), radius * (sin(theta)))
-    }
-}
-@Sendable public static func Basics_toPolar(_ coordinates: Tuple<Double, Double>)
-    -> Tuple<Double, Double>
-{
-    switch coordinates {
-    case let .Tuple(x, y):
-        .Tuple(sqrt((x * x) + (y * y)), atan2(y, x))
-    }
-}
-
-@Sendable public static func Bitwise_complement(_ int: Double) -> Double {
-    Double(~Int32(truncatingIfNeeded: Int(int)))
-}
-@Sendable public static func Bitwise_and(_ a: Double, _ b: Double) -> Double {
-    Double(Int32(truncatingIfNeeded: Int(a)) & Int32(truncatingIfNeeded: Int(b)))
-}
-@Sendable public static func Bitwise_or(_ a: Double, _ b: Double) -> Double {
-    Double(Int32(truncatingIfNeeded: Int(a)) | Int32(truncatingIfNeeded: Int(b)))
-}
-@Sendable public static func Bitwise_xor(_ a: Double, _ b: Double) -> Double {
-    Double(Int32(truncatingIfNeeded: Int(a)) ^ Int32(truncatingIfNeeded: Int(b)))
-}
-@Sendable public static func Bitwise_shiftLeftBy(_ shifts: Double, _ float: Double) -> Double {
-    Double(Int32(truncatingIfNeeded: Int(float)) << Int32(truncatingIfNeeded: Int(shifts)))
-}
-@Sendable public static func Bitwise_shiftRightBy(_ shifts: Double, _ float: Double) -> Double {
-    Double(Int32(truncatingIfNeeded: Int(float)) >> Int32(truncatingIfNeeded: Int(shifts)))
-}
-@Sendable public static func Bitwise_shiftRightZfBy(_ shifts: Double, _ float: Double) -> Double
-{
-    Double(UInt32(truncatingIfNeeded: Int(float)) >> UInt32(truncatingIfNeeded: Int(shifts)))
-}
-
-@Sendable public static func Char_toCode(_ char: UnicodeScalar) -> Double {
-    Double(char.value)
-}
-
-@Sendable public static func Char_fromCode(_ charCode: Double) -> UnicodeScalar {
-    switch UnicodeScalar(Int(charCode)) {
-    case .none: "\\0"
-    case let .some(unicodeScalar): unicodeScalar
-    }
-}
-
-@Sendable public static func Char_isHexDigit(_ char: UnicodeScalar) -> Bool {
-    (0x30 <= char.value && char.value <= 0x39)
-        || (0x41 <= char.value && char.value <= 0x46)
-        || (0x61 <= char.value && char.value <= 0x66)
-}
-@Sendable public static func Char_isDigit(_ char: UnicodeScalar) -> Bool {
-    char.value <= 0x39 && 0x30 <= char.value
-}
-@Sendable public static func Char_isUpper(_ char: UnicodeScalar) -> Bool {
-    char.value <= 0x5A && 0x41 <= char.value
-}
-@Sendable public static func Char_isLower(_ char: UnicodeScalar) -> Bool {
-    0x61 <= char.value && char.value <= 0x7A
-}
-@Sendable public static func Char_isAlpha(_ char: UnicodeScalar) -> Bool {
-    Char_isLower(char) || Char_isUpper(char)
-}
-@Sendable public static func Char_isAlphaNum(_ char: UnicodeScalar) -> Bool {
-    Char_isAlpha(char) || Char_isDigit(char)
-}
-
-@Sendable public static func Char_toUpper(_ char: UnicodeScalar) -> UnicodeScalar {
-    switch Character(char).uppercased().unicodeScalars.first {
-    case .none: char
-    case let .some(uppercased): uppercased
-    }
-}
-@Sendable public static func Char_toLocaleUpper(_ char: UnicodeScalar) -> UnicodeScalar {
-    // Character does not have uppercased(with: Locale)
-    switch String(char).uppercased(with: Locale.current).unicodeScalars.first {
-    case .none: char
-    case let .some(uppercased): uppercased
-    }
-}
-
-@Sendable public static func Char_toLower(_ char: UnicodeScalar) -> UnicodeScalar {
-    // Character does not have lowercased(with: Locale)
-    switch Character(char).lowercased().unicodeScalars.first {
-    case .none: char
-    case let .some(lowercased): lowercased
-    }
-}
-@Sendable public static func Char_toLocaleLower(_ char: UnicodeScalar) -> UnicodeScalar {
-    switch String(char).lowercased(with: Locale.current).unicodeScalars.first {
-    case .none: char
-    case let .some(lowercased): lowercased
-    }
-}
-
-@Sendable public static func String_fromChar(_ char: UnicodeScalar) -> String {
-    String(char)
-}
-
-@Sendable public static func String_fromInt(_ int: Double) -> String {
-    String(Int64(int))
-}
-
-@Sendable public static func String_fromFloat(_ float: Double) -> String {
-    String(float)
-}
-
-@Sendable public static func String_toInt(_ string: String) -> Maybe_Maybe<Double> {
-    switch Int64(string) {
-    case .some(let parseResult):
-        .Maybe_Just(Double(parseResult))
-    case .none:
-        .Maybe_Nothing
-    }
-}
-
-@Sendable public static func String_toFloat(_ string: String) -> Maybe_Maybe<Double> {
-    Maybe_fromOptional(Double(string))
-}
-
-@Sendable public static func String_uncons(_ string: String)
-    -> Maybe_Maybe<Tuple<UnicodeScalar, String>>
-{
-    if string.isEmpty {
-        return .Maybe_Nothing
+pub fn basics_mod_by(by: f64, base: f64) -> f64 {
+    // https://github.com/elm/core/blob/1.0.5/src/Elm/Kernel/Basics.js#L20
+    // https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/divmodnote-letter.pdf
+    if by == 0_f64 {
+        panic!("mod by 0")
     } else {
-        // is there something more performant?
-        var stringMutable: String = string
-        let poppedChar: Unicode.Scalar = stringMutable.unicodeScalars.removeFirst()
-        return .Maybe_Just(.Tuple(poppedChar, stringMutable))
-    }
-}
-
-@Sendable public static func String_toList(_ string: String) -> List_List<UnicodeScalar> {
-    var chars: List_List<UnicodeScalar> = .List_Empty
-    for char in string.unicodeScalars.reversed() {
-        chars = .List_Cons(char, chars)
-    }
-    return chars
-}
-
-@Sendable public static func String_fromList(_ chars: List_List<UnicodeScalar>) -> String {
-    var stringBuffer: String = String()
-    for char in chars {
-        stringBuffer.append(Character(char))
-    }
-    return stringBuffer
-}
-
-@Sendable public static func String_length(_ string: String) -> Double {
-    Double(string.utf16.count)
-}
-
-@Sendable public static func String_isEmpty(_ string: String) -> Bool {
-    string.isEmpty
-}
-
-@Sendable public static func String_cons(_ headChar: UnicodeScalar, _ tailString: String)
-    -> String
-{
-    String(headChar) + tailString
-}
-
-@Sendable public static func String_append(_ earlier: String, _ later: String) -> String {
-    earlier + later
-}
-
-@Sendable public static func String_contains(_ sub: String, _ string: String) -> Bool {
-    string.contains(sub)
-}
-
-@Sendable public static func String_startsWith(_ start: String, _ string: String) -> Bool {
-    string.hasPrefix(start)
-}
-
-@Sendable public static func String_endsWith(_ end: String, _ string: String) -> Bool {
-    string.hasSuffix(end)
-}
-
-@Sendable public static func String_concat(_ segments: List_List<String>) -> String {
-    var stringBuffer: String = String()
-    for segment in segments {
-        stringBuffer.append(contentsOf: segment)
-    }
-    return stringBuffer
-}
-
-@Sendable public static func String_join(_ inBetween: String, _ segments: List_List<String>)
-    -> String
-{
-    segments.joined(separator: inBetween)
-}
-
-@Sendable public static func String_reverse(_ string: String) -> String {
-    String(decoding: string.utf16.reversed(), as: Unicode.UTF16.self)
-}
-
-@Sendable public static func String_dropLeft(_ countToSkip: Double, _ string: String) -> String
-{
-    String(decoding: string.utf16.dropFirst(Int(countToSkip)), as: Unicode.UTF16.self)
-}
-
-@Sendable public static func String_dropRight(_ countToSkip: Double, _ string: String) -> String
-{
-    String(decoding: string.utf16.dropLast(Int(countToSkip)), as: Unicode.UTF16.self)
-}
-
-@Sendable public static func String_left(_ countToTake: Double, _ string: String) -> String {
-    String(decoding: string.utf16.prefix(Int(countToTake)), as: Unicode.UTF16.self)
-}
-
-@Sendable public static func String_right(_ countToTake: Double, _ string: String) -> String {
-    String(decoding: string.utf16.suffix(Int(countToTake)), as: Unicode.UTF16.self)
-}
-
-@Sendable public static func String_padRight(
-    _ desiredLength: Double, _ padChar: String, _ string: String
-)
-    -> String
-{
-    string + String(repeating: padChar, count: Int(desiredLength) - string.utf16.count)
-}
-
-@Sendable public static func String_padLeft(
-    _ desiredLength: Double, _ padChar: String, _ string: String
-) -> String {
-    String(
-        repeating: padChar,
-        count: max(0, Int(desiredLength) - string.utf16.count)
-    )
-        + string
-}
-
-@Sendable public static func String_repeat(_ count: Double, _ segment: String) -> String {
-    String(repeating: segment, count: Int(count))
-}
-
-@Sendable public static func String_replace(
-    _ toReplace: String, _ replacement: String, _ string: String
-)
-    -> String
-{
-    string.replacing(toReplace, with: replacement)
-}
-
-@Sendable public static func String_toLower(_ string: String) -> String {
-    string.lowercased()
-}
-
-@Sendable public static func String_toUpper(_ string: String) -> String {
-    string.uppercased()
-}
-
-@Sendable public static func String_trimLeft(_ string: String) -> String {
-    String(
-        string.trimmingPrefix(while: { character in
-            character.isWhitespace || character.isNewline
-        })
-    )
-}
-
-@Sendable public static func String_trimRight(_ string: String) -> String {
-    let startToRestoreAfterTrimming: String.SubSequence =
-        string.prefix(while: { character in
-            character.isWhitespace || character.isNewline
-        })
-    return startToRestoreAfterTrimming
-        + string.trimmingCharacters(in: .whitespacesAndNewlines)
-}
-
-@Sendable public static func String_trim(_ string: String) -> String {
-    string.trimmingCharacters(in: .whitespacesAndNewlines)
-}
-
-@Sendable public static func String_map(
-    _ characterChange: (UnicodeScalar) -> UnicodeScalar,
-    _ string: String
-)
-    -> String
-{
-    String(String.UnicodeScalarView(string.unicodeScalars.map(characterChange)))
-}
-
-@Sendable public static func String_filter(
-    _ keepCharacter: (UnicodeScalar) -> Bool,
-    _ string: String
-)
-    -> String
-{
-    String(string.unicodeScalars.filter(keepCharacter))
-}
-
-@Sendable public static func String_lines(_ string: String) -> List_List<String> {
-    Array_toList(string.components(separatedBy: .newlines))
-}
-
-@Sendable public static func String_words(_ string: String) -> List_List<String> {
-    Array_toList(string.components(separatedBy: .whitespaces))
-}
-
-@Sendable public static func String_split(_ separator: String, _ string: String) -> List_List<
-    String
-> {
-    Array_mapToList(
-        String.init,
-        string.split(separator: separator)
-    )
-}
-
-@Sendable public static func String_all(
-    _ isExpected: (UnicodeScalar) -> Bool,
-    _ string: String
-)
-    -> Bool
-{
-    string.unicodeScalars.allSatisfy(isExpected)
-}
-
-@Sendable public static func String_any(
-    _ isOdd: (UnicodeScalar) -> Bool,
-    _ string: String
-)
-    -> Bool
-{
-    string.unicodeScalars.contains(where: isOdd)
-}
-
-@Sendable public static func String_slice(
-    _ startInclusivePossiblyNegativeAsDouble: Double,
-    _ endExclusivePossiblyNegative: Double,
-    _ string: String
-)
-    -> String
-{
-    let stringLength: Int = string.utf16.count
-    let realStartIndexInclusive: Int =
-        possiblyNegativeIndexForCount(
-            index: Int(startInclusivePossiblyNegativeAsDouble),
-            count: stringLength
-        )
-    let realEndIndexExclusive: Int =
-        possiblyNegativeIndexForCount(
-            index: Int(endExclusivePossiblyNegative),
-            count: stringLength
-        )
-    return if realStartIndexInclusive >= realEndIndexExclusive {
-        ""
-    } else {
-        String(
-            string.unicodeScalars[
-                string.utf16.index(
-                    string.utf16.startIndex, offsetBy: realStartIndexInclusive
-                )..<string.utf16.index(
-                    string.utf16.startIndex, offsetBy: realEndIndexExclusive
-                )
-            ]
-        )
-    }
-}
-// For an index where -1 meaning one before the last element, 1 meaning one after the first element,
-// normalize to valid index from the start
-static func possiblyNegativeIndexForCount(index: Int, count: Int) -> Int {
-    if index >= 0 {
-        min(index, count)
-    } else {
-        max(count + index, 0)
-    }
-}
-
-@Sendable public static func String_foldl<state>(
-    _ reduce: (UnicodeScalar) -> (state) -> state,
-    _ initialState: state,
-    _ string: String
-) -> state {
-    string.unicodeScalars.reduce(
-        initialState,
-        { (soFar, char) in
-            reduce(char)(soFar)
-        }
-    )
-}
-
-@Sendable public static func String_foldr<state>(
-    _ reduce: (UnicodeScalar) -> (state) -> state,
-    _ initialState: state,
-    _ string: String
-) -> state {
-    string.unicodeScalars.reversed().reduce(
-        initialState,
-        { (soFar, char) in
-            reduce(char)(soFar)
-        }
-    )
-}
-
-@Sendable public static func Maybe_toOptional<a>(_ optional: Maybe_Maybe<a>) -> a? {
-    switch optional {
-    case .Maybe_Nothing: .none
-    case let .Maybe_Just(value): .some(value)
-    }
-}
-@Sendable public static func Maybe_fromOptional<a>(_ optional: a?) -> Maybe_Maybe<a> {
-    switch optional {
-    case .none: .Maybe_Nothing
-    case let .some(value): .Maybe_Just(value)
-    }
-}
-@Sendable public static func Maybe_withDefault<a>(_ valueOnNothing: a, _ maybe: Maybe_Maybe<a>)
-    -> a
-{
-    switch maybe {
-    case .Maybe_Nothing: valueOnNothing
-    case .Maybe_Just(let value): value
-    }
-}
-@Sendable public static func Maybe_map<a, b>(
-    _ valueChange: (a) -> b,
-    _ maybe: Maybe_Maybe<a>
-) -> Maybe_Maybe<b> {
-    switch maybe {
-    case .Maybe_Nothing: .Maybe_Nothing
-    case .Maybe_Just(let value): .Maybe_Just(valueChange(value))
-    }
-}
-@Sendable public static func Maybe_map2<a, b, combined>(
-    _ valueCombine: (a) -> (b) -> combined,
-    _ aMaybe: Maybe_Maybe<a>,
-    _ bMaybe: Maybe_Maybe<b>
-)
-    -> Maybe_Maybe<combined>
-{
-    switch aMaybe {
-    case .Maybe_Nothing: .Maybe_Nothing
-    case .Maybe_Just(let aValue):
-        switch bMaybe {
-        case .Maybe_Nothing: .Maybe_Nothing
-        case .Maybe_Just(let bValue):
-            .Maybe_Just(valueCombine(aValue)(bValue))
-        }
-    }
-}
-@Sendable public static func Maybe_map3<a, b, c, combined>(
-    _ valueCombine: (a) -> (b) -> (c) -> combined,
-    _ aMaybe: Maybe_Maybe<a>,
-    _ bMaybe: Maybe_Maybe<b>,
-    _ cMaybe: Maybe_Maybe<c>
-)
-    -> Maybe_Maybe<combined>
-{
-    switch aMaybe {
-    case .Maybe_Nothing: .Maybe_Nothing
-    case .Maybe_Just(let aValue):
-        switch bMaybe {
-        case .Maybe_Nothing: .Maybe_Nothing
-        case .Maybe_Just(let bValue):
-            switch cMaybe {
-            case .Maybe_Nothing: .Maybe_Nothing
-            case .Maybe_Just(let cValue):
-                .Maybe_Just(valueCombine(aValue)(bValue)(cValue))
-            }
-        }
-    }
-}
-@Sendable public static func Maybe_map4<a, b, c, d, combined>(
-    _ valueCombine: (a) -> (b) -> (c) -> (d) -> combined,
-    _ aMaybe: Maybe_Maybe<a>,
-    _ bMaybe: Maybe_Maybe<b>,
-    _ cMaybe: Maybe_Maybe<c>,
-    _ dMaybe: Maybe_Maybe<d>
-)
-    -> Maybe_Maybe<combined>
-{
-    switch aMaybe {
-    case .Maybe_Nothing: .Maybe_Nothing
-    case .Maybe_Just(let aValue):
-        switch bMaybe {
-        case .Maybe_Nothing: .Maybe_Nothing
-        case .Maybe_Just(let bValue):
-            switch cMaybe {
-            case .Maybe_Nothing: .Maybe_Nothing
-            case .Maybe_Just(let cValue):
-                switch dMaybe {
-                case .Maybe_Nothing: .Maybe_Nothing
-                case .Maybe_Just(let dValue):
-                    .Maybe_Just(valueCombine(aValue)(bValue)(cValue)(dValue))
-                }
-            }
-        }
-    }
-}
-@Sendable public static func Maybe_map5<a, b, c, d, e, combined>(
-    _ valueCombine: (a) -> (b) -> (c) -> (d) -> (e) -> combined,
-    _ aMaybe: Maybe_Maybe<a>,
-    _ bMaybe: Maybe_Maybe<b>,
-    _ cMaybe: Maybe_Maybe<c>,
-    _ dMaybe: Maybe_Maybe<d>,
-    _ eMaybe: Maybe_Maybe<e>
-)
-    -> Maybe_Maybe<combined>
-{
-    switch aMaybe {
-    case .Maybe_Nothing: .Maybe_Nothing
-    case .Maybe_Just(let aValue):
-        switch bMaybe {
-        case .Maybe_Nothing: .Maybe_Nothing
-        case .Maybe_Just(let bValue):
-            switch cMaybe {
-            case .Maybe_Nothing: .Maybe_Nothing
-            case .Maybe_Just(let cValue):
-                switch dMaybe {
-                case .Maybe_Nothing: .Maybe_Nothing
-                case .Maybe_Just(let dValue):
-                    switch eMaybe {
-                    case .Maybe_Nothing: .Maybe_Nothing
-                    case .Maybe_Just(let eValue):
-                        .Maybe_Just(
-                            valueCombine(aValue)(bValue)(cValue)(dValue)(eValue)
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Sendable public static func Maybe_andThen<a, b>(
-    _ valueToMaybe: (a) -> Maybe_Maybe<b>,
-    _ maybe: Maybe_Maybe<a>
-)
-    -> Maybe_Maybe<b>
-{
-    switch maybe {
-    case .Maybe_Nothing: .Maybe_Nothing
-    case .Maybe_Just(let value): valueToMaybe(value)
-    }
-}
-
-@Sendable public static func Result_fromMaybe<a, x>(
-    _ errorOnNothing: x,
-    _ maybe: Maybe_Maybe<a>
-)
-    -> Result_Result<x, a>
-{
-    switch maybe {
-    case let .Maybe_Just(value): .Result_Ok(value)
-    case .Maybe_Nothing: .Result_Err(errorOnNothing)
-    }
-}
-
-@Sendable public static func Result_toMaybe<a, x>(_ result: Result_Result<x, a>) -> Maybe_Maybe<
-    a
-> {
-    switch result {
-    case let .Result_Ok(value): .Maybe_Just(value)
-    case .Result_Err(_): .Maybe_Nothing
-    }
-}
-
-@Sendable public static func Result_withDefault<a, x>(
-    _ valueOnError: a,
-    _ result: Result_Result<x, a>
-) -> a {
-    switch result {
-    case let .Result_Ok(value): value
-    case .Result_Err(_): valueOnError
-    }
-}
-
-@Sendable public static func Result_mapError<a, x, y>(
-    _ errorChange: (x) -> y,
-    _ result: Result_Result<x, a>
-)
-    -> Result_Result<y, a>
-{
-    switch result {
-    case let .Result_Ok(value): .Result_Ok(value)
-    case let .Result_Err(error): .Result_Err(errorChange(error))
-    }
-}
-
-@Sendable public static func Result_andThen<a, b, x>(
-    _ onOk: (a) -> Result_Result<x, b>,
-    _ result: Result_Result<x, a>
-) -> Result_Result<x, b> {
-    switch result {
-    case let .Result_Ok(value): onOk(value)
-    case let .Result_Err(error): .Result_Err(error)
-    }
-}
-
-@Sendable public static func Result_map<a, b, x>(
-    _ valueChange: (a) -> b,
-    _ result: Result_Result<x, a>
-)
-    -> Result_Result<x, b>
-{
-    switch result {
-    case let .Result_Err(error): .Result_Err(error)
-    case let .Result_Ok(value):
-        .Result_Ok(valueChange(value))
-    }
-}
-
-@Sendable public static func Result_map2<a, b, combined, x>(
-    _ combine: (a) -> (b) -> combined,
-    _ aResult: Result_Result<x, a>,
-    _ bResult: Result_Result<x, b>
-) -> Result_Result<x, combined> {
-    switch aResult {
-    case let .Result_Err(x): .Result_Err(x)
-    case let .Result_Ok(a):
-        switch bResult {
-        case let .Result_Err(x): .Result_Err(x)
-        case let .Result_Ok(b):
-            .Result_Ok(combine(a)(b))
-        }
-    }
-}
-
-@Sendable public static func Result_map3<a, b, c, combined, x>(
-    _ combine: (a) -> (b) -> (c) -> combined,
-    _ aResult: Result_Result<x, a>,
-    _ bResult: Result_Result<x, b>,
-    _ cResult: Result_Result<x, c>
-) -> Result_Result<x, combined> {
-    switch aResult {
-    case let .Result_Err(x): .Result_Err(x)
-    case let .Result_Ok(a):
-        switch bResult {
-        case let .Result_Err(x): .Result_Err(x)
-        case let .Result_Ok(b):
-            switch cResult {
-            case let .Result_Err(x): .Result_Err(x)
-            case let .Result_Ok(c):
-                .Result_Ok(combine(a)(b)(c))
-            }
-        }
-    }
-}
-
-@Sendable public static func Result_map4<a, b, c, d, combined, x>(
-    _ combine: (a) -> (b) -> (c) -> (d) -> combined,
-    _ aResult: Result_Result<x, a>,
-    _ bResult: Result_Result<x, b>,
-    _ cResult: Result_Result<x, c>,
-    _ dResult: Result_Result<x, d>
-) -> Result_Result<x, combined> {
-    switch aResult {
-    case let .Result_Err(x): .Result_Err(x)
-    case let .Result_Ok(a):
-        switch bResult {
-        case let .Result_Err(x): .Result_Err(x)
-        case let .Result_Ok(b):
-            switch cResult {
-            case let .Result_Err(x): .Result_Err(x)
-            case let .Result_Ok(c):
-                switch dResult {
-                case let .Result_Err(x): .Result_Err(x)
-                case let .Result_Ok(d):
-                    .Result_Ok(combine(a)(b)(c)(d))
-
-                }
-            }
-
-        }
-    }
-}
-
-@Sendable public static func Result_map5<a, b, c, d, e, combined, x>(
-    _ combine: (a) -> (b) -> (c) -> (d) -> (e) -> combined,
-    _ aResult: Result_Result<x, a>,
-    _ bResult: Result_Result<x, b>,
-    _ cResult: Result_Result<x, c>,
-    _ dResult: Result_Result<x, d>,
-    _ eResult: Result_Result<x, e>
-) -> Result_Result<x, combined> {
-    switch aResult {
-    case let .Result_Err(x): .Result_Err(x)
-    case let .Result_Ok(a):
-        switch bResult {
-        case let .Result_Err(x): .Result_Err(x)
-        case let .Result_Ok(b):
-            switch cResult {
-            case let .Result_Err(x): .Result_Err(x)
-            case let .Result_Ok(c):
-                switch dResult {
-                case let .Result_Err(x): .Result_Err(x)
-                case let .Result_Ok(d):
-                    switch eResult {
-                    case let .Result_Err(x): .Result_Err(x)
-                    case let .Result_Ok(e):
-                        .Result_Ok(combine(a)(b)(c)(d)(e))
-                    }
-                }
-            }
-        }
-
-    }
-}
-static func Result_map6<a, b, c, d, e, f, combined, x>(
-    _ combine: (a) -> (b) -> (c) -> (d) -> (e) -> (f) -> combined,
-    _ aResult: Result_Result<x, a>,
-    _ bResult: Result_Result<x, b>,
-    _ cResult: Result_Result<x, c>,
-    _ dResult: Result_Result<x, d>,
-    _ eResult: Result_Result<x, e>,
-    _ fResult: Result_Result<x, f>
-) -> Result_Result<x, combined> {
-    switch aResult {
-    case let .Result_Err(x): .Result_Err(x)
-    case let .Result_Ok(a):
-        switch bResult {
-        case let .Result_Err(x): .Result_Err(x)
-        case let .Result_Ok(b):
-            switch cResult {
-            case let .Result_Err(x): .Result_Err(x)
-            case let .Result_Ok(c):
-                switch dResult {
-                case let .Result_Err(x): .Result_Err(x)
-                case let .Result_Ok(d):
-                    switch eResult {
-                    case let .Result_Err(x): .Result_Err(x)
-                    case let .Result_Ok(e):
-                        switch fResult {
-                        case let .Result_Err(x): .Result_Err(x)
-                        case let .Result_Ok(f):
-                            .Result_Ok(combine(a)(b)(c)(d)(e)(f))
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-static func Result_map7<a, b, c, d, e, f, g, combined, x>(
-    _ combine: (a) -> (b) -> (c) -> (d) -> (e) -> (f) -> (g) -> combined,
-    _ aResult: Result_Result<x, a>,
-    _ bResult: Result_Result<x, b>,
-    _ cResult: Result_Result<x, c>,
-    _ dResult: Result_Result<x, d>,
-    _ eResult: Result_Result<x, e>,
-    _ fResult: Result_Result<x, f>,
-    _ gResult: Result_Result<x, g>
-) -> Result_Result<x, combined> {
-    switch aResult {
-    case let .Result_Err(x): .Result_Err(x)
-    case let .Result_Ok(a):
-        switch bResult {
-        case let .Result_Err(x): .Result_Err(x)
-        case let .Result_Ok(b):
-            switch cResult {
-            case let .Result_Err(x): .Result_Err(x)
-            case let .Result_Ok(c):
-                switch dResult {
-                case let .Result_Err(x): .Result_Err(x)
-                case let .Result_Ok(d):
-                    switch eResult {
-                    case let .Result_Err(x): .Result_Err(x)
-                    case let .Result_Ok(e):
-                        switch fResult {
-                        case let .Result_Err(x): .Result_Err(x)
-                        case let .Result_Ok(f):
-                            switch gResult {
-                            case let .Result_Err(x): .Result_Err(x)
-                            case let .Result_Ok(g):
-                                .Result_Ok(combine(a)(b)(c)(d)(e)(f)(g))
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-static func Result_map8<a, b, c, d, e, f, g, h, combined, x>(
-    _ combine: (a) -> (b) -> (c) -> (d) -> (e) -> (f) -> (g) -> (h) -> combined,
-    _ aResult: Result_Result<x, a>,
-    _ bResult: Result_Result<x, b>,
-    _ cResult: Result_Result<x, c>,
-    _ dResult: Result_Result<x, d>,
-    _ eResult: Result_Result<x, e>,
-    _ fResult: Result_Result<x, f>,
-    _ gResult: Result_Result<x, g>,
-    _ hResult: Result_Result<x, h>
-) -> Result_Result<x, combined> {
-    switch aResult {
-    case let .Result_Err(x): .Result_Err(x)
-    case let .Result_Ok(a):
-        switch bResult {
-        case let .Result_Err(x): .Result_Err(x)
-        case let .Result_Ok(b):
-            switch cResult {
-            case let .Result_Err(x): .Result_Err(x)
-            case let .Result_Ok(c):
-                switch dResult {
-                case let .Result_Err(x): .Result_Err(x)
-                case let .Result_Ok(d):
-                    switch eResult {
-                    case let .Result_Err(x): .Result_Err(x)
-                    case let .Result_Ok(e):
-                        switch fResult {
-                        case let .Result_Err(x): .Result_Err(x)
-                        case let .Result_Ok(f):
-                            switch gResult {
-                            case let .Result_Err(x): .Result_Err(x)
-                            case let .Result_Ok(g):
-                                switch hResult {
-                                case let .Result_Err(x): .Result_Err(x)
-                                case let .Result_Ok(h):
-                                    .Result_Ok(combine(a)(b)(c)(d)(e)(f)(g)(h))
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-static func Array_mapToList<a, b>(_ elementChange: (a) -> b, _ array: [a])
-    -> List_List<b>
-{
-    var soFar: List_List<b> = .List_Empty
-    for element in array.reversed() {
-        soFar = .List_Cons(elementChange(element), soFar)
-    }
-    return soFar
-}
-
-static func arrayReversedToList<a>(_ array: [a]) -> List_List<a> {
-    var soFar: List_List<a> = .List_Empty
-    for element in array {
-        soFar = .List_Cons(element, soFar)
-    }
-    return soFar
-}
-@Sendable public static func Array_toList<a>(_ array: [a]) -> List_List<a> {
-    var soFar: List_List<a> = .List_Empty
-    for element in array.reversed() {
-        soFar = .List_Cons(element, soFar)
-    }
-    return soFar
-}
-@Sendable public static func Array_toIndexedList<a>(_ array: [a]) -> List_List<Tuple<Double, a>>
-{
-    var soFar: List_List<Tuple<Double, a>> = .List_Empty
-    var index: Int = array.count - 1
-    for element in array.reversed() {
-        soFar = .List_Cons(.Tuple(Double(index), element), soFar)
-        index = index - 1
-    }
-    return soFar
-}
-
-@Sendable public static func Array_fromList<a>(_ fullList: List_List<a>) -> [a] {
-    var soFar: [a] = []
-    for element in fullList {
-        soFar.append(element)
-    }
-    return soFar
-}
-
-@Sendable public static func Array_isEmpty<a>(_ array: [a]) -> Bool {
-    array.isEmpty
-}
-@Sendable public static func Array_length<a>(_ array: [a]) -> Double {
-    Double(array.count)
-}
-@Sendable public static func Array_get<a>(_ indexAsDouble: Double, _ array: [a])
-    -> Maybe_Maybe<a>
-{
-    let index: Int = Int(indexAsDouble)
-    return if (index >= 0) && (index < array.count) {
-        .Maybe_Just(array[index])
-    } else {
-        .Maybe_Nothing
-    }
-}
-@Sendable public static func Array_empty<a>() -> [a] {
-    []
-}
-@Sendable public static func Array_repeat<a>(
-    _ finalLengthAsDouble: Double,
-    _ elementToRepeat: a
-) -> [a] {
-    let finalLength: Int = Int(finalLengthAsDouble)
-    return if finalLength <= 0 {
-        []
-    } else {
-        Array(repeating: elementToRepeat, count: finalLength)
-    }
-}
-@Sendable public static func Array_initialize<a>(
-    _ finalLengthAsDouble: Double,
-    _ indexToElement: (Double) -> a
-) -> [a] {
-    let finalLength: Int = Int(finalLengthAsDouble)
-    if finalLength <= 0 {
-        return []
-    } else {
-        // can't do ↓ because indexToElement would be escaping
-        // Array((0..<finalLength).lazy.map({ index in indexToElement(Double(index)) }))
-        var resultArray: [a] = Array(repeating: indexToElement(0.0), count: finalLength)
-        for index in 1..<finalLength {
-            resultArray[index] = indexToElement(Double(index))
-        }
-        return resultArray
-    }
-}
-@Sendable public static func Array_push<a>(_ newElement: a, _ array: [a]) -> [a] {
-    var arrayMutable = array
-    arrayMutable.append(newElement)
-    return arrayMutable
-}
-@Sendable public static func Array_set<a>(
-    _ indexAsDouble: Double,
-    _ newElement: a,
-    _ array: [a]
-) -> [a] {
-    let index: Int = Int(indexAsDouble)
-    if (index >= 0) && (index < array.count) {
-        var arrayMutable: [a] = array
-        arrayMutable[index] = newElement
-        return arrayMutable
-    } else {
-        return []
-    }
-}
-@Sendable public static func Array_reverse<a>(_ array: [a]) -> [a] {
-    array.reversed()
-}
-@Sendable public static func Array_filter<a>(_ keepElement: (a) -> Bool, _ array: [a]) -> [a] {
-    array.filter(keepElement)
-}
-@Sendable public static func Array_map<a, b>(_ elementChange: (a) -> b, _ array: [a]) -> [b] {
-    array.map(elementChange)
-}
-@Sendable public static func Array_indexedMap<a, b>(
-    _ indexAndElementToNew: (Double) -> (a) -> b,
-    _ array: [a]
-) -> [b] {
-    array.enumerated()
-        .map({ (index, element) in
-            indexAndElementToNew(Double(index))(element)
-        })
-}
-@Sendable public static func Array_slice<a>(
-    _ startInclusivePossiblyNegativeAsDouble: Double,
-    _ endExclusivePossiblyNegative: Double,
-    _ array: [a]
-) -> [a] {
-    let realStartIndexInclusive: Int =
-        possiblyNegativeIndexForCount(
-            index: Int(startInclusivePossiblyNegativeAsDouble),
-            count: array.count
-        )
-    let realEndIndexExclusive: Int =
-        possiblyNegativeIndexForCount(
-            index: Int(endExclusivePossiblyNegative),
-            count: array.count
-        )
-    return if realStartIndexInclusive >= realEndIndexExclusive {
-        []
-    } else {
-        Array(array[realStartIndexInclusive..<realEndIndexExclusive])
-    }
-}
-
-@Sendable public static func Array_append<a>(_ left: [a], _ right: [a]) -> [a] {
-    left + right
-}
-
-@Sendable public static func Array_foldl<a, state>(
-    _ reduce: (a) -> (state) -> state,
-    _ initialState: state,
-    _ array: [a]
-) -> state {
-    array.reduce(
-        initialState,
-        { soFar, element in
-            reduce(element)(soFar)
-        }
-    )
-}
-static func Array_foldr<a, state>(
-    _ reduce: (a, state) -> state,
-    _ initialState: state,
-    _ array: [a]
-) -> state {
-    var currentState: state = initialState
-    for indexFromTheEnd in array.indices {
-        currentState = reduce(array[array.count - 1 - indexFromTheEnd], currentState)
-    }
-    return currentState
-}
-@Sendable public static func Array_foldr<a, state>(
-    _ reduce: (a) -> (state) -> state,
-    _ initialState: state,
-    _ array: [a]
-) -> state {
-    var currentState: state = initialState
-    for indexFromTheEnd in array.indices {
-        currentState = reduce(array[array.count - 1 - indexFromTheEnd])(currentState)
-    }
-    return currentState
-}
-
-@Sendable public static func List_singleton<a>(_ onlyElement: a) -> List_List<a> {
-    .List_Cons(onlyElement, .List_Empty)
-}
-
-@Sendable public static func List_cons<a>(_ newHead: a, _ tail: List_List<a>) -> List_List<a> {
-    .List_Cons(newHead, tail)
-}
-
-@Sendable public static func List_isEmpty<a>(_ list: List_List<a>) -> Bool {
-    switch list {
-    case .List_Empty: true
-    case .List_Cons(_, _): false
-    }
-}
-
-@Sendable public static func List_head<a>(_ list: List_List<a>) -> Maybe_Maybe<a> {
-    switch list {
-    case .List_Empty: .Maybe_Nothing
-    case let .List_Cons(head, _): .Maybe_Just(head)
-    }
-}
-@Sendable public static func List_tail<a>(_ list: List_List<a>) -> Maybe_Maybe<List_List<a>> {
-    switch list {
-    case .List_Empty: .Maybe_Nothing
-    case let .List_Cons(_, tail): .Maybe_Just(tail)
-    }
-}
-
-@Sendable public static func List_length<a>(_ list: List_List<a>) -> Double {
-    var lengthSoFar: Int = 0
-    for _ in list {
-        lengthSoFar = lengthSoFar + 1
-    }
-    return Double(lengthSoFar)
-}
-
-@Sendable public static func List_foldl<a, state>(
-    _ reduce: (a) -> (state) -> state,
-    _ initialState: state,
-    _ list: List_List<a>
-) -> state {
-    list.reduce(initialState, { soFar, element in reduce(element)(soFar) })
-}
-
-@Sendable public static func List_foldr<a, state>(
-    _ reduce: (a) -> (state) -> state,
-    _ initialState: state,
-    _ list: List_List<a>
-) -> state {
-    // alternative: Array_foldr(reduce, initialState, Array_fromList(list))
-    list.reversed().reduce(initialState, { soFar, element in reduce(element)(soFar) })
-}
-
-@Sendable public static func List_reverse<a>(_ list: List_List<a>) -> List_List<a> {
-    list.reduce(
-        .List_Empty,
-        { soFar, element in .List_Cons(element, soFar) }
-    )
-}
-
-@Sendable public static func List_all<a>(_ isExpected: (a) -> Bool, _ list: List_List<a>)
-    -> Bool
-{
-    list.allSatisfy(isExpected)
-}
-
-@Sendable public static func List_any<a>(_ isNeedle: (a) -> Bool, _ list: List_List<a>) -> Bool
-{
-    list.contains(where: isNeedle)
-}
-
-// necessary because elm type variables do not have information about being equatable
-@Sendable public static func List_member<a: Equatable>(_ needle: (a), _ list: List_List<a>)
-    -> Bool
-{
-    list.contains(needle)
-}
-@Sendable public static func List_member<a>(_ needle: (a), _ list: List_List<a>) -> Bool {
-    list.contains(where: { element in Basics_eq(element, needle) })
-}
-
-@Sendable public static func List_drop<a>(_ countToSkip: Double, _ list: List_List<a>)
-    -> List_List<a>
-{
-    var remainingCountToSkip: Int = Int(countToSkip)
-    var remainingList: List_List<a> = list
-    while remainingCountToSkip >= 1 {
-        switch remainingList {
-        case .List_Empty:
-            return remainingList
-        case let .List_Cons(_, tail):
-            remainingList = tail
-            remainingCountToSkip = remainingCountToSkip - 1
-        }
-    }
-    return remainingList
-}
-
-@Sendable public static func List_take<a>(_ countToTake: Double, _ list: List_List<a>)
-    -> List_List<a>
-{
-    var remainingCountToTake: Int = Int(countToTake)
-    var remainingList: List_List<a> = list
-    var takenElementsArraySoFar: [a] = []
-    while remainingCountToTake >= 1 {
-        switch remainingList {
-        case .List_Empty:
-            return Array_toList(takenElementsArraySoFar)
-        case let .List_Cons(head, tail):
-            takenElementsArraySoFar.append(head)
-            remainingList = tail
-            remainingCountToTake = remainingCountToTake - 1
-        }
-    }
-    return Array_toList(takenElementsArraySoFar)
-}
-
-@Sendable public static func List_intersperse<a>(
-    _ inBetween: a,
-    _ list: List_List<a>
-) -> List_List<a> {
-    switch list {
-    case .List_Empty:
-        return .List_Empty
-    case let .List_Cons(head, tail):
-        var interspersedSoFar: [a] = [head]
-        for tailElement in tail {
-            interspersedSoFar.append(inBetween)
-            interspersedSoFar.append(tailElement)
-        }
-        return Array_toList(interspersedSoFar)
-    }
-}
-
-@Sendable public static func List_map<a, b>(_ elementChange: (a) -> b, _ list: List_List<a>)
-    -> List_List<b>
-{
-    Array_toList(list.map(elementChange))
-}
-
-@Sendable public static func List_indexedMap<a, b>(
-    _ indexedElementChange: (Double) -> (a) -> b,
-    _ list: List_List<a>
-) -> List_List<b> {
-    Array_toList(
-        list.enumerated().map({ (index, element) in
-            indexedElementChange(Double(index))(element)
-        })
-    )
-}
-
-@Sendable public static func List_map2<a, b, c>(
-    _ combineAb: (a) -> (b) -> c,
-    _ aList: List_List<a>,
-    _ bList: List_List<b>
-) -> List_List<c> {
-    var remainingAList: List_List<a> = aList
-    var remainingBList: List_List<b> = bList
-    var combinedArraySoFar: [c] = []
-    while case let (
-        a: .List_Cons(aHead, aTail),
-        b: .List_Cons(bHead, bTail)
-    ) = (remainingAList, remainingBList) {
-        remainingAList = aTail
-        remainingBList = bTail
-        combinedArraySoFar.append(combineAb(aHead)(bHead))
-    }
-    return Array_toList(combinedArraySoFar)
-}
-@Sendable public static func List_map3<a, b, c, combined>(
-    _ combine: (a) -> (b) -> (c) -> combined,
-    _ aList: List_List<a>,
-    _ bList: List_List<b>,
-    _ cList: List_List<c>
-) -> List_List<combined> {
-    var remainingAList: List_List<a> = aList
-    var remainingBList: List_List<b> = bList
-    var remainingCList: List_List<c> = cList
-    var combinedArraySoFar: [combined] = []
-    while case let (
-        .List_Cons(aHead, aTail),
-        .List_Cons(bHead, bTail),
-        .List_Cons(cHead, cTail)
-    ) = (remainingAList, remainingBList, remainingCList) {
-        remainingAList = aTail
-        remainingBList = bTail
-        remainingCList = cTail
-        combinedArraySoFar.append(combine(aHead)(bHead)(cHead))
-    }
-    return Array_toList(combinedArraySoFar)
-}
-@Sendable public static func List_map4<a, b, c, d, combined>(
-    _ combine: (a) -> (b) -> (c) -> (d) -> combined,
-    _ aList: List_List<a>,
-    _ bList: List_List<b>,
-    _ cList: List_List<c>,
-    _ dList: List_List<d>
-) -> List_List<combined> {
-    var remainingAList: List_List<a> = aList
-    var remainingBList: List_List<b> = bList
-    var remainingCList: List_List<c> = cList
-    var remainingDList: List_List<d> = dList
-    var combinedArraySoFar: [combined] = []
-    while case let (
-        .List_Cons(aHead, aTail),
-        .List_Cons(bHead, bTail),
-        .List_Cons(cHead, cTail),
-        .List_Cons(dHead, dTail)
-    ) = (remainingAList, remainingBList, remainingCList, remainingDList) {
-        remainingAList = aTail
-        remainingBList = bTail
-        remainingCList = cTail
-        remainingDList = dTail
-        combinedArraySoFar.append(combine(aHead)(bHead)(cHead)(dHead))
-    }
-    return Array_toList(combinedArraySoFar)
-}
-@Sendable public static func List_map5<a, b, c, d, e, combined>(
-    _ combine: (a) -> (b) -> (c) -> (d) -> (e) -> combined,
-    _ aList: List_List<a>,
-    _ bList: List_List<b>,
-    _ cList: List_List<c>,
-    _ dList: List_List<d>,
-    _ eList: List_List<e>
-) -> List_List<combined> {
-    var remainingAList: List_List<a> = aList
-    var remainingBList: List_List<b> = bList
-    var remainingCList: List_List<c> = cList
-    var remainingDList: List_List<d> = dList
-    var remainingEList: List_List<e> = eList
-    var combinedArraySoFar: [combined] = []
-    while case let (
-        .List_Cons(aHead, aTail),
-        .List_Cons(bHead, bTail),
-        .List_Cons(cHead, cTail),
-        .List_Cons(dHead, dTail),
-        .List_Cons(eHead, eTail)
-    ) = (
-        remainingAList, remainingBList, remainingCList, remainingDList,
-        remainingEList
-    ) {
-        remainingAList = aTail
-        remainingBList = bTail
-        remainingCList = cTail
-        remainingDList = dTail
-        remainingEList = eTail
-        combinedArraySoFar.append(
-            combine(aHead)(bHead)(cHead)(dHead)(eHead))
-    }
-    return Array_toList(combinedArraySoFar)
-}
-
-@Sendable public static func List_zip<a, b>(_ aList: List_List<a>, _ bList: List_List<b>)
-    -> List_List<Tuple<a, b>>
-{
-    List_map2({ a in { b in .Tuple(a, b) } }, aList, bList)
-}
-
-@Sendable public static func List_unzip<a, b>(_ abList: List_List<Tuple<a, b>>)
-    -> Tuple<List_List<a>, List_List<b>>
-{
-    var firstsSoFar: List_List<a> = .List_Empty
-    var secondsSoFar: List_List<b> = .List_Empty
-    for tuple in Array_fromList(abList).reversed() {
-        firstsSoFar = .List_Cons(tuple.first, firstsSoFar)
-        secondsSoFar = .List_Cons(tuple.second, secondsSoFar)
-    }
-    return .Tuple(firstsSoFar, secondsSoFar)
-}
-
-@Sendable public static func List_filter<a>(
-    _ keepElement: (a) -> Bool,
-    _ list: List_List<a>
-)
-    -> List_List<a>
-{
-    // alternative: Array_toList(list.filter(keepElement))
-    var filteredSoFar: [a] = []
-    var allElementsKeptSoFar: Bool = true
-    for element in list {
-        if keepElement(element) {
-            filteredSoFar.append(element)
+        let remainder: f64 = std::ops::Rem::rem(base, by);
+        if (remainder > 0_f64 && by < 0_f64) || (remainder < 0_f64 && by > 0_f64) {
+            remainder + by
         } else {
-            allElementsKeptSoFar = false
+            remainder
         }
     }
-    return if allElementsKeptSoFar {
-        list
-    } else {
-        Array_toList(filteredSoFar)
+}
+pub fn basics_degrees(degrees: f64) -> f64 {
+    degrees.to_radians()
+}
+pub fn basics_turns(turns: f64) -> f64 {
+    turns * 2_f64 * std::f64::consts::PI
+}
+pub fn basics_to_polar((x, y): (f64, f64)) -> (f64, f64) {
+    (f64::sqrt((x * x) + (y * y)), f64::atan2(y, x))
+}
+pub fn basics_from_polar((radius, theta): (f64, f64)) -> (f64, f64) {
+    (radius * (f64::cos(theta)), radius * (f64::sin(theta)))
+}
+
+pub fn basics_never<A>(never: Never) -> A {
+    match never {}
+}
+
+pub fn list_is_empty<A: Copy>(list: ListList<A>) -> bool {
+    match list {
+        &ListListGuts::ListEmpty => true,
+        &ListListGuts::ListCons(_, _) => false,
     }
 }
-
-@Sendable public static func List_filterMap<a, b>(
-    _ elementToMaybe: (a) -> Maybe_Maybe<b>,
-    _ list: List_List<a>
-) -> List_List<b> {
-    Array_toList(list.compactMap({ element in Maybe_toOptional(elementToMaybe(element)) }))
+pub fn list_head<A: Copy>(list: ListList<A>) -> Option<A> {
+    match list {
+        &ListListGuts::ListEmpty => Option::None,
+        &ListListGuts::ListCons(head, _) => Option::Some(head),
+    }
+}
+pub fn list_tail<A: Copy>(list: ListList<A>) -> Option<ListList<A>> {
+    match list {
+        &ListListGuts::ListEmpty => Option::None,
+        &ListListGuts::ListCons(_, tail) => Option::Some(tail),
+    }
+}
+pub fn list_cons<'a, A>(allocator: &'a Bump, head: A, tail: ListList<'a, A>) -> ListList<'a, A> {
+    allocator.alloc(ListListGuts::ListCons(head, tail))
+}
+pub fn list_singleton<'a, A>(allocator: &'a Bump, only_element: A) -> ListList<'a, A> {
+    list_cons(allocator, only_element, &ListListGuts::ListEmpty)
+}
+pub fn list_repeat<'a, A: Copy>(allocator: &'a Bump, count: f64, element: A) -> ListList<'a, A> {
+    double_ended_iterator_to_list(allocator, std::iter::repeat_n(element, count as usize))
+}
+pub fn list_range<'a>(allocator: &'a Bump, min: f64, max: f64) -> ListList<'a, f64> {
+    double_ended_iterator_to_list(allocator, ((min as i32)..=(max as i32)).map(|n| n as f64))
+}
+pub fn double_ended_iterator_to_list<'a, A: Copy, AIterator: DoubleEndedIterator<Item = A>>(
+    allocator: &'a Bump,
+    iterator: AIterator,
+) -> ListList<'a, A> {
+    let mut list_so_far: ListList<A> = &ListListGuts::ListEmpty;
+    for element in iterator.rev() {
+        list_so_far = list_cons(allocator, element, list_so_far)
+    }
+    list_so_far
 }
 
-@Sendable public static func List_append<a>(
-    _ earlier: List_List<a>,
-    _ later: List_List<a>
-) -> List_List<a> {
+pub fn list_length<A: Copy>(list: ListList<A>) -> f64 {
+    list.iter().count() as f64
+}
+pub fn list_sum(list: ListList<f64>) -> f64 {
+    list.iter().sum()
+}
+pub fn list_product(list: ListList<f64>) -> f64 {
+    list.iter().product()
+}
+pub fn list_all<A: Copy, IsExpected: Fn(A) -> bool>(
+    is_expected: IsExpected,
+    list: ListList<A>,
+) -> bool {
+    list.iter().all(is_expected)
+}
+pub fn list_any<A: Copy, IsNeedle: Fn(A) -> bool>(is_needle: IsNeedle, list: ListList<A>) -> bool {
+    list.iter().any(is_needle)
+}
+pub fn list_member<A: Copy + Eq>(needle: A, list: ListList<A>) -> bool {
+    list.iter().any(|el| el == needle)
+}
+pub fn list_minimum<A: Copy + PartialOrd>(list: ListList<A>) -> Option<A> {
+    list.iter().min_by(|&l, &r| basics_compare(l, r))
+}
+pub fn list_maximum<A: Copy + PartialOrd>(list: ListList<A>) -> Option<A> {
+    list.iter().max_by(|&l, &r| basics_compare(l, r))
+}
+pub fn list_take<'a, A: Copy>(
+    allocator: &'a Bump,
+    keep_count: f64,
+    list: ListList<A>,
+) -> ListList<'a, A> {
+    iterator_to_list(allocator, list.iter().take(keep_count as usize))
+}
+/// prefer `double_ended_iterator_to_list` where possible
+pub fn iterator_to_list<'a, A: Copy, AIterator: Iterator<Item = A>>(
+    allocator: &'a Bump,
+    iterator: AIterator,
+) -> ListList<'a, A> {
+    double_ended_iterator_to_list(allocator, iterator.collect::<Vec<A>>().into_iter())
+}
+pub fn list_drop<'a, A: Copy>(skip_count: f64, list: ListList<'a, A>) -> ListList<'a, A> {
+    let mut iterator = list.iter();
+    for () in std::iter::repeat_n((), skip_count as usize) {
+        match iterator.next() {
+            None => return &ListListGuts::ListEmpty,
+            Some(_) => {}
+        }
+    }
+    iterator.remaining_list
+}
+pub fn list_intersperse<'a, A: Copy>(
+    allocator: &'a Bump,
+    in_between: A,
+    list: ListList<A>,
+) -> ListList<'a, A> {
+    match list {
+        &ListListGuts::ListEmpty => &ListListGuts::ListEmpty,
+        &ListListGuts::ListCons(head, tail) => list_cons(
+            allocator,
+            head,
+            iterator_to_list(
+                allocator,
+                tail.iter().flat_map(|tail_element| {
+                    std::iter::once(in_between).chain(std::iter::once(tail_element))
+                }),
+            ),
+        ),
+    }
+}
+pub fn list_concat<'a, A: Copy>(
+    allocator: &'a Bump,
+    list: ListList<ListList<A>>,
+) -> ListList<'a, A> {
+    iterator_to_list(allocator, list.iter().flat_map(|inner| inner.iter()))
+}
+pub fn list_concat_map<'a, A: Copy, B: Copy, ElementToList: Fn(A) -> ListList<'a, B>>(
+    allocator: &'a Bump,
+    element_to_list: ElementToList,
+    list: ListList<A>,
+) -> ListList<'a, B> {
+    iterator_to_list(
+        allocator,
+        list.iter().flat_map(|inner| element_to_list(inner).iter()),
+    )
+}
+pub fn list_foldl<A: Copy, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) -> State>(
+    reduce: Reduce,
+    initial_state: State,
+    list: ListList<A>,
+) -> State {
+    list.iter()
+        .fold(initial_state, |state, element| reduce(element)(state))
+}
+pub fn list_foldr<A: Copy, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) -> State>(
+    reduce: Reduce,
+    initial_state: State,
+    list: ListList<A>,
+) -> State {
+    list.iter()
+        .collect::<Vec<A>>()
+        .iter()
+        .rev()
+        .fold(initial_state, |state, &element| reduce(element)(state))
+}
+
+pub fn list_reverse<'a, A: Copy>(allocator: &'a Bump, list: ListList<A>) -> ListList<'a, A> {
+    let mut reverse_list: ListList<A> = &ListListGuts::ListEmpty;
+    for new_head in list.iter() {
+        reverse_list = list_cons(allocator, new_head, reverse_list)
+    }
+    reverse_list
+}
+pub fn list_filter<'a, A: Copy, Keep: Fn(A) -> bool>(
+    allocator: &'a Bump,
+    keep: Keep,
+    list: ListList<A>,
+) -> ListList<'a, A> {
+    // can be optimized by just returning list when all elements were kept
+    iterator_to_list(allocator, list.iter().filter(|&element| keep(element)))
+}
+pub fn list_map<'a, A: Copy, B: Copy, ElementChange: Fn(A) -> B>(
+    allocator: &'a Bump,
+    element_change: ElementChange,
+    list: ListList<A>,
+) -> ListList<'a, B> {
+    iterator_to_list(allocator, list.iter().map(element_change))
+}
+pub fn list_indexed_map<
+    'a,
+    A: Copy,
+    B: Copy,
+    IndexedElementToNew: Fn(f64) -> IndexedElementToNew1,
+    IndexedElementToNew1: Fn(A) -> B,
+>(
+    allocator: &'a Bump,
+    indexed_element_to_new: IndexedElementToNew,
+    list: ListList<A>,
+) -> ListList<'a, B> {
+    iterator_to_list(
+        allocator,
+        list.iter()
+            .enumerate()
+            .map(|(index, element)| indexed_element_to_new(index as f64)(element)),
+    )
+}
+pub fn list_filter_map<'a, A: Copy, B: Copy, ElementToMaybe: Fn(A) -> Option<B>>(
+    allocator: &'a Bump,
+    element_to_maybe: ElementToMaybe,
+    list: ListList<'a, A>,
+) -> ListList<'a, B> {
+    iterator_to_list(allocator, list.iter().filter_map(element_to_maybe))
+}
+pub fn list_sort<'a, A: Copy + PartialOrd>(
+    allocator: &'a Bump,
+    list: ListList<A>,
+) -> ListList<'a, A> {
+    let mut list_copy_as_vec: Vec<A> = list.iter().collect();
+    list_copy_as_vec.sort_by(|&a, &b| basics_compare(a, b));
+    array_to_list(allocator, &list_copy_as_vec)
+}
+pub fn list_sort_by<'a, A: Copy, B: PartialOrd, ElementToComparable: Fn(A) -> B>(
+    allocator: &'a Bump,
+    element_to_comparable: ElementToComparable,
+    list: ListList<'a, A>,
+) -> ListList<'a, A> {
+    let mut list_copy_as_vec: Vec<A> = list.iter().collect();
+    list_copy_as_vec
+        .sort_by(|&a, &b| basics_compare(element_to_comparable(a), element_to_comparable(b)));
+    array_to_list(allocator, &list_copy_as_vec)
+}
+pub fn list_sort_with<
+    'a,
+    A: Copy,
+    ElementCompare: Fn(A) -> ElementCompare1,
+    ElementCompare1: Fn(A) -> std::cmp::Ordering,
+>(
+    allocator: &'a Bump,
+    element_compare: ElementCompare,
+    list: ListList<'a, A>,
+) -> ListList<'a, A> {
+    let mut list_copy_as_vec: Vec<A> = list.iter().collect();
+    list_copy_as_vec.sort_by(|&a, &b| element_compare(a)(b));
+    array_to_list(allocator, &list_copy_as_vec)
+}
+pub fn list_append<'a, A: Copy>(
+    allocator: &'a Bump,
+    left: ListList<A>,
+    right: ListList<'a, A>,
+) -> ListList<'a, A> {
     // can be optimized
-    earlier.reversed().reduce(
-        later,
-        { (soFar, earlierElement) in
-            .List_Cons(earlierElement, soFar)
-        }
+    let mut combined_list: ListList<A> = right;
+    for next_right_last_element in left.iter().collect::<Vec<A>>().into_iter().rev() {
+        combined_list = list_cons(allocator, next_right_last_element, combined_list)
+    }
+    combined_list
+}
+pub fn list_unzip<'a, A: Copy, B: Copy>(
+    allocator: &'a Bump,
+    list: ListList<(A, B)>,
+) -> (ListList<'a, A>, ListList<'a, B>) {
+    let mut a_list: ListList<A> = &ListListGuts::ListEmpty;
+    let mut b_list: ListList<B> = &ListListGuts::ListEmpty;
+    for (next_last_a, next_last_b) in list.iter().collect::<Vec<(A, B)>>().into_iter().rev() {
+        a_list = list_cons(allocator, next_last_a, a_list);
+        b_list = list_cons(allocator, next_last_b, b_list)
+    }
+    (a_list, b_list)
+}
+pub fn list_partition<'a, A: Copy, Decode: Fn(A) -> bool>(
+    allocator: &'a Bump,
+    decode: Decode,
+    list: ListList<A>,
+) -> (ListList<'a, A>, ListList<'a, A>) {
+    let (yes, no): (Vec<A>, Vec<A>) = list.iter().partition(|&element| decode(element));
+    (
+        iterator_to_list(allocator, yes.into_iter()),
+        iterator_to_list(allocator, no.into_iter()),
+    )
+}
+pub fn list_zip<'a, A: Copy, B: Copy>(
+    allocator: &'a Bump,
+    a_list: ListList<A>,
+    b_list: ListList<B>,
+) -> ListList<'a, (A, B)> {
+    iterator_to_list(allocator, std::iter::zip(a_list.iter(), b_list.iter()))
+}
+pub fn list_map2<
+    'a,
+    A: Copy,
+    B: Copy,
+    Combined: Copy,
+    Combine: Fn(A) -> Combine1,
+    Combine1: Fn(B) -> Combined,
+>(
+    allocator: &'a Bump,
+    combine: Combine,
+    a_list: ListList<A>,
+    b_list: ListList<B>,
+) -> ListList<'a, Combined> {
+    iterator_to_list(
+        allocator,
+        std::iter::zip(a_list.iter(), b_list.iter()).map(|(a, b)| combine(a)(b)),
+    )
+}
+pub fn list_map3<
+    'a,
+    A: Copy,
+    B: Copy,
+    C: Copy,
+    Combined: Copy,
+    Combine: Fn(A) -> Combine1,
+    Combine1: Fn(B) -> Combine2,
+    Combine2: Fn(C) -> Combined,
+>(
+    allocator: &'a Bump,
+    combine: Combine,
+    a_list: ListList<A>,
+    b_list: ListList<B>,
+    c_list: ListList<C>,
+) -> ListList<'a, Combined> {
+    iterator_to_list(
+        allocator,
+        a_list
+            .iter()
+            .zip(b_list.iter())
+            .zip(c_list.iter())
+            .map(|((a, b), c)| combine(a)(b)(c)),
+    )
+}
+pub fn list_map4<
+    'a,
+    A: Copy,
+    B: Copy,
+    C: Copy,
+    D: Copy,
+    Combined: Copy,
+    Combine: Fn(A) -> Combine1,
+    Combine1: Fn(B) -> Combine2,
+    Combine2: Fn(C) -> Combine3,
+    Combine3: Fn(D) -> Combined,
+>(
+    allocator: &'a Bump,
+    combine: Combine,
+    a_list: ListList<A>,
+    b_list: ListList<B>,
+    c_list: ListList<C>,
+    d_list: ListList<D>,
+) -> ListList<'a, Combined> {
+    iterator_to_list(
+        allocator,
+        a_list
+            .iter()
+            .zip(b_list.iter())
+            .zip(c_list.iter())
+            .zip(d_list.iter())
+            .map(|(((a, b), c), d)| combine(a)(b)(c)(d)),
+    )
+}
+pub fn list_map5<
+    'a,
+    A: Copy,
+    B: Copy,
+    C: Copy,
+    D: Copy,
+    E: Copy,
+    Combined: Copy,
+    Combine: Fn(A) -> Combine1,
+    Combine1: Fn(B) -> Combine2,
+    Combine2: Fn(C) -> Combine3,
+    Combine3: Fn(D) -> Combine4,
+    Combine4: Fn(E) -> Combined,
+>(
+    allocator: &'a Bump,
+    combine: Combine,
+    a_list: ListList<A>,
+    b_list: ListList<B>,
+    c_list: ListList<C>,
+    d_list: ListList<D>,
+    e_list: ListList<E>,
+) -> ListList<'a, Combined> {
+    iterator_to_list(
+        allocator,
+        a_list
+            .iter()
+            .zip(b_list.iter())
+            .zip(c_list.iter())
+            .zip(d_list.iter())
+            .zip(e_list.iter())
+            .map(|((((a, b), c), d), e)| combine(a)(b)(c)(d)(e)),
     )
 }
 
-@Sendable public static func List_concatMap<a, b>(
-    _ elementToList: (a) -> List_List<b>,
-    _ list: List_List<a>
-) -> List_List<b> {
-    Array_toList(list.flatMap(elementToList))
-}
+pub type ArrayArray<'a, A> = &'a [A];
 
-@Sendable public static func List_concat<a>(_ list: List_List<List_List<a>>) -> List_List<a> {
-    Array_toList(list.flatMap({ element in element }))
+pub fn array_empty<'a, A>() -> ArrayArray<'a, A> {
+    &[]
 }
-
-@Sendable public static func List_repeat<a>(_ count: Double, _ element: a) -> List_List<a> {
-    if count <= 0 {
-        return .List_Empty
+pub fn array_singleton<A>(allocator: &Bump, only_element: A) -> ArrayArray<A> {
+    allocator.alloc([only_element])
+}
+pub fn array_repeat<'a, A: Copy>(
+    allocator: &'a Bump,
+    length: f64,
+    element: A,
+) -> ArrayArray<'a, A> {
+    allocator.alloc(std::vec::from_elem(element, length as usize))
+}
+pub fn array_initialize<'a, A, IndexToElement: Fn(f64) -> A>(
+    allocator: &'a Bump,
+    length: f64,
+    index_to_element: IndexToElement,
+) -> ArrayArray<'a, A> {
+    allocator.alloc(
+        (0..(length as i64))
+            .map(|i| index_to_element(i as f64))
+            .collect::<Vec<A>>(),
+    )
+}
+pub fn array_is_empty<A>(array: ArrayArray<A>) -> bool {
+    array.is_empty()
+}
+pub fn array_length<A>(array: ArrayArray<A>) -> f64 {
+    array.len() as f64
+}
+pub fn array_get<A: Copy>(index: f64, array: ArrayArray<A>) -> Option<A> {
+    array.get(index as usize).map(|&element| element)
+}
+pub fn array_push<'a, A: Copy>(
+    allocator: &'a Bump,
+    new_last_element: A,
+    array: ArrayArray<A>,
+) -> ArrayArray<'a, A> {
+    let mut array_as_vec: Vec<A> = array.to_vec();
+    array_as_vec.push(new_last_element);
+    allocator.alloc(array_as_vec)
+}
+pub fn array_set<'a, A: Copy>(
+    allocator: &'a Bump,
+    index: f64,
+    new_element: A,
+    array: ArrayArray<'a, A>,
+) -> ArrayArray<'a, A> {
+    if index < 0_f64 {
+        array
     } else {
-        var soFar: List_List<a> = .List_Empty
-        for _ in 1...Int(count) {
-            soFar = .List_Cons(element, soFar)
+        let index_usize: usize = index as usize;
+        if index_usize > array.len() {
+            array
+        } else {
+            let mut array_as_vec: Vec<A> = array.to_vec();
+            if index_usize == array.len() {
+                array_as_vec.push(new_element)
+            } else {
+                array_as_vec[index as usize] = new_element;
+            }
+            allocator.alloc(array_as_vec)
         }
-        return soFar
     }
 }
-
-@Sendable public static func List_range(_ start: Double, _ end: Double) -> List_List<Double> {
-    if start > end {
-        return .List_Empty
+pub fn array_slice<'a, A>(
+    start_inclusive_possibly_negative: f64,
+    end_exclusive_possibly_negative: f64,
+    array: ArrayArray<'a, A>,
+) -> ArrayArray<'a, A> {
+    let start_inclusive: usize =
+        index_from_end_if_negative(start_inclusive_possibly_negative, array.len());
+    let end_exclusive: usize =
+        index_from_end_if_negative(end_exclusive_possibly_negative, array.len());
+    if end_exclusive <= start_inclusive {
+        &[]
     } else {
-        var soFar: List_List<Double> = .List_Empty
-        for i in stride(from: Int(end), through: Int(start), by: -1) {
-            soFar = .List_Cons(Double(i), soFar)
-        }
-        return soFar
+        &array[start_inclusive..end_exclusive]
     }
 }
-@Sendable public static func List_sum(_ list: List_List<Double>) -> Double {
-    // alternative: list.reduce(0, +)
-    var sumSoFar: Double = 0.0
-    for element in list {
-        sumSoFar = sumSoFar + element
-    }
-    return sumSoFar
-}
-@Sendable public static func List_product(_ list: List_List<Double>) -> Double {
-    // alternative: list.reduce(1, *)
-    var productSoFar: Double = 1.0
-    for element in list {
-        productSoFar = productSoFar * element
-    }
-    return productSoFar
-}
-
-@Sendable public static func List_maximum<a: Comparable>(_ list: List_List<a>) -> Maybe_Maybe<a>
-{
-    switch list {
-    case .List_Empty:
-        .Maybe_Nothing
-    case let .List_Cons(head, tail):
-        .Maybe_Just(tail.reduce(head, max))
-    }
-}
-
-@Sendable public static func List_minimum<a: Comparable>(_ list: List_List<a>) -> Maybe_Maybe<a>
-{
-    switch list {
-    case .List_Empty:
-        .Maybe_Nothing
-    case let .List_Cons(head, tail):
-        .Maybe_Just(tail.reduce(head, min))
-    }
-}
-
-@Sendable public static func List_sortWith<a>(
-    _ elementCompare: (a) -> (a) -> Basics_Order,
-    _ list: List_List<a>
-) -> List_List<a> {
-    Array_toList(list.sorted(by: { (a, b) in elementCompare(a)(b) == .Basics_LT }))
-}
-
-@Sendable public static func List_sortBy<element, comparable: Comparable>(
-    _ elementToComparable: (element) -> comparable,
-    _ list: List_List<element>
-) -> List_List<element> {
-    Array_toList(
-        list.sorted(
-            by: { (a, b) in elementToComparable(a) < elementToComparable(b) }
-        )
-    )
-}
-
-@Sendable public static func List_sort<comparable: Comparable>(_ list: List_List<comparable>)
-    -> List_List<comparable>
-{
-    Array_toList(list.sorted())
-}
-
-@Sendable public static func Set_size<a>(_ set: Set<a>) -> Double {
-    Double(set.count)
-}
-@Sendable public static func Set_empty<a>() -> Set<a> {
-    Set()
-}
-@Sendable public static func Set_singleton<a>(_ onlyElement: a) -> Set<a> {
-    [onlyElement]
-}
-@Sendable public static func Set_fromList<a>(_ list: List_List<a>) -> Set<a> {
-    var set: Set<a> = Set()
-    for element in list {
-        set.insert(element)
-    }
-    return set
-}
-@Sendable public static func Set_toList<a: Comparable>(_ set: Set<a>) -> List_List<a> {
-    return Array_toList(set.sorted())
-}
-@Sendable public static func Set_isEmpty<a>(_ set: Set<a>) -> Bool {
-    set.isEmpty
-}
-@Sendable public static func Set_member<a>(_ needle: a, _ set: Set<a>) -> Bool {
-    set.contains(needle)
-}
-@Sendable public static func Set_insert<a>(_ newElement: a, _ set: Set<a>) -> Set<a> {
-    var setMutable: Set<a> = set
-    setMutable.insert(newElement)
-    return setMutable
-}
-@Sendable public static func Set_remove<a>(_ badApple: a, _ set: Set<a>) -> Set<a> {
-    var setMutable: Set<a> = set
-    setMutable.remove(badApple)
-    return setMutable
-}
-@Sendable public static func Set_diff<a>(_ baseSet: Set<a>, _ badApples: Set<a>) -> Set<a> {
-    var setMutable: Set<a> = baseSet
-    setMutable.subtract(badApples)
-    return setMutable
-}
-@Sendable public static func Set_intersect<a>(_ aSet: Set<a>, _ bSet: Set<a>) -> Set<a> {
-    aSet.intersection(bSet)
-}
-@Sendable public static func Set_union<a>(_ aSet: Set<a>, _ bSet: Set<a>) -> Set<a> {
-    aSet.union(bSet)
-}
-@Sendable public static func Set_map<a, b>(
-    _ elementChange: (a) -> b,
-    _ set: Set<a>
-) -> Set<b> {
-    Set(set.map(elementChange))
-}
-@Sendable public static func Set_filter<a>(_ keepElement: (a) -> Bool, set: Set<a>) -> Set<a> {
-    set.filter(keepElement)
-}
-@Sendable public static func Set_partition<a>(_ isLeft: (a) -> Bool, _ set: Set<a>)
-    -> Tuple<Set<a>, Set<a>>
-{
-    var left: Set<a> = Set()
-    left.reserveCapacity(set.count)
-    var right: Set<a> = Set()
-    right.reserveCapacity(set.count)
-    for element in set {
-        if isLeft(element) {
-            left.insert(element)
-        } else {
-            right.insert(element)
-        }
-    }
-    return .Tuple(left, right)
-}
-@Sendable public static func Set_foldl<a: Comparable, state>(
-    _ reduce: (a) -> (state) -> state,
-    _ initialState: state,
-    _ set: Set<a>
-) -> (state) {
-    set.sorted().reduce(
-        initialState,
-        { soFar, element in reduce(element)(soFar) }
-    )
-}
-@Sendable public static func Set_foldr<a: Comparable, state>(
-    _ reduce: (a) -> (state) -> state,
-    _ initialState: state,
-    _ set: Set<a>
-) -> (state) {
-    set
-        // notice that we sort by > instead of < !
-        .sorted(by: { a, b in a > b })
-        .reduce(
-            initialState,
-            { soFar, element in reduce(element)(soFar) }
-        )
-}
-
-@Sendable public static func Dict_size<key, value>(_ dictionary: [key: value]) -> Double {
-    Double(dictionary.count)
-}
-@Sendable public static func Dict_empty<key, value>() -> [key: value] {
-    Dictionary()
-}
-@Sendable public static func Dict_singleton<key, value>(_ key: key, _ value: value)
-    -> [key: value]
-{
-    [key: value]
-}
-@Sendable public static func Dict_fromList<key, value>(_ list: List_List<Tuple<key, value>>)
-    -> [key: value]
-{
-    var dictionary: [key: value] = Dictionary()
-    for case let entry in list {
-        dictionary[entry.first] = entry.second
-    }
-    return dictionary
-}
-@Sendable public static func Dict_toList<key: Comparable, value>(_ dictionary: [key: value])
-    -> List_List<Tuple<key, value>>
-{
-    Array_mapToList(
-        { entry in .Tuple(entry.key, entry.value) },
-        dictionary.sorted(by: { a, b in a.key < b.key })
-    )
-}
-@Sendable public static func Dict_keys<key: Comparable, value>(_ dictionary: [key: value])
-    -> List_List<key>
-{
-    return Array_toList(dictionary.keys.sorted())
-}
-@Sendable public static func Dict_values<key: Comparable, value>(_ dictionary: [key: value])
-    -> List_List<value>
-{
-    Array_mapToList(
-        { entry in entry.value },
-        dictionary
-            .sorted(by: { a, b in a.key < b.key })
-    )
-}
-@Sendable public static func Dict_isEmpty<key, value>(_ dictionary: [key: value]) -> Bool {
-    dictionary.isEmpty
-}
-@Sendable public static func Dict_member<key, value>(_ needle: key, _ dictionary: [key: value])
-    -> Bool
-{
-    switch dictionary[needle] {
-    case .none: false
-    case .some(_): true
-    }
-}
-@Sendable public static func Dict_get<key, value>(_ key: key, _ dictionary: [key: value])
-    -> Maybe_Maybe<value>
-{
-    Maybe_fromOptional(dictionary[key])
-}
-@Sendable public static func Dict_insert<key, value>(
-    _ key: key,
-    _ value: value,
-    _ dictionary: [key: value]
-) -> [key: value] {
-    var dictionaryMutable: [key: value] = dictionary
-    dictionaryMutable[key] = value
-    return dictionaryMutable
-}
-@Sendable public static func Dict_update<key, value>(
-    _ key: key,
-    _ maybeValueToMaybeValue: (Maybe_Maybe<value>) -> Maybe_Maybe<value>,
-    _ dictionary: [key: value]
-) -> [key: value] {
-    var dictionaryMutable: [key: value] = dictionary
-    dictionaryMutable[key] = Maybe_toOptional(
-        maybeValueToMaybeValue(
-            Maybe_fromOptional(dictionaryMutable[key])
-        )
-    )
-    return dictionaryMutable
-}
-@Sendable public static func Dict_remove<key, value>(
-    _ badApple: key,
-    _ dictionary: [key: value]
-) -> [key: value] {
-    var dictionaryMutable: [key: value] = dictionary
-    dictionaryMutable.removeValue(forKey: badApple)
-    return dictionaryMutable
-}
-@Sendable public static func Dict_diff<key, a, b>(
-    _ baseDictionary: [key: a],
-    _ badApples: [key: b]
-) -> [key: a] {
-    baseDictionary.filter({ key, _ in
-        switch badApples[key] {
-        case .none: true
-        case .some(_): false
-        }
-    })
-}
-@Sendable public static func Dict_intersect<key, value>(
-    _ aDictionary: [key: value],
-    _ bDictionary: [key: value]
-) -> [key: value] {
-    aDictionary.filter({ aKey, aValue in
-        switch bDictionary[aKey] {
-        case .none: false
-        case .some(_): true
-        }
-    })
-}
-@Sendable public static func Dict_union<key, value>(
-    _ aDictionary: [key: value],
-    _ bDictionary: [key: value]
-) -> [key: value] {
-    var aDictionaryMutable: [key: value] = aDictionary
-    aDictionaryMutable.merge(bDictionary, uniquingKeysWith: { aValue, _ in aValue })
-    return aDictionaryMutable
-}
-@Sendable public static func Dict_merge<key: Comparable, a, b, state>(
-    _ onlyA: (key) -> (a) -> (state) -> state,
-    _ bothAB: (key) -> (a) -> (b) -> (state) -> state,
-    _ onlyB: (key) -> (b) -> (state) -> state,
-    _ aDictionary: [key: a],
-    _ bDictionary: [key: b],
-    _ initialState: state
-)
-    -> state
-{
-    var combinedKeyArray: [key] = []
-    combinedKeyArray.reserveCapacity(aDictionary.count + bDictionary.count)
-    for aKey in aDictionary.keys {
-        combinedKeyArray.append(aKey)
-    }
-    for bKey in bDictionary.keys {
-        combinedKeyArray.append(bKey)
-    }
-    combinedKeyArray.sort()
-    var currentState: state = initialState
-    var previousKey: key? = .none
-    for key in combinedKeyArray {
-        if key == previousKey {
-            // skip key that was added from both dictionaries
-            // next key is guaranteed to be different so let's make the comparison easy
-            previousKey = .none
-        } else {
-            previousKey = key
-            switch (aDictionary[key], bDictionary[key]) {
-            case let (.some(a), .some(b)):
-                currentState = bothAB(key)(a)(b)(currentState)
-            case let (.some(a), .none):
-                currentState = onlyA(key)(a)(currentState)
-            case let (.none, .some(b)):
-                currentState = onlyB(key)(b)(currentState)
-            case (.none, .none): break
-            }
-        }
-    }
-    return currentState
-}
-@Sendable public static func Dict_map<key, a, b>(
-    _ entryToNewValue: (key) -> (a) -> b,
-    _ dictionary: [key: a]
-) -> [key: b] {
-    Dictionary(
-        uniqueKeysWithValues:
-            dictionary.map({ key, value in
-                (key, entryToNewValue(key)(value))
-            })
-    )
-}
-@Sendable public static func Dict_filter<key, value>(
-    _ keepElement: (key) -> (value) -> Bool,
-    _ dictionary: [key: value]
-) -> [key: value] {
-    dictionary.filter(
-        { key, value in keepElement(key)(value) }
-    )
-}
-@Sendable public static func Dict_partition<key, value>(
-    _ isLeft: (key) -> (value) -> Bool,
-    _ dictionary: [key: value]
-)
-    -> Tuple<[key: value], [key: value]>
-{
-    var left: [key: value] = Dictionary()
-    left.reserveCapacity(dictionary.capacity)
-    var right: [key: value] = Dictionary()
-    right.reserveCapacity(dictionary.capacity)
-    for (key, value) in dictionary {
-        if isLeft(key)(value) {
-            left[key] = value
-        } else {
-            right[key] = value
-        }
-    }
-    return .Tuple(left, right)
-}
-@Sendable public static func Dict_foldl<key: Comparable, value, state>(
-    _ reduce: (key) -> (value) -> (state) -> state,
-    _ initialState: state,
-    _ dictionary: [key: value]
-) -> state {
-    dictionary
-        .sorted(by: { a, b in a.key < b.key })
-        .reduce(
-            initialState,
-            { soFar, entry in reduce(entry.key)(entry.value)(soFar) }
-        )
-}
-@Sendable public static func Dict_foldr<key: Comparable, value, state>(
-    _ reduce: (key) -> (value) -> (state) -> state,
-    _ initialState: state,
-    _ dictionary: [key: value]
-) -> state {
-    dictionary
-        // notice that we sort by > instead of < !
-        .sorted(by: { a, b in a.key > b.key })
-        .reduce(
-            initialState,
-            { soFar, entry in reduce(entry.key)(entry.value)(soFar) }
-        )
-}
-
-// not alias for Regex<Substring> because Regex is not Sendable
-// when constructing, always validate with .regex
-public enum Regex_Regex: Sendable, Equatable {
-    case Regex_Regex(patternString: String, ignoresCase: Bool, anchorsMatchLineEndings: Bool)
-
-    public var regex: Regex<AnyRegexOutput>? {
-        switch self {
-        case let .Regex_Regex(
-            patternString: patternString,
-            ignoresCase: ignoresCase,
-            anchorsMatchLineEndings: anchorsMatchLineEndings
-        ):
-            do {
-                let patternRegex: Regex<AnyRegexOutput> = try Regex(patternString)
-                return .some(
-                    patternRegex
-                        .ignoresCase(ignoresCase)
-                        .anchorsMatchLineEndings(anchorsMatchLineEndings)
-                )
-            } catch {
-                return .none
-            }
-        }
-    }
-}
-
-public enum Generated_caseInsensitive_multiline<caseInsensitive: Sendable, multiline: Sendable>:
-    Sendable
-{
-    case Record(caseInsensitive: caseInsensitive, multiline: multiline)
-    var caseInsensitive: caseInsensitive {
-        switch self {
-        case let .Record(result, _): result
-        }
-    }
-    var multiline: multiline {
-        switch self {
-        case let .Record(_, result): result
-        }
-    }
-}
-public typealias Regex_Options =
-    Generated_caseInsensitive_multiline<Bool, Bool>
-
-public enum Generated_index_match_number_submatches<
-    index: Sendable, match: Sendable, number: Sendable, submatches: Sendable
->: Sendable {
-    case Record(index: index, match: match, number: number, submatches: submatches)
-    var index: index {
-        switch self {
-        case let .Record(result, _, _, _): result
-        }
-    }
-    var match: match {
-        switch self {
-        case let .Record(_, result, _, _): result
-        }
-    }
-    var number: number {
-        switch self {
-        case let .Record(_, _, result, _): result
-        }
-    }
-    var submatches: submatches {
-        switch self {
-        case let .Record(_, _, _, result): result
-        }
-    }
-}
-public typealias Regex_Match =
-    Generated_index_match_number_submatches<
-        Double,
-        String,
-        Double,
-        List_List<(Maybe_Maybe<String>)>
-    >
-
-public static let Regex_never: Regex_Regex = .Regex_Regex(
-    patternString: "/.^/",
-    ignoresCase: false,
-    anchorsMatchLineEndings: false
-)
-@Sendable public static func Regex_fromString(_ string: String) -> Maybe_Maybe<Regex_Regex> {
-    Regex_fromStringWith(.Record(caseInsensitive: false, multiline: false), string)
-}
-@Sendable public static func Regex_fromStringWith(_ options: Regex_Options, _ string: String)
-    -> Maybe_Maybe<Regex_Regex>
-{
-    let regexInfo: Regex_Regex = .Regex_Regex(
-        patternString: string,
-        ignoresCase: options.caseInsensitive,
-        anchorsMatchLineEndings: options.multiline
-    )
-    return switch regexInfo.regex {
-    case .some(_): .Maybe_Just(regexInfo)
-    case .none: .Maybe_Nothing
-    }
-}
-@Sendable public static func Regex_contains(_ regex: Regex_Regex, _ string: String) -> Bool {
-    switch regex.regex {
-    case let .some(rustRegex):
-        string.contains(rustRegex)
-    case .none:
-        false
-    }
-}
-
-static func toRegexMatch(
-    _ match: Regex<AnyRegexOutput>.Match,
-    matchIndex1Based: Int,
-    in string: String
-)
-    -> Regex_Match
-{
-    .Record(
-        index: Double(match.range.lowerBound.utf16Offset(in: string)),
-        match: String(match.0),
-        number: Double(matchIndex1Based),
-        submatches: Array_mapToList(
-            { submatch in
-                switch submatch.substring {
-                case .none: .Maybe_Nothing
-                case let .some(submatchSubstring):
-                    .Maybe_Just(String(submatchSubstring))
-                }
-            },
-            Array(match.output)
-        )
-    )
-}
-@Sendable public static func Regex_replace(
-    _ regexInfo: Regex_Regex,
-    _ matchToReplacementString: (Regex_Match) -> String,
-    _ string: String
-) -> String {
-    switch regexInfo.regex {
-    case .none: return string
-    case let .some(regex):
-        // we rely on the fact that String.replacing
-        // looks for matches from the start to the end in order
-        var matchIndex1Based: Int = 1
-        return string.replacing(
-            regex,
-            with: { (match: Regex<AnyRegexOutput>.Match) -> String in
-                let matchToReplace: Regex_Match =
-                    toRegexMatch(
-                        match,
-                        matchIndex1Based: matchIndex1Based,
-                        in: string
-                    )
-                matchIndex1Based = matchIndex1Based + 1
-                return matchToReplacementString(matchToReplace)
-            }
-        )
-    }
-}
-@Sendable public static func Regex_replaceAtMost(
-    _ maxOccurrences: Double,
-    _ regexInfo: Regex_Regex,
-    _ matchToReplacementString: (Regex_Match) -> String,
-    _ string: String
-) -> String {
-    switch regexInfo.regex {
-    case .none: return string
-    case let .some(regex):
-        // we rely on the fact that String.replacing
-        // looks for matches from the start to the end in order
-        var matchIndex1Based = 1
-        return string.replacing(
-            regex,
-            maxReplacements: Int(maxOccurrences),
-            with: { (match: Regex<AnyRegexOutput>.Match) -> String in
-                let matchToReplace: Regex_Match =
-                    toRegexMatch(
-                        match,
-                        matchIndex1Based: matchIndex1Based,
-                        in: string
-                    )
-                matchIndex1Based = matchIndex1Based + 1
-                return matchToReplacementString(matchToReplace)
-            }
-        )
-    }
-}
-@Sendable public static func Regex_find(_ regexInfo: Regex_Regex, _ string: String)
-    -> List_List<Regex_Match>
-{
-    switch regexInfo.regex {
-    case .none: .List_Empty
-    case let .some(regex):
-        Array_toList(
-            string.matches(of: regex).enumerated()
-                .map({ (matchIndex0Based, match: Regex.Match) in
-                    toRegexMatch(
-                        match,
-                        matchIndex1Based: 1 + matchIndex0Based,
-                        in: string
-                    )
-                })
-        )
-    }
-}
-@Sendable public static func Regex_findAtMost(
-    _ maxOccurrences: Double,
-    _ regexInfo: Regex_Regex,
-    _ string: String
-)
-    -> List_List<Regex_Match>
-{
-    switch regexInfo.regex {
-    case .none: .List_Empty
-    case let .some(regex):
-        Array_toList(
-            // can be optimized by only matching up until that point
-            string.matches(of: regex)
-                .prefix(Int(maxOccurrences)).enumerated()
-                .map({ (matchIndex0Based: Int, match: Regex.Match) in
-                    toRegexMatch(
-                        match,
-                        matchIndex1Based: 1 + matchIndex0Based,
-                        in: string
-                    )
-                })
-        )
-    }
-}
-@Sendable public static func Regex_split(_ regexInfo: Regex_Regex, _ string: String)
-    -> List_List<String>
-{
-    switch regexInfo.regex {
-    case .none: List_singleton(string)
-    case let .some(regex):
-        Array_mapToList(
-            String.init,
-            string.split(separator: regex)
-        )
-    }
-}
-
-@Sendable public static func Regex_splitAtMost(
-    _ maxSplitCount: Double,
-    _ regexInfo: Regex_Regex,
-    _ string: String
-) -> List_List<String> {
-    switch regexInfo.regex {
-    case .none: List_singleton(string)
-    case let .some(regex):
-        Array_mapToList(
-            String.init,
-            string.split(
-                separator: regex,
-                maxSplits: Int(maxSplitCount)
-            )
-        )
-    }
-}
-
-public enum Time_Posix: Sendable, Equatable, Hashable {
-    case Time_Posix(Int64)
-}
-
-public enum Generated_offset_start<offset: Sendable, start: Sendable>: Sendable {
-    case Record(offset: offset, start: start)
-    var offset: offset {
-        switch self {
-        case let .Record(result, _): result
-        }
-    }
-    var start: start {
-        switch self {
-        case let .Record(_, result): result
-        }
-    }
-}
-public typealias Time_Era =
-    Generated_offset_start<Int64, Int64>
-
-public enum Time_Zone: Sendable, Equatable {
-    case Time_Zone(Int64, [Time_Era])
-}
-
-public enum Time_Weekday: Sendable, Equatable {
-    case Time_Mon
-    case Time_Tue
-    case Time_Wed
-    case Time_Thu
-    case Time_Fri
-    case Time_Sat
-    case Time_Sun
-}
-
-public enum Time_Month: Sendable, Equatable {
-    case Time_Jan
-    case Time_Feb
-    case Time_Mar
-    case Time_Apr
-    case Time_May
-    case Time_Jun
-    case Time_Jul
-    case Time_Aug
-    case Time_Sep
-    case Time_Oct
-    case Time_Nov
-    case Time_Dec
-}
-
-public enum Time_ZoneName: Sendable, Equatable {
-    case Time_Name(String)
-    case Time_Offset(Double)
-}
-static func Time_posixToMillisInt(_ timePosix: Time_Posix) -> Int64 {
-    switch timePosix {
-    case let .Time_Posix(millis): millis
-    }
-}
-@Sendable public static func Time_posixToMillis(_ timePosix: Time_Posix) -> Double {
-    Double(Time_posixToMillisInt(timePosix))
-}
-@Sendable public static func Time_millisToPosix(_ millis: Double) -> Time_Posix {
-    .Time_Posix(Int64(millis))
-}
-
-public static let Time_utc: Time_Zone = .Time_Zone(0, [])
-
-@Sendable public static func Time_customZone(
-    _ n: Double,
-    _ eras: List_List<Generated_offset_start<Double, Double>>
-)
-    -> Time_Zone
-{
-    .Time_Zone(
-        Int64(n),
-        eras.map({ era in
-            .Record(offset: Int64(era.offset), start: Int64(era.start))
-        })
-    )
-}
-
-static func Time_toAdjustedMinutesHelp(
-    _ defaultOffset: Int64,
-    _ posixMinutes: Int64,
-    _ eras: [Time_Era]
-)
-    -> Int64
-{
-    for era in eras {
-        if era.start < posixMinutes {
-            return posixMinutes + Int64(era.offset)
-        } else {
-            // continue
-        }
-    }
-    return posixMinutes + Int64(defaultOffset)
-}
-
-static func Time_toAdjustedMinutes(_ timeZone: Time_Zone, _ time: Time_Posix) -> Int64 {
-    switch timeZone {
-    case let .Time_Zone(defaultOffset, eras):
-        Time_toAdjustedMinutesHelp(
-            defaultOffset,
-            (Time_posixToMillisInt(time) / 60000),
-            eras
-        )
-    }
-}
-
-static let minutesPerDay: Int64 = 60 * 24
-static func Time_toCivil(_ minutes: Int64) -> (
-    day: Int64,
-    month: Int64,
-    year: Int64
-) {
-    let rawDay: Int64 = (minutes / minutesPerDay) + 719468
-    let era: Int64 = if rawDay >= 0 { rawDay / 146097 } else { (rawDay - 146096) / 146097 }
-    let dayOfEra: Int64 = rawDay - era * 146097  // [0, 146096]
-
-    let yearOfEra: Int64 =
-        (dayOfEra - dayOfEra / 1460 + dayOfEra / 36524 - dayOfEra / 146096)
-        / 365  // [0, 399]
-
-    let year: Int64 = yearOfEra + era * 400
-
-    let dayOfYear: Int64 =
-        dayOfEra - (365 * yearOfEra + yearOfEra / 4 - yearOfEra / 100)  // [0, 365]
-
-    let mp: Int64 = (5 * dayOfYear + 2) / 153  // [0, 11]
-    let month: Int64 = if mp < 10 { mp + 3 } else { mp - 9 }  // [1, 12]
-
-    let resultYear: Int64 = if month <= 2 { year + 1 } else { year }
-
-    return (
-        day: dayOfYear - (153 * mp + 2) / 5 + 1,  // [1, 31]
-        month: month,
-        year: resultYear,
-    )
-}
-
-@Sendable public static func Time_toYear(_ zone: Time_Zone, _ time: Time_Posix) -> Double {
-    Double((Time_toCivil(Time_toAdjustedMinutes(zone, time))).year)
-}
-
-@Sendable public static func Time_toMonth(_ zone: Time_Zone, _ time: Time_Posix) -> Time_Month {
-    switch (Time_toCivil(Time_toAdjustedMinutes(zone, time))).month {
-    case 1: .Time_Jan
-    case 2: .Time_Feb
-    case 3: .Time_Mar
-    case 4: .Time_Apr
-    case 5: .Time_May
-    case 6: .Time_Jun
-    case 7: .Time_Jul
-    case 8: .Time_Aug
-    case 9: .Time_Sep
-    case 10: .Time_Oct
-    case 11: .Time_Nov
-    case _: .Time_Dec
-    }
-}
-
-@Sendable public static func Time_toDay(_ zone: Time_Zone, _ time: Time_Posix) -> Double {
-    Double((Time_toCivil(Time_toAdjustedMinutes(zone, time))).day)
-}
-
-@Sendable public static func Time_toWeekday(_ zone: Time_Zone, _ time: Time_Posix)
-    -> Time_Weekday
-{
-    switch (Time_toAdjustedMinutes(zone, time) / minutesPerDay) % 7 {
-    case 0: .Time_Thu
-    case 1: .Time_Fri
-    case 2: .Time_Sat
-    case 3: .Time_Sun
-    case 4: .Time_Mon
-    case 5: .Time_Tue
-    case _: .Time_Wed
-    }
-}
-
-@Sendable public static func Time_toHour(_ zone: Time_Zone, _ time: Time_Posix) -> Double {
-    Double((Time_toAdjustedMinutes(zone, time) / 60) % 24)
-}
-
-@Sendable public static func Time_toMinute(_ zone: Time_Zone, _ time: Time_Posix) -> Double {
-    Double(Time_toAdjustedMinutes(zone, time) % 60)
-}
-
-@Sendable public static func Time_toSecond(_ zone: Time_Zone, _ time: Time_Posix) -> Double {
-    Double((Time_posixToMillisInt(time) / 1000) % 60)
-}
-
-@Sendable public static func Time_toMillis(_ zone: Time_Zone, _ time: Time_Posix) -> Double {
-    Double(Time_posixToMillisInt(time) % 1000)
-}
-
-public typealias Bytes_Bytes = [UInt8]
-
-public enum Bytes_Endianness: Sendable, Equatable {
-    case Bytes_LE
-    case Bytes_BE
-}
-
-@Sendable public static func Bytes_width(_ bytes: Bytes_Bytes) -> Double {
-    Double(bytes.count)
-}
-
-public enum BytesEncode_Encoder: Sendable, Equatable {
-    case BytesEncode_I8(Int8)
-    case BytesEncode_I16(Bytes_Endianness, Int16)
-    case BytesEncode_I32(Bytes_Endianness, Int32)
-    case BytesEncode_U8(UInt8)
-    case BytesEncode_U16(Bytes_Endianness, UInt16)
-    case BytesEncode_U32(Bytes_Endianness, UInt32)
-    case BytesEncode_F32(Bytes_Endianness, Float32)
-    case BytesEncode_F64(Bytes_Endianness, Float64)
-    case BytesEncode_Seq([BytesEncode_Encoder])
-    case BytesEncode_Utf8(String)
-    case BytesEncode_Bytes(Bytes_Bytes)
-}
-@Sendable public static func BytesEncode_EncoderByteCount(_ encoder: BytesEncode_Encoder) -> Int
-{
-    var combinedByteCount: Int = 0
-    var encodersRemainingUnordered: [BytesEncode_Encoder] = [encoder]
-    while !encodersRemainingUnordered.isEmpty {
-        switch encodersRemainingUnordered.popLast() {
-        // should have been caught by while condition
-        case .none:
-            return combinedByteCount
-        case let .some(nextEncoder):
-            switch nextEncoder {
-            case .BytesEncode_I8(_):
-                combinedByteCount = combinedByteCount + 1
-            case .BytesEncode_I16(_, _):
-                combinedByteCount = combinedByteCount + 2
-            case .BytesEncode_I32(_, _):
-                combinedByteCount = combinedByteCount + 4
-            case .BytesEncode_U8(_):
-                combinedByteCount = combinedByteCount + 1
-            case .BytesEncode_U16(_, _):
-                combinedByteCount = combinedByteCount + 2
-            case .BytesEncode_U32(_, _):
-                combinedByteCount = combinedByteCount + 4
-            case .BytesEncode_F32(_, _):
-                combinedByteCount = combinedByteCount + 4
-            case .BytesEncode_F64(_, _):
-                combinedByteCount = combinedByteCount + 8
-            case let .BytesEncode_Seq(encoders):
-                encodersRemainingUnordered.append(contentsOf: encoders)
-            case let .BytesEncode_Utf8(string):
-                combinedByteCount =
-                    combinedByteCount + string.lengthOfBytes(using: String.Encoding.utf8)
-            case let .BytesEncode_Bytes(bytes):
-                combinedByteCount = combinedByteCount + bytes.count
-            }
-        }
-    }
-    return combinedByteCount
-}
-@Sendable public static func BytesEncode_getStringWidth(_ string: String) -> Double {
-    Double(string.lengthOfBytes(using: String.Encoding.utf8))
-}
-@Sendable public static func BytesEncode_signedInt8(_ value: Double)
-    -> BytesEncode_Encoder
-{
-    .BytesEncode_I8(Int8(truncatingIfNeeded: Int(value)))
-}
-@Sendable public static func BytesEncode_signedInt16(
-    _ endianness: Bytes_Endianness,
-    _ value: Double
-)
-    -> BytesEncode_Encoder
-{
-    .BytesEncode_I16(endianness, Int16(truncatingIfNeeded: Int(value)))
-}
-@Sendable public static func BytesEncode_signedInt32(
-    _ endianness: Bytes_Endianness,
-    _ value: Double
-)
-    -> BytesEncode_Encoder
-{
-    .BytesEncode_I32(endianness, Int32(truncatingIfNeeded: Int(value)))
-}
-@Sendable public static func BytesEncode_unsignedInt8(_ value: Double)
-    -> BytesEncode_Encoder
-{
-    .BytesEncode_U8(UInt8(value))
-}
-@Sendable public static func BytesEncode_unsignedInt16(
-    _ endianness: Bytes_Endianness,
-    _ value: Double
-)
-    -> BytesEncode_Encoder
-{
-    .BytesEncode_U16(endianness, UInt16(truncatingIfNeeded: Int(value)))
-}
-@Sendable public static func BytesEncode_unsignedInt32(
-    _ endianness: Bytes_Endianness,
-    _ value: Double
-)
-    -> BytesEncode_Encoder
-{
-    .BytesEncode_U32(endianness, UInt32(truncatingIfNeeded: Int(value)))
-}
-@Sendable public static func BytesEncode_float32(
-    _ endianness: Bytes_Endianness,
-    _ value: Double
-)
-    -> BytesEncode_Encoder
-{
-    .BytesEncode_F32(endianness, Float32(value))
-}
-@Sendable public static func BytesEncode_float64(
-    _ endianness: Bytes_Endianness,
-    _ value: Double
-)
-    -> BytesEncode_Encoder
-{
-    .BytesEncode_F64(endianness, value)
-}
-@Sendable public static func BytesEncode_bytes(
-    _ endianness: Bytes_Endianness,
-    _ value: Bytes_Bytes
-)
-    -> BytesEncode_Encoder
-{
-    .BytesEncode_Bytes(value)
-}
-@Sendable public static func BytesEncode_string(_ value: String)
-    -> BytesEncode_Encoder
-{
-    .BytesEncode_Utf8(value)
-}
-@Sendable public static func BytesEncode_sequence(
-    _ encodersInSequence: List_List<BytesEncode_Encoder>
-)
-    -> BytesEncode_Encoder
-{
-    .BytesEncode_Seq(Array_fromList(encodersInSequence))
-}
-
-static func toBytes<a>(_ value: a) -> Bytes_Bytes {
-    withUnsafeBytes(of: value, Array.init)
-}
-@Sendable public static func BytesEncode_encode(_ encoder: BytesEncode_Encoder) -> Bytes_Bytes {
-    var bytesBuffer: Bytes_Bytes = []
-    bytesBuffer.reserveCapacity(BytesEncode_EncoderByteCount(encoder))
-    var encodersRemainingStack: [BytesEncode_Encoder] = [encoder]
-    while !encodersRemainingStack.isEmpty {
-        switch encodersRemainingStack.popLast() {
-        // should have been caught by while condition
-        case .none:
-            return bytesBuffer
-        case let .some(nextEncoder):
-            switch nextEncoder {
-            case let .BytesEncode_I8(i8):
-                bytesBuffer.append(contentsOf: toBytes(i8))
-            case let .BytesEncode_I16(endianness, i16):
-                switch endianness {
-                case .Bytes_BE:
-                    bytesBuffer.append(contentsOf: toBytes(i16.bigEndian))
-                case .Bytes_LE:
-                    bytesBuffer.append(contentsOf: toBytes(i16.littleEndian))
-                }
-            case let .BytesEncode_I32(endianness, i32):
-                switch endianness {
-                case .Bytes_BE:
-                    bytesBuffer.append(contentsOf: toBytes(i32.bigEndian))
-                case .Bytes_LE:
-                    bytesBuffer.append(contentsOf: toBytes(i32.littleEndian))
-                }
-            case let .BytesEncode_U8(u8):
-                bytesBuffer.append(u8)
-            case let .BytesEncode_U16(endianness, u16):
-                switch endianness {
-                case .Bytes_BE:
-                    bytesBuffer.append(contentsOf: toBytes(u16.bigEndian))
-                case .Bytes_LE:
-                    bytesBuffer.append(contentsOf: toBytes(u16.littleEndian))
-                }
-            case let .BytesEncode_U32(endianness, u32):
-                switch endianness {
-                case .Bytes_BE:
-                    bytesBuffer.append(contentsOf: toBytes(u32.bigEndian))
-                case .Bytes_LE:
-                    bytesBuffer.append(contentsOf: toBytes(u32.littleEndian))
-                }
-            case let .BytesEncode_F32(endianness, f32):
-                switch endianness {
-                case .Bytes_BE:
-                    bytesBuffer.append(contentsOf: toBytes(f32.bitPattern.bigEndian))
-                case .Bytes_LE:
-                    bytesBuffer.append(contentsOf: toBytes(f32.bitPattern.littleEndian))
-                }
-            case let .BytesEncode_F64(endianness, f64):
-                switch endianness {
-                case .Bytes_BE:
-                    bytesBuffer.append(contentsOf: toBytes(f64.bitPattern.bigEndian))
-                case .Bytes_LE:
-                    bytesBuffer.append(contentsOf: toBytes(f64.bitPattern.littleEndian))
-                }
-            case let .BytesEncode_Seq(encodersToAppend):
-                encodersRemainingStack.append(contentsOf: encodersToAppend.reversed())
-            case let .BytesEncode_Utf8(utf8String):
-                bytesBuffer.append(contentsOf: Array(Data(utf8String.utf8)))
-            case let .BytesEncode_Bytes(bytes):
-                bytesBuffer.append(contentsOf: bytes)
-            }
-        }
-    }
-    return bytesBuffer
-}
-
-public struct BytesDecode_Decoder<value: Sendable>: Sendable {
-    let decode:
-        @Sendable (_ index: Int, _ bytes: Bytes_Bytes)
-            -> (index: Int, value: value)?
-}
-public enum BytesDecode_Step<state: Sendable, a: Sendable>: Sendable {
-    case BytesDecode_Loop(state)
-    case BytesDecode_Done(a)
-}
-
-@Sendable public static func BytesDecode_decode<value>(
-    _ decoder: BytesDecode_Decoder<value>,
-    _ bytes: Bytes_Bytes
-)
-    -> Maybe_Maybe<value>
-{
-    switch decoder.decode(0, bytes) {
-    case .none: .Maybe_Nothing
-    case let .some(finalState):
-        .Maybe_Just(finalState.value)
-    }
-}
-@Sendable public static func BytesDecode_succeed<value>(_ value: value)
-    -> BytesDecode_Decoder<value>
-{
-    BytesDecode_Decoder(decode: { startIndex, _ in
-        (startIndex, value)
-    })
-}
-@Sendable public static func BytesDecode_fail<value>()
-    -> BytesDecode_Decoder<value>
-{
-    BytesDecode_Decoder(decode: { _, _ in .none })
-}
-@Sendable public static func BytesDecode_andThen<a, b>(
-    _ valueToFollowupDecoder: @escaping @Sendable (a) -> BytesDecode_Decoder<b>,
-    _ decoder: BytesDecode_Decoder<a>
-)
-    -> BytesDecode_Decoder<b>
-{
-    BytesDecode_Decoder(decode: { startIndex, bytes in
-        decoder.decode(startIndex, bytes)
-            .flatMap({ endIndex, value in
-                valueToFollowupDecoder(value).decode(endIndex, bytes)
-            })
-    })
-}
-@Sendable public static func BytesDecode_map<a, b>(
-    _ valueChange: @escaping @Sendable (a) -> b,
-    _ decoder: BytesDecode_Decoder<a>
-)
-    -> BytesDecode_Decoder<b>
-{
-    BytesDecode_Decoder(decode: { startIndex, bytes in
-        decoder.decode(startIndex, bytes)
-            .map({ endIndex, value in (endIndex, valueChange(value)) })
-    })
-}
-@Sendable public static func BytesDecode_map2<a, b, combined>(
-    _ valueCombine: @escaping @Sendable (a) -> (b) -> combined,
-    _ aDecoder: BytesDecode_Decoder<a>,
-    _ bDecoder: BytesDecode_Decoder<b>
-)
-    -> BytesDecode_Decoder<combined>
-{
-    BytesDecode_Decoder(decode: { startIndex, bytes in
-        aDecoder.decode(startIndex, bytes)
-            .flatMap({ indexAfterA, a in
-                bDecoder.decode(indexAfterA, bytes)
-                    .map({ indexAfterB, b in
-                        (indexAfterB, valueCombine(a)(b))
-                    })
-            })
-    })
-}
-@Sendable public static func BytesDecode_map3<a, b, c, combined>(
-    _ valueCombine: @escaping @Sendable (a) -> (b) -> (c) -> combined,
-    _ aDecoder: BytesDecode_Decoder<a>,
-    _ bDecoder: BytesDecode_Decoder<b>,
-    _ cDecoder: BytesDecode_Decoder<c>
-)
-    -> BytesDecode_Decoder<combined>
-{
-    BytesDecode_Decoder(decode: { startIndex, bytes in
-        aDecoder.decode(startIndex, bytes)
-            .flatMap({ indexAfterA, a in
-                bDecoder.decode(indexAfterA, bytes)
-                    .flatMap({ indexAfterB, b in
-                        cDecoder.decode(indexAfterB, bytes)
-                            .map({ indexAfterC, c in
-                                (indexAfterC, valueCombine(a)(b)(c))
-                            })
-                    })
-            })
-    })
-}
-@Sendable public static func BytesDecode_map4<a, b, c, d, combined>(
-    _ valueCombine: @escaping @Sendable (a) -> (b) -> (c) -> (d) -> combined,
-    _ aDecoder: BytesDecode_Decoder<a>,
-    _ bDecoder: BytesDecode_Decoder<b>,
-    _ cDecoder: BytesDecode_Decoder<c>,
-    _ dDecoder: BytesDecode_Decoder<d>
-)
-    -> BytesDecode_Decoder<combined>
-{
-    BytesDecode_Decoder(decode: { startIndex, bytes in
-        aDecoder.decode(startIndex, bytes)
-            .flatMap({ indexAfterA, a in
-                bDecoder.decode(indexAfterA, bytes)
-                    .flatMap({ indexAfterB, b in
-                        cDecoder.decode(indexAfterB, bytes)
-                            .flatMap({ indexAfterC, c in
-                                dDecoder.decode(indexAfterC, bytes)
-                                    .map({ indexAfterD, d in
-                                        (indexAfterD, valueCombine(a)(b)(c)(d))
-                                    })
-                            })
-                    })
-            })
-    })
-}
-@Sendable public static func BytesDecode_map5<a, b, c, d, e, combined>(
-    _ valueCombine: @escaping @Sendable (a) -> (b) -> (c) -> (d) -> (e) -> combined,
-    _ aDecoder: BytesDecode_Decoder<a>,
-    _ bDecoder: BytesDecode_Decoder<b>,
-    _ cDecoder: BytesDecode_Decoder<c>,
-    _ dDecoder: BytesDecode_Decoder<d>,
-    _ eDecoder: BytesDecode_Decoder<e>
-)
-    -> BytesDecode_Decoder<combined>
-{
-    BytesDecode_Decoder(decode: { startIndex, bytes in
-        aDecoder.decode(startIndex, bytes)
-            .flatMap({ indexAfterA, a in
-                bDecoder.decode(indexAfterA, bytes)
-                    .flatMap({ indexAfterB, b in
-                        cDecoder.decode(indexAfterB, bytes)
-                            .flatMap({ indexAfterC, c in
-                                dDecoder.decode(indexAfterC, bytes)
-                                    .flatMap({ indexAfterD, d in
-                                        eDecoder.decode(indexAfterD, bytes)
-                                            .map({ indexAfterE, e in
-                                                (indexAfterE, valueCombine(a)(b)(c)(d)(e))
-                                            })
-                                    })
-                            })
-                    })
-            })
-    })
-}
-@Sendable public static func BytesDecode_loop<state, a>(
-    _ initialState: state,
-    _ step: @escaping @Sendable (state) -> BytesDecode_Decoder<BytesDecode_Step<state, a>>
-)
-    -> BytesDecode_Decoder<a>
-{
-    BytesDecode_Decoder(decode: { startIndex, bytes in
-        BytesDecode_loopFunction(initialState, step, startIndex: startIndex, bytes: bytes)
-    })
-}
-@Sendable public static func BytesDecode_loopFunction<state, a>(
-    _ initialState: state,
-    _ step: @escaping @Sendable (state) -> BytesDecode_Decoder<BytesDecode_Step<state, a>>,
-    startIndex: Int,
-    bytes: Bytes_Bytes
-)
-    -> (index: Int, value: a)?
-{
-    switch step(initialState).decode(startIndex, bytes) {
-    case .none: .none
-    case let .some((index: indexAfterStep, value: stepValue)):
-        switch stepValue {
-        case let .BytesDecode_Done(result):
-            .some((index: indexAfterStep, value: result))
-        case let .BytesDecode_Loop(newState):
-            BytesDecode_loopFunction(newState, step, startIndex: indexAfterStep, bytes: bytes)
-        }
-    }
-}
-
-@Sendable public static func BytesDecode_signedInt8(_ endianness: Bytes_Endianness)
-    -> BytesDecode_Decoder<Double>
-{
-    BytesDecode_Decoder(decode: { index, bytes in
-        let indexAfter: Int = index + 1
-        return if indexAfter > bytes.count {
-            .none
-        } else {
-            .some((index: indexAfter, value: Double(Int8(bitPattern: bytes[index]))))
-        }
-    })
-}
-@Sendable public static func BytesDecode_signedInt16(_ endianness: Bytes_Endianness)
-    -> BytesDecode_Decoder<Double>
-{
-    BytesDecode_Decoder(decode: { index, bytes in
-        let indexAfter: Int = index + 2
-        if indexAfter > bytes.count {
-            return .none
-        } else {
-            let valueRaw: Int16 = bytes.withUnsafeBytes({ b in
-                b.load(fromByteOffset: index, as: Int16.self)
-            })
-            let valueCorrectedForEndianness: Int16 =
-                switch endianness {
-                case .Bytes_BE: Int16(bigEndian: valueRaw)
-                case .Bytes_LE: Int16(littleEndian: valueRaw)
-                }
-            return .some((index: indexAfter, value: Double(valueCorrectedForEndianness)))
-        }
-    })
-}
-@Sendable public static func BytesDecode_signedInt32(_ endianness: Bytes_Endianness)
-    -> BytesDecode_Decoder<Double>
-{
-    BytesDecode_Decoder(decode: { index, bytes in
-        let indexAfter: Int = index + 4
-        if indexAfter > bytes.count {
-            return .none
-        } else {
-            let valueRaw: Int32 = bytes.withUnsafeBytes({ b in
-                b.load(fromByteOffset: index, as: Int32.self)
-            })
-            let valueCorrectedForEndianness: Int32 =
-                switch endianness {
-                case .Bytes_BE: Int32(bigEndian: valueRaw)
-                case .Bytes_LE: Int32(littleEndian: valueRaw)
-                }
-            return .some((index: indexAfter, value: Double(valueCorrectedForEndianness)))
-        }
-    })
-}
-@Sendable public static func BytesDecode_unsignedInt8(_ endianness: Bytes_Endianness)
-    -> BytesDecode_Decoder<Double>
-{
-    BytesDecode_Decoder(decode: { index, bytes in
-        let indexAfter: Int = index + 1
-        return if indexAfter > bytes.count {
-            .none
-        } else {
-            .some((index: indexAfter, value: Double(bytes[index])))
-        }
-    })
-}
-@Sendable public static func BytesDecode_unsignedInt16(_ endianness: Bytes_Endianness)
-    -> BytesDecode_Decoder<Double>
-{
-    BytesDecode_Decoder(decode: { index, bytes in
-        let indexAfter: Int = index + 2
-        if indexAfter > bytes.count {
-            return .none
-        } else {
-            let valueRaw: UInt16 = bytes.withUnsafeBytes({ b in
-                b.load(fromByteOffset: index, as: UInt16.self)
-            })
-            let valueCorrectedForEndianness: UInt16 =
-                switch endianness {
-                case .Bytes_BE: UInt16(bigEndian: valueRaw)
-                case .Bytes_LE: UInt16(littleEndian: valueRaw)
-                }
-            return .some((index: indexAfter, value: Double(valueCorrectedForEndianness)))
-        }
-    })
-}
-@Sendable public static func BytesDecode_unsignedInt32(_ endianness: Bytes_Endianness)
-    -> BytesDecode_Decoder<Double>
-{
-    BytesDecode_Decoder(decode: { index, bytes in
-        let indexAfter: Int = index + 4
-        if indexAfter > bytes.count {
-            return .none
-        } else {
-            let valueRaw: UInt32 = bytes.withUnsafeBytes({ b in
-                b.load(fromByteOffset: index, as: UInt32.self)
-            })
-            let valueCorrectedForEndianness: UInt32 =
-                switch endianness {
-                case .Bytes_BE: UInt32(bigEndian: valueRaw)
-                case .Bytes_LE: UInt32(littleEndian: valueRaw)
-                }
-            return .some((index: indexAfter, value: Double(valueCorrectedForEndianness)))
-        }
-    })
-}
-@Sendable public static func BytesDecode_unsignedFloat32(_ endianness: Bytes_Endianness)
-    -> BytesDecode_Decoder<Double>
-{
-    BytesDecode_Decoder(decode: { index, bytes in
-        let indexAfter: Int = index + 4
-        if indexAfter > bytes.count {
-            return .none
-        } else {
-            let valueRaw: UInt32 = bytes.withUnsafeBytes({ b in
-                b.load(fromByteOffset: index, as: UInt32.self)
-            })
-            let valueCorrectedForEndianness: Float32 =
-                switch endianness {
-                case .Bytes_BE: Float32(bitPattern: UInt32(bigEndian: valueRaw))
-                case .Bytes_LE: Float32(bitPattern: UInt32(littleEndian: valueRaw))
-                }
-            return .some((index: indexAfter, value: Double(valueCorrectedForEndianness)))
-        }
-    })
-}
-@Sendable public static func BytesDecode_unsignedFloat64(_ endianness: Bytes_Endianness)
-    -> BytesDecode_Decoder<Double>
-{
-    BytesDecode_Decoder(decode: { index, bytes in
-        let indexAfter: Int = index + 8
-        if indexAfter > bytes.count {
-            return .none
-        } else {
-            let valueRaw: UInt64 = bytes.withUnsafeBytes({ b in
-                b.load(fromByteOffset: index, as: UInt64.self)
-            })
-            let valueCorrectedForEndianness: Float64 =
-                switch endianness {
-                case .Bytes_BE: Float64(bitPattern: UInt64(bigEndian: valueRaw))
-                case .Bytes_LE: Float64(bitPattern: UInt64(littleEndian: valueRaw))
-                }
-            return .some((index: indexAfter, value: Double(valueCorrectedForEndianness)))
-        }
-    })
-}
-@Sendable public static func BytesDecode_bytes(_ count: Double)
-    -> BytesDecode_Decoder<Bytes_Bytes>
-{
-    BytesDecode_Decoder(decode: { index, bytes in
-        let indexAfter: Int = index + Int(count)
-        return if indexAfter > bytes.count {
-            .none
-        } else {
-            .some(
-                (
-                    index: indexAfter,
-                    value: Array(bytes[index..<indexAfter])
-                )
-            )
-        }
-    })
-}
-@Sendable public static func BytesDecode_string(_ utf8Count: Double)
-    -> BytesDecode_Decoder<String>
-{
-    BytesDecode_Decoder(decode: { index, bytes -> (index: Int, value: String)? in
-        let indexAfter: Int = index + Int(utf8Count)
-        return if indexAfter > bytes.count {
-            .none
-        } else {
-            String(
-                bytes: bytes[index..<indexAfter],
-                encoding: String.Encoding.utf8
-            )
-            .map({ value in
-                (
-                    index: indexAfter,
-                    value: value
-                )
-            })
-        }
-    })
-}
-
-public enum PlatformCmd_CmdSingle<event: Sendable>: Sendable {
-    case PlatformCmd_PortOutgoing(name: String, value: JsonEncode_Value)
-}
-public typealias PlatformCmd_Cmd<event> =
-    [PlatformCmd_CmdSingle<event>]
-
-@Sendable public static func PlatformCmd_none<event>() -> PlatformCmd_Cmd<event> {
-    []
-}
-@Sendable public static func PlatformCmd_batch<event: Sendable>(
-    _ cmds: List_List<PlatformCmd_Cmd<event>>
-)
-    -> PlatformCmd_Cmd<event>
-{
-    // can be optimized
-    Array_fromList(cmds).flatMap({ cmd in cmd })
-}
-@Sendable public static func PlatformCmd_map<event: Sendable, eventMapped: Sendable>(
-    _: (event) -> eventMapped,
-    _ cmd: PlatformCmd_Cmd<event>
-) -> PlatformCmd_Cmd<eventMapped> {
-    cmd.map({ cmdSingle in
-        switch cmdSingle {
-        case let .PlatformCmd_PortOutgoing(name, value):
-            .PlatformCmd_PortOutgoing(name: name, value: value)
-        }
-    })
-}
-
-public enum PlatformSub_SubSingle<event: Sendable>: Sendable {
-    case PlatformSub_PortIncoming(
-        name: String,
-        onValue: @Sendable (JsonDecode_Value) -> event
-    )
-}
-public typealias PlatformSub_Sub<event> = [PlatformSub_SubSingle<event>]
-
-@Sendable public static func PlatformSub_none<event>() -> PlatformSub_Sub<event> {
-    []
-}
-@Sendable public static func PlatformSub_batch<event: Sendable>(
-    _ subs: List_List<PlatformSub_Sub<event>>
-)
-    -> PlatformSub_Sub<event>
-{
-    // can be optimized
-    Array_fromList(subs).flatMap({ sub in sub })
-}
-@Sendable public static func PlatformSub_map<event: Sendable, eventMapped: Sendable>(
-    _ eventChange: @escaping @Sendable (event) -> eventMapped,
-    _ sub: PlatformSub_Sub<event>
-) -> PlatformSub_Sub<eventMapped> {
-    sub.map({ subSingle in
-        switch subSingle {
-        case let .PlatformSub_PortIncoming(name, onValue):
-            .PlatformSub_PortIncoming(
-                name: name,
-                onValue: { value in eventChange(onValue(value)) }
-            )
-        }
-    })
-}
-
-public enum Generated_init__subscriptions_update<
-    init_: Sendable, subscriptions: Sendable, update: Sendable
->: Sendable {
-    case Record(init_: init_, subscriptions: subscriptions, update: update)
-    var init_: init_ {
-        switch self {
-        case let .Record(result, _, _): result
-        }
-    }
-    var subscriptions: subscriptions {
-        switch self {
-        case let .Record(_, result, _): result
-        }
-    }
-    var update: update {
-        switch self {
-        case let .Record(_, _, result): result
-        }
-    }
-}
-public typealias Platform_Program<flags: Sendable, state: Sendable, event: Sendable> =
-    Generated_init__subscriptions_update<
-        @Sendable (flags) -> Tuple<state, PlatformCmd_Cmd<event>>,
-        @Sendable (state) -> PlatformSub_Sub<event>,
-        @Sendable (event) -> (state) -> Tuple<state, PlatformCmd_Cmd<event>>
-    >
-
-@Sendable public static func Platform_worker<flags, state, event>(
-    _ config: Platform_Program<flags, state, event>
-)
-    -> Platform_Program<flags, state, event>
-{
-    config
-}
-
-public struct JsonDecode_Value: @unchecked Sendable, Equatable {
-    // NSString | NSNumber (covering Int, Float, Bool) | NSArray | NSDictionary | NSNull
-    let value: Any
-
-    public static func == (l: JsonDecode_Value, r: JsonDecode_Value) -> Bool {
-        anyEquals(l.value, r.value)
-    }
-    static func anyEquals(_ l: Any, _ r: Any) -> Bool {
-        switch (l, r) {
-        case (_ as NSNull, _ as NSNull):
-            true
-        case (_ as NSNull, _), (_, _ as NSNull): false
-        case let (lNumber as NSNumber, rNumber as NSNumber):
-            lNumber == rNumber
-        case (_ as NSNumber, _), (_, _ as NSNumber): false
-        case let (lString as NSString, rString as NSString):
-            lString == rString
-        case (_ as NSString, _), (_, _ as NSString): false
-        case let (lArray as NSArray, rArray as NSArray):
-            lArray.elementsEqual(rArray, by: anyEquals)
-        case (_ as NSArray, _), (_, _ as NSArray): false
-        case let (lDictionary as NSDictionary, rDictionary as NSDictionary):
-            lDictionary.allSatisfy({ lEntry in
-                switch rDictionary[lEntry.key] {
-                case .none: false
-                case let .some(rEntryValue):
-                    anyEquals(lEntry.value, rEntryValue)
-                }
-            })
-        case (_ as NSDictionary, _), (_, _ as NSDictionary): false
-        // non-standard, usually type-equivalent so cases likely impossible
-        case let (lNumber as Double, rNumber as Double):
-            lNumber == rNumber
-        case (_ as Double, _), (_, _ as Double): false
-        case let (lNumber as Int, rNumber as Int):
-            lNumber == rNumber
-        case (_ as Int, _), (_, _ as Int): false
-        case let (lNumber as Bool, rNumber as Bool):
-            lNumber == rNumber
-        case (_ as Bool, _), (_, _ as Bool): false
-        case let (lString as String, rString as String):
-            lString == rString
-        case (_ as String, _), (_, _ as String): false
-        case let (lArray as [Any], rArray as [Any]):
-            lArray.elementsEqual(rArray, by: anyEquals)
-        case let (lDictionary as [AnyHashable: Any], rDictionary as [AnyHashable: Any]):
-            lDictionary.allSatisfy({ lEntry in
-                switch rDictionary[lEntry.key] {
-                case .none: false
-                case let .some(rEntryValue):
-                    anyEquals(lEntry.value, rEntryValue)
-                }
-            })
-        case (_ as [AnyHashable: Any], _), (_, _ as [AnyHashable: Any]): false
-        // last resort
-        case let (lHashable as AnyHashable, rHashable as AnyHashable):
-            lHashable == rHashable
-        case let (lEquatable as any Equatable, rEquatable as any Equatable):
-            typeErasedEq(lEquatable, rEquatable)
-        case (_, _):
-            fatalError("== on non-Equatable json values \\(l) and \\(r)")
-        }
-    }
-}
-public typealias JsonEncode_Value = JsonDecode_Value
-
-public static let JsonEncode_null: JsonEncode_Value =
-    JsonDecode_Value(value: NSNull())
-@Sendable public static func JsonEncode_int(_ int: Double) -> JsonEncode_Value {
-    JsonDecode_Value(value: NSNumber(value: Int64(int)))
-}
-@Sendable public static func JsonEncode_float(_ float: Double) -> JsonEncode_Value {
-    JsonDecode_Value(value: NSNumber(value: float))
-}
-@Sendable public static func JsonEncode_string(_ string: String) -> JsonEncode_Value {
-    JsonDecode_Value(value: NSString(string: string))
-}
-@Sendable public static func JsonEncode_bool(_ bool: Bool) -> JsonEncode_Value {
-    JsonDecode_Value(value: NSNumber(value: bool))
-}
-@Sendable public static func JsonEncode_list<a>(
-    _ elementToJson: (a) -> JsonEncode_Value,
-    _ elements: List_List<a>
-) -> JsonEncode_Value {
-    JsonDecode_Value(
-        value: NSArray(array: elements.map(elementToJson))
-    )
-}
-@Sendable public static func JsonEncode_array<a>(
-    _ elementToJson: (a) -> JsonEncode_Value,
-    _ elements: [a]
-) -> JsonEncode_Value {
-    JsonDecode_Value(
-        value: NSArray(
-            array: elements.map(elementToJson)
-        )
-    )
-}
-@Sendable public static func JsonEncode_set<a: Sendable>(
-    _ elementToJson: (a) -> JsonEncode_Value,
-    _ elements: Set<a>
-) -> JsonEncode_Value {
-    JsonDecode_Value(
-        value: NSArray(
-            array: Array(elements).map(elementToJson)
-        )
-    )
-}
-@Sendable public static func JsonEncode_object(
-    _ fields: List_List<Tuple<String, JsonEncode_Value>>
-)
-    -> JsonEncode_Value
-{
-    var fieldsDictionary: [String: JsonEncode_Value] = Dictionary()
-    for field in fields {
-        fieldsDictionary[field.first] = field.second
-    }
-    return JsonDecode_Value(value: NSDictionary(dictionary: fieldsDictionary))
-}
-@Sendable public static func JsonEncode_dict(_ fields: [String: JsonEncode_Value])
-    -> JsonEncode_Value
-{
-    JsonDecode_Value(value: NSDictionary(dictionary: fields))
-}
-
-@Sendable public static func JsonEncode_encode(
-    _ indentSize: Double,
-    _ encoded: JsonEncode_Value
-)
-    -> String
-{
-    let options: JSONSerialization.WritingOptions =
-        if indentSize <= 0 {
-            [.fragmentsAllowed]
-        } else {
-            [.fragmentsAllowed, .prettyPrinted]  // indent size 2
-        }
-    do {
-        let prettyPrintedData: Data = try JSONSerialization.data(
-            withJSONObject: encoded.value,
-            options: options
-        )
-        return switch String(data: prettyPrintedData, encoding: .utf8) {
-        case let .some(encodedJsonAsString):
-            if (indentSize <= 0) || (indentSize == 2) {
-                encodedJsonAsString
-            } else {
-                // set indent size
-                encodedJsonAsString.replacing(
-                    "\\n  ",
-                    with: "\\n\\(String(repeating: " ", count: Int(indentSize)))"
-                )
-            }
-        case .none:
-            "null"
-        }
-    } catch {
-        return "null"
-    }
-}
-
-public indirect enum JsonDecode_Error: Sendable, Equatable {
-    case JsonDecode_Field(String, JsonDecode_Error)
-    case JsonDecode_Index(Double, JsonDecode_Error)
-    case JsonDecode_OneOf(List_List<JsonDecode_Error>)
-    case JsonDecode_Failure(String, JsonDecode_Value)
-}
-public struct JsonDecode_Decoder<value: Sendable>: Sendable {
-    let decode: @Sendable (JsonDecode_Value) -> Result_Result<JsonDecode_Error, value>
-}
-
-@Sendable public static func JsonDecode_decodeValue<value: Sendable>(
-    _ decoder: JsonDecode_Decoder<value>,
-    _ toDecode: JsonDecode_Value
-) -> Result_Result<JsonDecode_Error, value> {
-    decoder.decode(toDecode)
-}
-@Sendable public static func JsonDecode_decodeString<value: Sendable>(
-    _ decoder: JsonDecode_Decoder<value>,
-    _ toDecode: String
-) -> Result_Result<JsonDecode_Error, value> {
-    do {
-        return decoder.decode(
-            JsonDecode_Value(
-                value: try JSONSerialization.jsonObject(
-                    with: Data(toDecode.utf8),
-                    options: [.fragmentsAllowed]
-                )
-            )
-        )
-    } catch let error {
-        return .Result_Err(
-            .JsonDecode_Failure(
-                "This is not valid JSON! \\(error.localizedDescription)",
-                JsonEncode_string(toDecode)
-            )
-        )
-    }
-}
-
-public static let JsonDecode_value: JsonDecode_Decoder<JsonDecode_Value> =
-    JsonDecode_Decoder(decode: { toDecode in .Result_Ok(toDecode) })
-@Sendable public static func JsonDecode_succeed<a: Sendable>(_ value: (a))
-    -> JsonDecode_Decoder<a>
-{
-    JsonDecode_Decoder(decode: { _ in .Result_Ok(value) })
-}
-@Sendable public static func JsonDecode_fail<a: Sendable>(_ errorMessage: String)
-    -> JsonDecode_Decoder<a>
-{
-    JsonDecode_Decoder(decode: { toDecode in
-        .Result_Err(.JsonDecode_Failure(errorMessage, toDecode))
-    })
-}
-@Sendable public static func JsonDecode_lazy<a: Sendable>(
-    _ buildDecoder: @escaping @Sendable (Unit) -> JsonDecode_Decoder<a>
-)
-    -> JsonDecode_Decoder<a>
-{
-    JsonDecode_Decoder(decode: { toDecode in
-        buildDecoder(.Unit).decode(toDecode)
-    })
-}
-@Sendable public static func JsonDecode_andThen<a: Sendable, b: Sendable>(
-    _ valueToDecoder: @escaping @Sendable (a) -> JsonDecode_Decoder<b>,
-    _ decoder: JsonDecode_Decoder<a>
-) -> JsonDecode_Decoder<b> {
-    JsonDecode_Decoder(decode: { toDecode in
-        switch decoder.decode(toDecode) {
-        case let .Result_Err(error):
-            .Result_Err(error)
-        case let .Result_Ok(value):
-            valueToDecoder(value).decode(toDecode)
-        }
-    })
-}
-@Sendable public static func JsonDecode_map<a: Sendable, b: Sendable>(
-    _ valueChange: @escaping @Sendable (a) -> b,
-    _ decoder: JsonDecode_Decoder<a>
-) -> JsonDecode_Decoder<b> {
-    JsonDecode_Decoder(decode: { toDecode in
-        Result_map(valueChange, decoder.decode(toDecode))
-    })
-}
-@Sendable public static func JsonDecode_map2<a: Sendable, b: Sendable, combined: Sendable>(
-    _ combine: @escaping @Sendable (a) -> (b) -> combined,
-    _ aDecoder: JsonDecode_Decoder<a>,
-    _ bDecoder: JsonDecode_Decoder<b>
-)
-    -> JsonDecode_Decoder<combined>
-{
-    JsonDecode_Decoder(decode: { toDecode in
-        Result_map2(
-            combine, aDecoder.decode(toDecode),
-            bDecoder.decode(toDecode)
-        )
-    })
-}
-@Sendable
-public static func JsonDecode_map3<a: Sendable, b: Sendable, c: Sendable, combined: Sendable>(
-    _ combine: @escaping @Sendable (a) -> (b) -> (c) -> combined,
-    _ aDecoder: JsonDecode_Decoder<a>,
-    _ bDecoder: JsonDecode_Decoder<b>,
-    _ cDecoder: JsonDecode_Decoder<c>
-)
-    -> JsonDecode_Decoder<combined>
-{
-    JsonDecode_Decoder(decode: { toDecode in
-        Result_map3(
-            combine,
-            aDecoder.decode(toDecode),
-            bDecoder.decode(toDecode),
-            cDecoder.decode(toDecode))
-    })
-}
-@Sendable
-public static func JsonDecode_map4<
-    a: Sendable, b: Sendable, c: Sendable, d: Sendable, combined: Sendable
->(
-    _ combine: @escaping @Sendable (a) -> (b) -> (c) -> (d) -> combined,
-    _ aDecoder: JsonDecode_Decoder<a>,
-    _ bDecoder: JsonDecode_Decoder<b>,
-    _ cDecoder: JsonDecode_Decoder<c>,
-    _ dDecoder: JsonDecode_Decoder<d>
-)
-    -> JsonDecode_Decoder<combined>
-{
-    JsonDecode_Decoder(decode: { toDecode in
-        Result_map4(
-            combine,
-            aDecoder.decode(toDecode),
-            bDecoder.decode(toDecode),
-            cDecoder.decode(toDecode),
-            dDecoder.decode(toDecode)
-        )
-    })
-}
-@Sendable
-public static func JsonDecode_map5<
-    a: Sendable, b: Sendable, c: Sendable, d: Sendable, e: Sendable, combined: Sendable
->(
-    _ combine: @escaping @Sendable (a) -> (b) -> (c) -> (d) -> (e) -> combined,
-    _ aDecoder: JsonDecode_Decoder<a>,
-    _ bDecoder: JsonDecode_Decoder<b>,
-    _ cDecoder: JsonDecode_Decoder<c>,
-    _ dDecoder: JsonDecode_Decoder<d>,
-    _ eDecoder: JsonDecode_Decoder<e>
-)
-    -> JsonDecode_Decoder<combined>
-{
-    JsonDecode_Decoder(decode: { toDecode in
-        Result_map5(
-            combine,
-            aDecoder.decode(toDecode),
-            bDecoder.decode(toDecode),
-            cDecoder.decode(toDecode),
-            dDecoder.decode(toDecode),
-            eDecoder.decode(toDecode)
-        )
-    })
-}
-@Sendable
-public static func JsonDecode_map6<
-    a: Sendable, b: Sendable, c: Sendable, d: Sendable, e: Sendable, f: Sendable,
-    combined: Sendable
->(
-    _ combine: @escaping @Sendable (a) -> (b) -> (c) -> (d) -> (e) -> (f) -> combined,
-    _ aDecoder: JsonDecode_Decoder<a>,
-    _ bDecoder: JsonDecode_Decoder<b>,
-    _ cDecoder: JsonDecode_Decoder<c>,
-    _ dDecoder: JsonDecode_Decoder<d>,
-    _ eDecoder: JsonDecode_Decoder<e>,
-    _ fDecoder: JsonDecode_Decoder<f>
-)
-    -> JsonDecode_Decoder<combined>
-{
-    JsonDecode_Decoder(decode: { toDecode in
-        Result_map6(
-            combine,
-            aDecoder.decode(toDecode),
-            bDecoder.decode(toDecode),
-            cDecoder.decode(toDecode),
-            dDecoder.decode(toDecode),
-            eDecoder.decode(toDecode),
-            fDecoder.decode(toDecode)
-        )
-    })
-}
-@Sendable
-public static func JsonDecode_map7<
-    a: Sendable, b: Sendable, c: Sendable, d: Sendable, e: Sendable, f: Sendable, g: Sendable,
-    combined: Sendable
->(
-    _ combine: @escaping @Sendable (a) -> (b) -> (c) -> (d) -> (e) -> (f) -> (g) -> combined,
-    _ aDecoder: JsonDecode_Decoder<a>,
-    _ bDecoder: JsonDecode_Decoder<b>,
-    _ cDecoder: JsonDecode_Decoder<c>,
-    _ dDecoder: JsonDecode_Decoder<d>,
-    _ eDecoder: JsonDecode_Decoder<e>,
-    _ fDecoder: JsonDecode_Decoder<f>,
-    _ gDecoder: JsonDecode_Decoder<g>
-)
-    -> JsonDecode_Decoder<combined>
-{
-    JsonDecode_Decoder(decode: { toDecode in
-        Result_map7(
-            combine,
-            aDecoder.decode(toDecode),
-            bDecoder.decode(toDecode),
-            cDecoder.decode(toDecode),
-            dDecoder.decode(toDecode),
-            eDecoder.decode(toDecode),
-            fDecoder.decode(toDecode),
-            gDecoder.decode(toDecode)
-        )
-    })
-}
-@Sendable
-public static func JsonDecode_map8<
-    a: Sendable, b: Sendable, c: Sendable, d: Sendable, e: Sendable, f: Sendable, g: Sendable,
-    h: Sendable, combined: Sendable
->(
-    _ combine: @escaping @Sendable (a) -> (b) -> (c) -> (d) -> (e) -> (f) -> (g) -> (h) ->
-        combined,
-    _ aDecoder: JsonDecode_Decoder<a>,
-    _ bDecoder: JsonDecode_Decoder<b>,
-    _ cDecoder: JsonDecode_Decoder<c>,
-    _ dDecoder: JsonDecode_Decoder<d>,
-    _ eDecoder: JsonDecode_Decoder<e>,
-    _ fDecoder: JsonDecode_Decoder<f>,
-    _ gDecoder: JsonDecode_Decoder<g>,
-    _ hDecoder: JsonDecode_Decoder<h>
-)
-    -> JsonDecode_Decoder<combined>
-{
-    JsonDecode_Decoder(decode: { toDecode in
-        Result_map8(
-            combine,
-            aDecoder.decode(toDecode),
-            bDecoder.decode(toDecode),
-            cDecoder.decode(toDecode),
-            dDecoder.decode(toDecode),
-            eDecoder.decode(toDecode),
-            fDecoder.decode(toDecode),
-            gDecoder.decode(toDecode),
-            hDecoder.decode(toDecode)
-        )
-    })
-}
-
-@Sendable public static func JsonDecode_oneOf<value: Sendable>(
-    _ options: List_List<JsonDecode_Decoder<value>>
-)
-    -> JsonDecode_Decoder<value>
-{
-    JsonDecode_Decoder(decode: { toDecode in
-        var optionDecodeErrors: [JsonDecode_Error] = []
-        for nextOptionDecoder in options {
-            switch nextOptionDecoder.decode(toDecode) {
-            case let .Result_Ok(value): return .Result_Ok(value)
-            case let .Result_Err(optionDecodeError):
-                optionDecodeErrors.append(optionDecodeError)
-            }
-        }
-        return .Result_Err(.JsonDecode_OneOf(Array_toList(optionDecodeErrors)))
-    })
-}
-
-@Sendable public static func JsonDecode_null<a: Sendable>(_ value: a) -> JsonDecode_Decoder<a> {
-    JsonDecode_Decoder(decode: { toDecode in
-        switch toDecode.value {
-        case _ as NSNull:
-            .Result_Ok(value)
-        case _:
-            .Result_Err(
-                .JsonDecode_Failure("Expecting NULL", toDecode)
-            )
-        }
-    })
-}
-public static let JsonDecode_bool: JsonDecode_Decoder<Bool> =
-    JsonDecode_Decoder(decode: { toDecode in
-        switch toDecode.value {
-        case let nsNumber as NSNumber:
-            // https://stackoverflow.com/questions/30215680/is-there-a-correct-way-to-determine-that-an-nsnumber-is-derived-from-a-bool-usin
-            if CFGetTypeID(nsNumber) == CFBooleanGetTypeID() {
-                .Result_Ok(nsNumber.boolValue)
-            } else {
-                .Result_Err(
-                    .JsonDecode_Failure("Expecting a BOOL", toDecode)
-                )
-            }
-        case _:
-            .Result_Err(
-                .JsonDecode_Failure("Expecting a BOOL", toDecode)
-            )
-        }
-    })
-public static let JsonDecode_int: JsonDecode_Decoder<Double> =
-    JsonDecode_Decoder(decode: { toDecode in
-        switch toDecode.value {
-        case let nsNumber as NSNumber:
-            switch Int(exactly: nsNumber.doubleValue) {
-            case .some(_): .Result_Ok(nsNumber.doubleValue)
-            case .none:
-                .Result_Err(
-                    .JsonDecode_Failure("Expecting an INT", toDecode)
-                )
-            }
-        case _:
-            .Result_Err(
-                .JsonDecode_Failure("Expecting an INT", toDecode)
-            )
-        }
-    })
-public static let JsonDecode_float: JsonDecode_Decoder<Double> =
-    JsonDecode_Decoder(decode: { toDecode in
-        switch toDecode.value {
-        case let nsNumber as NSNumber:
-            .Result_Ok(nsNumber.doubleValue)
-        // non-standard
-        case let double as Double:
-            .Result_Ok(double)
-        case _:
-            .Result_Err(
-                .JsonDecode_Failure("Expecting a NUMBER", toDecode)
-            )
-        }
-    })
-public static let JsonDecode_string: JsonDecode_Decoder<String> =
-    JsonDecode_Decoder(decode: { toDecode in
-        switch toDecode.value {
-        case let nsString as NSString:
-            .Result_Ok(String(nsString))
-        // non-standard
-        case let string as String:
-            .Result_Ok(String(string))
-        case _:
-            .Result_Err(
-                .JsonDecode_Failure("Expecting a STRING", toDecode)
-            )
-        }
-    })
-
-@Sendable public static func JsonDecode_field<value: Sendable>(
-    _ fieldName: String,
-    _ valueDecoder: JsonDecode_Decoder<value>
-) -> JsonDecode_Decoder<value> {
-    JsonDecode_Decoder(decode: { toDecode in
-        Result_andThen(
-            valueDecoder.decode,
-            JsonDecode_fieldValue(fieldName).decode(toDecode)
-        )
-    })
-}
-static func JsonDecode_fieldValue(_ fieldName: String)
-    -> JsonDecode_Decoder<JsonDecode_Value>
-{
-    JsonDecode_Decoder(decode: { toDecode in
-        switch toDecode.value {
-        case let dictToDecode as NSDictionary:
-            switch dictToDecode.value(forKey: fieldName) {
-            case let .some(valueJson):
-                .Result_Ok(JsonDecode_Value(value: valueJson))
-            case .none:
-                .Result_Err(
-                    .JsonDecode_Failure(
-                        "Expecting an OBJECT with a field named '\\(fieldName)'",
-                        toDecode
-                    )
-                )
-            }
-        case _:
-            .Result_Err(
-                .JsonDecode_Failure(
-                    "Expecting an OBJECT with a field named '\\(fieldName)'",
-                    toDecode
-                )
-            )
-        }
-    })
-}
-
-@Sendable public static func JsonDecode_at<value: Sendable>(
-    _ fieldNames: List_List<String>,
-    _ valueDecoder: JsonDecode_Decoder<value>
-) -> JsonDecode_Decoder<value> {
-    JsonDecode_Decoder(decode: { toDecode in
-        var successfullyDecodedFieldNames: [String] = []
-        var remainingToDecode: JsonDecode_Value = toDecode
-        for nextFieldName in fieldNames {
-            switch JsonDecode_fieldValue(nextFieldName).decode(remainingToDecode) {
-            case let .Result_Ok(fieldValueJson):
-                remainingToDecode = fieldValueJson
-                successfullyDecodedFieldNames.append(nextFieldName)
-            case let .Result_Err(fieldValueDecodeError):
-                return .Result_Err(
-                    successfullyDecodedFieldNames.reduce(
-                        fieldValueDecodeError,
-                        { soFar, fieldName in
-                            .JsonDecode_Field(fieldName, soFar)
-                        }
-                    )
-                )
-            }
-        }
-        return valueDecoder.decode(remainingToDecode)
-    })
-}
-@Sendable public static func JsonDecode_dict<value: Sendable>(
-    _ valueDecoder: JsonDecode_Decoder<value>
-)
-    -> JsonDecode_Decoder<[String: value]>
-{
-    JsonDecode_Decoder(decode: { toDecode in
-        switch toDecode.value {
-        case let dictToDecode as NSDictionary:
-            var decodedDictionary: [String: value] = Dictionary()
-            for entryToDecode in dictToDecode {
-                switch JsonDecode_string.decode(JsonDecode_Value(value: entryToDecode.key)) {
-                case let .Result_Ok(keyToDecode):
-                    switch valueDecoder.decode(JsonDecode_Value(value: entryToDecode.value)) {
-                    case let .Result_Err(error):
-                        return .Result_Err(.JsonDecode_Field(keyToDecode, error))
-                    case let .Result_Ok(decodedValue):
-                        decodedDictionary[keyToDecode] = decodedValue
-                    }
-                case .Result_Err(_):
-                    return .Result_Err(
-                        .JsonDecode_Failure(
-                            "Expecting an OBJECT with STRING keys",
-                            toDecode
-                        )
-                    )
-                }
-            }
-            return .Result_Ok(decodedDictionary)
-        case _:
-            return .Result_Err(
-                .JsonDecode_Failure("Expecting an OBJECT", toDecode)
-            )
-        }
-    })
-}
-@Sendable public static func JsonDecode_keyValuePairs<value: Sendable>(
-    _ valueDecoder: JsonDecode_Decoder<value>
-)
-    -> JsonDecode_Decoder<List_List<Tuple<String, value>>>
-{
-    JsonDecode_map(Dict_toList, JsonDecode_dict(valueDecoder))
-}
-@Sendable public static func JsonDecode_array<a: Sendable>(
-    _ elementDecoder: JsonDecode_Decoder<a>
-)
-    -> JsonDecode_Decoder<[a]>
-{
-    JsonDecode_Decoder(decode: { toDecode in
-        switch toDecode.value {
-        case let arrayToDecode as NSArray:
-            var decodedArray: [a] = []
-            decodedArray.reserveCapacity(arrayToDecode.count)
-            for (index, elementToDecode) in arrayToDecode.enumerated() {
-                switch elementDecoder.decode(JsonDecode_Value(value: elementToDecode)) {
-                case let .Result_Err(error):
-                    return .Result_Err(.JsonDecode_Index(Double(index), error))
-                case let .Result_Ok(elementDecoded):
-                    decodedArray.append(elementDecoded)
-                }
-            }
-            return .Result_Ok(decodedArray)
-        case _:
-            return .Result_Err(
-                .JsonDecode_Failure("Expecting an ARRAY", toDecode)
-            )
-        }
-    })
-}
-@Sendable public static func JsonDecode_index<a: Sendable>(
-    _ indexAsDouble: Double,
-    _ elementDecoder: JsonDecode_Decoder<a>
-)
-    -> JsonDecode_Decoder<a>
-{
-    JsonDecode_Decoder(decode: { toDecode in
-        switch toDecode.value {
-        case let arrayToDecode as NSArray:
-            let index: Int = Int(indexAsDouble)
-            return if index >= 0 && index < arrayToDecode.count {
-                switch elementDecoder.decode(JsonDecode_Value(value: arrayToDecode[index])) {
-                case let .Result_Err(error):
-                    .Result_Err(.JsonDecode_Index(indexAsDouble, error))
-                case let .Result_Ok(elementDecoded):
-                    .Result_Ok(elementDecoded)
-                }
-            } else {
-                .Result_Err(
-                    .JsonDecode_Failure(
-                        "Expecting an ARRAY with an index [\\(String(index))]",
-                        toDecode
-                    )
-                )
-            }
-        case _:
-            return .Result_Err(
-                .JsonDecode_Failure("Expecting an ARRAY", toDecode)
-            )
-        }
-    })
-}
-@Sendable public static func JsonDecode_list<a: Sendable>(
-    _ elementDecoder: JsonDecode_Decoder<a>
-)
-    -> JsonDecode_Decoder<List_List<a>>
-{
-    JsonDecode_Decoder(decode: { toDecode in
-        switch toDecode.value {
-        case let arrayToDecode as NSArray:
-            var decodedList: List_List<a> = .List_Empty
-            for (index, elementToDecode) in arrayToDecode.enumerated().reversed() {
-                switch elementDecoder.decode(JsonDecode_Value(value: elementToDecode)) {
-                case let .Result_Err(error):
-                    return .Result_Err(.JsonDecode_Index(Double(index), error))
-                case let .Result_Ok(elementDecoded):
-                    decodedList = .List_Cons(elementDecoded, decodedList)
-                }
-            }
-            return .Result_Ok(decodedList)
-        case _:
-            return .Result_Err(
-                .JsonDecode_Failure("Expecting an ARRAY", toDecode)
-            )
-        }
-    })
-}
-@Sendable public static func JsonDecode_oneOrMore<a: Sendable, combined: Sendable>(
-    _ combineHeadTail: @escaping @Sendable (a) -> (List_List<a>) -> combined,
-    _ elementDecoder: JsonDecode_Decoder<a>
-)
-    -> JsonDecode_Decoder<combined>
-{
-    JsonDecode_map2(
-        combineHeadTail,
-        elementDecoder,
-        JsonDecode_list(elementDecoder)
-    )
-}
-@Sendable public static func JsonDecode_maybe<a: Sendable>(
-    _ valueDecoder: JsonDecode_Decoder<a>
-)
-    -> JsonDecode_Decoder<Maybe_Maybe<a>>
-{
-    JsonDecode_Decoder(decode: { toDecode in
-        switch valueDecoder.decode(toDecode) {
-        case let .Result_Ok(value):
-            .Result_Ok(.Maybe_Just(value))
-        case .Result_Err(_):
-            .Result_Ok(.Maybe_Nothing)
-        }
-    })
-}
-@Sendable public static func JsonDecode_nullable<a>(_ valueDecoder: JsonDecode_Decoder<a>)
-    -> JsonDecode_Decoder<Maybe_Maybe<a>>
-{
-    JsonDecode_Decoder(decode: { toDecode in
-        switch JsonDecode_null(()).decode(toDecode) {
-        case .Result_Ok(()):
-            .Result_Ok(.Maybe_Nothing)
-        case let .Result_Err(nullDecodeError):
-            switch valueDecoder.decode(toDecode) {
-            case let .Result_Ok(value):
-                .Result_Ok(.Maybe_Just(value))
-            case let .Result_Err(valueDecodeError):
-                .Result_Err(
-                    .JsonDecode_OneOf(
-                        .List_Cons(nullDecodeError, .List_Cons(valueDecodeError, .List_Empty)))
-                )
-            }
-        }
-    })
-}
-
-static func indent(_ str: String) -> String {
-    str.split(separator: "\\n").joined(separator: "\\n    ")
-}
-@Sendable public static func JsonDecode_errorToString(_ error: JsonDecode_Error) -> String {
-    JsonDecode_errorToStringHelp(error, [])
-}
-static func JsonDecode_errorToStringHelp(
-    _ error: JsonDecode_Error,
-    _ context: [String]
-)
-    -> String
-{
-    switch error {
-    case let .JsonDecode_Field(f, err):
-        let isSimple: Bool =
-            switch String_uncons(f) {
-            case .Maybe_Nothing: false
-            case let .Maybe_Just(.Tuple(head, rest)):
-                Char_isAlpha(head) && rest.unicodeScalars.allSatisfy(Char_isAlphaNum)
-            }
-        let fieldName: String =
-            if isSimple { ".\\(f)" } else { "['\\(f)']" }
-        return JsonDecode_errorToStringHelp(err, Array_push(fieldName, context))
-    case let .JsonDecode_Index(index, err):
-        let indexName: String = "[\\(String(Int(index)))]"
-        return JsonDecode_errorToStringHelp(err, Array_push(indexName, context))
-    case let .JsonDecode_OneOf(errors):
-        switch errors {
-        case .List_Empty:
-            return if context.isEmpty {
-                "Ran into a Json.Decode.oneOf with no possibilities!"
-            } else {
-                "Ran into a Json.Decode.oneOf with no possibilities at json\\(context.joined())"
-            }
-        case let .List_Cons(err, .List_Empty):
-            return JsonDecode_errorToStringHelp(err, context)
-        case _:
-            let starter: String =
-                if context.isEmpty {
-                    "Json.Decode.oneOf"
-                } else {
-                    "The Json.Decode.oneOf at json\\(context.joined())"
-                }
-            let introduction: String =
-                "\\(starter) failed in the following \\(String(Int(List_length(errors)))) ways:"
-            return String_join(
-                "\\n\\n",
-                .List_Cons(
-                    introduction,
-                    List_indexedMap(
-                        { (i: Double) in
-                            { (error: JsonDecode_Error) in
-                                "\\n\\n(\\(String(Int(i + 1)))) \\(indent(JsonDecode_errorToStringHelp(error, [])))"
-                            }
-                        },
-                        errors
-                    )
-                )
-            )
-        }
-    case let .JsonDecode_Failure(msg, json):
-        let introduction: String =
-            if context.isEmpty {
-                "Problem with the given value:\\n\\n"
-            } else {
-                "Problem with the value at json\\(context.joined()):\\n\\n    "
-            }
-        return "\\(introduction)\\(indent(JsonEncode_encode(4, json)))\\n\\n\\(msg)"
-    }
-}
-
-public typealias MathVector2_Vec2 = SIMD2<Double>
-public typealias MathVector3_Vec3 = SIMD3<Double>
-public typealias MathVector4_Vec4 = SIMD4<Double>
-
-@Sendable public static func MathVector2_vec2(_ x: Double, _ y: Double) -> MathVector2_Vec2 {
-    SIMD2(x, y)
-}
-public enum Generated_x_y<x: Sendable, y: Sendable>: Sendable {
-    case Record(x: x, y: y)
-    var x: x {
-        switch self {
-        case let .Record(result, _): result
-        }
-    }
-    var y: y {
-        switch self {
-        case let .Record(_, result): result
-        }
-    }
-}
-@Sendable public static func MathVector2_fromRecord(_ vec2: Generated_x_y<Double, Double>)
-    -> MathVector2_Vec2
-{
-    SIMD2(x: vec2.x, y: vec2.y)
-}
-@Sendable public static func MathVector2_toRecord(_ vec2: MathVector2_Vec2)
-    -> Generated_x_y<Double, Double>
-{
-    .Record(x: vec2.x, y: vec2.y)
-}
-@Sendable public static func MathVector2_getX(_ vec2: MathVector2_Vec2) -> Double {
-    vec2.x
-}
-@Sendable public static func MathVector2_getY(_ vec2: MathVector2_Vec2) -> Double {
-    vec2.y
-}
-@Sendable public static func MathVector2_setX(_ newX: Double, _ vec2: MathVector2_Vec2)
-    -> MathVector2_Vec2
-{
-    var vec2Mutable: MathVector2_Vec2 = vec2
-    vec2Mutable.x = newX
-    return vec2Mutable
-}
-@Sendable public static func MathVector2_setY(_ newY: Double, _ vec2: MathVector2_Vec2)
-    -> MathVector2_Vec2
-{
-    var vec2Mutable: MathVector2_Vec2 = vec2
-    vec2Mutable.y = newY
-    return vec2Mutable
-}
-@Sendable public static func MathVector2_add(_ a: MathVector2_Vec2, _ b: MathVector2_Vec2)
-    -> MathVector2_Vec2
-{
-    a + b
-}
-@Sendable public static func MathVector2_sub(_ a: MathVector2_Vec2, _ b: MathVector2_Vec2)
-    -> MathVector2_Vec2
-{
-    a - b
-}
-@Sendable public static func MathVector2_negate(_ vec2: MathVector2_Vec2) -> MathVector2_Vec2 {
-    -vec2
-}
-@Sendable public static func MathVector2_scale(_ factor: Double, _ vec2: MathVector2_Vec2)
-    -> MathVector2_Vec2
-{
-    vec2 * factor
-}
-@Sendable public static func MathVector2_dot(_ a: MathVector2_Vec2, _ b: MathVector2_Vec2)
-    -> Double
-{
-    a.x * b.x + a.y * b.y
-}
-@Sendable public static func MathVector2_normalize(_ vec2: MathVector2_Vec2) -> MathVector2_Vec2
-{
-    vec2 / MathVector2_length(vec2)
-    // alternative: vec2 * vec2 / MathVector2_lengthSquared(vec2)
-}
-@Sendable public static func MathVector2_direction(_ a: MathVector2_Vec2, _ b: MathVector2_Vec2)
-    -> MathVector2_Vec2
-{
-    MathVector2_normalize(a - b)
-}
-@Sendable public static func MathVector2_length(_ vec2: MathVector2_Vec2) -> Double {
-    sqrt(vec2.x * vec2.x + vec2.y + vec2.y)
-}
-@Sendable public static func MathVector2_lengthSquared(_ vec2: MathVector2_Vec2) -> Double {
-    vec2.x * vec2.x + vec2.y + vec2.y
-}
-@Sendable public static func MathVector2_distance(_ a: MathVector2_Vec2, _ b: MathVector2_Vec2)
-    -> Double
-{
-    MathVector2_length(a - b)
-}
-@Sendable public static func MathVector2_distanceSquared(
-    _ a: MathVector2_Vec2, _ b: MathVector2_Vec2
-) -> Double {
-    MathVector2_lengthSquared(a - b)
-}
-
-public static let MathVector3_i: MathVector3_Vec3 = SIMD3(1, 0, 0)
-public static let MathVector3_j: MathVector3_Vec3 = SIMD3(0, 1, 0)
-public static let MathVector3_k: MathVector3_Vec3 = SIMD3(0, 0, 1)
-
-@Sendable public static func MathVector3_vec3(_ x: Double, _ y: Double, _ z: Double)
-    -> MathVector3_Vec3
-{
-    SIMD3(x, y, z)
-}
-public enum Generated_x_y_z<x: Sendable, y: Sendable, z: Sendable>: Sendable {
-    case Record(x: x, y: y, z: z)
-    var x: x {
-        switch self {
-        case let .Record(result, _, _): result
-        }
-    }
-    var y: y {
-        switch self {
-        case let .Record(_, result, _): result
-        }
-    }
-    var z: z {
-        switch self {
-        case let .Record(_, _, result): result
-        }
-    }
-}
-@Sendable public static func MathVector3_fromRecord(
-    _ vec3: Generated_x_y_z<Double, Double, Double>
-)
-    -> MathVector3_Vec3
-{
-    SIMD3(x: vec3.x, y: vec3.y, z: vec3.z)
-}
-@Sendable public static func MathVector3_toRecord(_ vec3: MathVector3_Vec3)
-    -> Generated_x_y_z<Double, Double, Double>
-{
-    .Record(x: vec3.x, y: vec3.y, z: vec3.z)
-}
-@Sendable public static func MathVector3_getX(_ vec3: MathVector3_Vec3) -> Double {
-    vec3.x
-}
-@Sendable public static func MathVector3_getY(_ vec3: MathVector3_Vec3) -> Double {
-    vec3.y
-}
-@Sendable public static func MathVector3_getZ(_ vec3: MathVector3_Vec3) -> Double {
-    vec3.z
-}
-@Sendable public static func MathVector3_setX(_ newX: Double) -> (MathVector3_Vec3) ->
-    MathVector3_Vec3
-{
-    { vec3 in
-        var vec3Mutable: MathVector3_Vec3 = vec3
-        vec3Mutable.x = newX
-        return vec3Mutable
-    }
-}
-@Sendable public static func MathVector3_setY(_ newY: Double, _ vec3: MathVector3_Vec3)
-    -> MathVector3_Vec3
-{
-    var vec3Mutable: MathVector3_Vec3 = vec3
-    vec3Mutable.y = newY
-    return vec3Mutable
-}
-@Sendable public static func MathVector3_setZ(_ newZ: Double, _ vec3: MathVector3_Vec3)
-    -> MathVector3_Vec3
-{
-    var vec3Mutable: MathVector3_Vec3 = vec3
-    vec3Mutable.z = newZ
-    return vec3Mutable
-}
-@Sendable public static func MathVector3_add(_ a: MathVector3_Vec3, _ b: MathVector3_Vec3)
-    -> MathVector3_Vec3
-{
-    a + b
-}
-@Sendable public static func MathVector3_sub(_ a: MathVector3_Vec3, _ b: MathVector3_Vec3)
-    -> MathVector3_Vec3
-{
-    a - b
-}
-@Sendable public static func MathVector3_negate(_ vec3: MathVector3_Vec3) -> MathVector3_Vec3 {
-    -vec3
-}
-@Sendable public static func MathVector3_scale(_ factor: Double, _ vec3: MathVector3_Vec3)
-    -> MathVector3_Vec3
-{
-    vec3 * factor
-}
-@Sendable public static func MathVector3_dot(_ a: MathVector3_Vec3, _ b: MathVector3_Vec3)
-    -> Double
-{
-    a.x * b.x + a.y * b.y + a.z * b.z
-}
-@Sendable public static func MathVector3_cross(_ a: MathVector3_Vec3, _ b: MathVector3_Vec3)
-    -> MathVector3_Vec3
-{
-    SIMD3(
-        a.y * b.z - a.z * b.y,
-        a.z * b.x - a.x * b.z,
-        a.x * b.y - a.y * b.x
-    )
-}
-@Sendable public static func MathVector3_normalize(_ vec3: MathVector3_Vec3) -> MathVector3_Vec3
-{
-    vec3 / MathVector3_length(vec3)
-    // alternative: vec3 * vec3 / MathVector3_lengthSquared(vec3)
-}
-@Sendable public static func MathVector3_direction(_ a: MathVector3_Vec3, _ b: MathVector3_Vec3)
-    -> MathVector3_Vec3
-{
-    MathVector3_normalize(a - b)
-}
-@Sendable public static func MathVector3_length(_ vec3: MathVector3_Vec3) -> Double {
-    sqrt(vec3.x * vec3.x + vec3.y + vec3.y + vec3.z * vec3.z)
-}
-@Sendable public static func MathVector3_lengthSquared(_ vec3: MathVector3_Vec3) -> Double {
-    vec3.x * vec3.x + vec3.y + vec3.y + vec3.z * vec3.z
-}
-@Sendable public static func MathVector3_distance(_ a: MathVector3_Vec3, _ b: MathVector3_Vec3)
-    -> Double
-{
-    MathVector3_length(a - b)
-}
-@Sendable public static func MathVector3_distanceSquared(
-    _ a: MathVector3_Vec3,
-    _ b: MathVector3_Vec3
-) -> Double {
-    MathVector3_lengthSquared(a - b)
-}
-
-@Sendable public static func MathVector4_vec4(
-    _ x: Double,
-    _ y: Double,
-    _ z: Double,
-    _ w: Double
-)
-    -> MathVector4_Vec4
-{
-    SIMD4(x, y, z, w)
-}
-public enum Generated_w_x_y_z<x: Sendable, y: Sendable, z: Sendable, w: Sendable>: Sendable {
-    case Record(w: w, x: x, y: y, z: z)
-    var w: w {
-        switch self {
-        case let .Record(result, _, _, _): result
-        }
-    }
-    var x: x {
-        switch self {
-        case let .Record(_, result, _, _): result
-        }
-    }
-    var y: y {
-        switch self {
-        case let .Record(_, _, result, _): result
-        }
-    }
-    var z: z {
-        switch self {
-        case let .Record(_, _, _, result): result
-        }
-    }
-}
-@Sendable public static func MathVector4_fromRecord(
-    _ vec4: Generated_w_x_y_z<Double, Double, Double, Double>
-)
-    -> MathVector4_Vec4
-{
-    SIMD4(x: vec4.x, y: vec4.y, z: vec4.z, w: vec4.w)
-}
-@Sendable public static func MathVector4_toRecord(_ vec4: MathVector4_Vec4)
-    -> Generated_w_x_y_z<Double, Double, Double, Double>
-{
-    .Record(w: vec4.w, x: vec4.x, y: vec4.y, z: vec4.z)
-}
-@Sendable public static func MathVector4_getX(_ vec4: MathVector4_Vec4) -> Double {
-    vec4.x
-}
-@Sendable public static func MathVector4_getY(_ vec4: MathVector4_Vec4) -> Double {
-    vec4.y
-}
-@Sendable public static func MathVector4_getZ(_ vec4: MathVector4_Vec4) -> Double {
-    vec4.z
-}
-@Sendable public static func MathVector4_getW(_ vec4: MathVector4_Vec4) -> Double {
-    vec4.w
-}
-@Sendable public static func MathVector4_setX(_ newX: Double, _ vec4: MathVector4_Vec4)
-    -> MathVector4_Vec4
-{
-    var vec4Mutable: MathVector4_Vec4 = vec4
-    vec4Mutable.x = newX
-    return vec4Mutable
-}
-@Sendable public static func MathVector4_setY(_ newY: Double, _ vec4: MathVector4_Vec4)
-    -> MathVector4_Vec4
-{
-    var vec4Mutable: MathVector4_Vec4 = vec4
-    vec4Mutable.y = newY
-    return vec4Mutable
-}
-@Sendable public static func MathVector4_setZ(_ newZ: Double, _ vec4: MathVector4_Vec4)
-    -> MathVector4_Vec4
-{
-    var vec4Mutable: MathVector4_Vec4 = vec4
-    vec4Mutable.z = newZ
-    return vec4Mutable
-}
-@Sendable public static func MathVector4_setW(_ newW: Double, _ vec4: MathVector4_Vec4)
-    -> MathVector4_Vec4
-{
-    var vec4Mutable: MathVector4_Vec4 = vec4
-    vec4Mutable.w = newW
-    return vec4Mutable
-}
-@Sendable public static func MathVector4_add(_ a: MathVector4_Vec4, _ b: MathVector4_Vec4)
-    -> MathVector4_Vec4
-{
-    a + b
-}
-@Sendable public static func MathVector4_sub(_ a: MathVector4_Vec4, _ b: MathVector4_Vec4)
-    -> MathVector4_Vec4
-{
-    a - b
-}
-@Sendable public static func MathVector4_negate(_ vec4: MathVector4_Vec4) -> MathVector4_Vec4 {
-    -vec4
-}
-@Sendable public static func MathVector4_scale(_ factor: Double, _ vec4: MathVector4_Vec4)
-    -> MathVector4_Vec4
-{
-    vec4 * factor
-}
-@Sendable public static func MathVector4_dot(_ a: MathVector4_Vec4, _ b: MathVector4_Vec4)
-    -> Double
-{
-    a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w
-}
-@Sendable public static func MathVector4_normalize(_ vec4: MathVector4_Vec4) -> MathVector4_Vec4
-{
-    vec4 / MathVector4_length(vec4)
-    // alternative: vec4 * vec4 / MathVector4_lengthSquared(vec4)
-}
-@Sendable public static func MathVector4_direction(_ a: MathVector4_Vec4, _ b: MathVector4_Vec4)
-    -> MathVector4_Vec4
-{
-    MathVector4_normalize(a - b)
-}
-@Sendable public static func MathVector4_length(_ vec4: MathVector4_Vec4) -> Double {
-    sqrt(vec4.x * vec4.x + vec4.y + vec4.y + vec4.z * vec4.z + vec4.w * vec4.w)
-}
-@Sendable public static func MathVector4_lengthSquared(_ vec4: MathVector4_Vec4) -> Double {
-    vec4.x * vec4.x + vec4.y + vec4.y + vec4.z * vec4.z + vec4.w * vec4.w
-}
-@Sendable public static func MathVector4_distance(_ a: MathVector4_Vec4, _ b: MathVector4_Vec4)
-    -> Double
-{
-    MathVector4_length(a - b)
-}
-@Sendable public static func MathVector4_distanceSquared(
-    _ a: MathVector4_Vec4,
-    _ b: MathVector4_Vec4
-) -> Double {
-    MathVector4_lengthSquared(a - b)
-}
-
-private static func stringUtf16CodePointAt(_ string: String, _ offset: Int)
-    -> Unicode.UTF16.CodeUnit
-{
-    string.utf16[
-        string.utf16.index(
-            string.utf16.startIndex,
-            offsetBy: offset
-        )
-    ]
-}
-private static func surrogatePairToUnicodeScalar(
-    _ left: Unicode.UTF16.CodeUnit,
-    _ right: Unicode.UTF16.CodeUnit
-) -> UnicodeScalar? {
-    UnicodeScalar(
-        String(
-            decoding: [left, right],
-            as: Unicode.UTF16.self
-        )
-    )
-}
-
-@Sendable public static func ElmKernelParser_isSubString(
-    _ smallString: String,
-    _ offsetOriginal: Double,
-    _ rowOriginal: Double,
-    _ colOriginal: Double,
-    _ bigString: String
-)
-    -> Triple<Double, Double, Double>
-{
-    let smallLength: Int = smallString.utf16.count
-    var row: Int = Int(rowOriginal)
-    var col: Int = Int(colOriginal)
-    var offset: Int = Int(offsetOriginal)
-    var isGood: Bool = Int(offset) + smallLength <= bigString.utf16.count
-    var i: Int = 0
-    while isGood && i < smallLength {
-        let code: Unicode.UTF16.CodeUnit =
-            stringUtf16CodePointAt(bigString, offset)
-        isGood =
-            stringUtf16CodePointAt(smallString, i)
-            == stringUtf16CodePointAt(bigString, offset)
-
-        if code == 0x000A /* \\n */ {
-            i = i + 1
-            row = row + 1
-            col = 1
-        } else {
-            col = col + 1
-            if Unicode.UTF16.isSurrogate(code) {
-                isGood =
-                    isGood
-                    && (stringUtf16CodePointAt(smallString, i + 1)
-                        == stringUtf16CodePointAt(bigString, offset + 1))
-                i = i + 2
-                offset = offset + 2
-            } else {
-                i = i + 1
-            }
-        }
-    }
-    return if isGood {
-        .Triple(Double(offset), Double(row), Double(col))
+/// For an index where -1 meaning one before the last element, 1 meaning one after the first element,
+/// normalize to valid index from the start (or the index _after_ the last valid index)
+fn index_from_end_if_negative(index_possibly_negative: f64, full_length: usize) -> usize {
+    if index_possibly_negative >= 0_f64 {
+        (index_possibly_negative.max(0_f64) as usize).min(full_length)
     } else {
-        .Triple(-1, Double(row), Double(col))
+        ((full_length as f64 + index_possibly_negative).max(0_f64) as usize).min(full_length)
     }
 }
+pub fn array_from_list<'a, A: Copy>(allocator: &'a Bump, list: ListList<A>) -> ArrayArray<'a, A> {
+    allocator.alloc(list.iter().collect::<Vec<A>>())
+}
 
-@Sendable public static func ElmKernelParser_isSubChar(
-    _ predicate: (UnicodeScalar) -> Bool,
-    _ offset: Double,
-    _ string: String
-)
-    -> Double
-{
-    let offsetInt: Int = Int(offset)
-    return if string.utf16.count <= offsetInt {
-        -1
-    } else if Unicode.UTF16.isSurrogate(stringUtf16CodePointAt(string, offsetInt)) {
-        if predicate(
-            surrogatePairToUnicodeScalar(
-                stringUtf16CodePointAt(string, offsetInt),
-                stringUtf16CodePointAt(string, offsetInt + 1),
-            ) ?? "\\0"
-        ) {
-            offset + 2
-        } else {
-            -1
-        }
-    } else if predicate(
-        UnicodeScalar(stringUtf16CodePointAt(string, offsetInt)) ?? "\\0"
-    ) {
-        if stringUtf16CodePointAt(string, offsetInt) == 0x000A /* \\n */ {
-            -2
-        } else {
-            offset + 1
-        }
+pub fn array_reverse<'a, A: Copy>(allocator: &'a Bump, array: ArrayArray<A>) -> ArrayArray<'a, A> {
+    let mut array_copy: Vec<A> = array.to_vec();
+    array_copy.reverse();
+    allocator.alloc(array_copy)
+}
+pub fn array_filter<'a, A: Copy, Keep: Fn(A) -> bool>(
+    allocator: &'a Bump,
+    keep: Keep,
+    array: ArrayArray<'a, A>,
+) -> ArrayArray<'a, A> {
+    allocator.alloc(
+        array
+            .iter()
+            .map(|&element| element)
+            .filter(|&element| keep(element))
+            .collect::<Vec<A>>(),
+    )
+}
+pub fn array_map<'a, A: Copy, B, ElementChange: Fn(A) -> B>(
+    allocator: &'a Bump,
+    element_change: ElementChange,
+    array: ArrayArray<'a, A>,
+) -> ArrayArray<'a, B> {
+    allocator.alloc(
+        array
+            .iter()
+            .map(|&element| element_change(element))
+            .collect::<Vec<B>>(),
+    )
+}
+pub fn array_indexed_map<
+    'a,
+    A: Copy,
+    B,
+    IndexedElementToNew: Fn(f64) -> IndexedElementToNew1,
+    IndexedElementToNew1: Fn(A) -> B,
+>(
+    allocator: &'a Bump,
+    element_change: IndexedElementToNew,
+    array: ArrayArray<'a, A>,
+) -> ArrayArray<'a, B> {
+    allocator.alloc(
+        array
+            .iter()
+            .enumerate()
+            .map(|(index, &element)| element_change(index as f64)(element))
+            .collect::<Vec<B>>(),
+    )
+}
+pub fn array_sort<'a, A: Copy + PartialOrd>(
+    allocator: &'a Bump,
+    array: ArrayArray<A>,
+) -> ArrayArray<'a, A> {
+    let mut array_copy: Vec<A> = array.to_vec();
+    array_copy.sort_by(|&a, &b| basics_compare(a, b));
+    allocator.alloc(array_copy)
+}
+pub fn array_sort_by<'a, A: Copy, B: PartialOrd, ElementToComparable: Fn(A) -> B>(
+    allocator: &'a Bump,
+    element_to_comparable: ElementToComparable,
+    array: ArrayArray<'a, A>,
+) -> ArrayArray<'a, A> {
+    let mut array_copy: Vec<A> = array.to_vec();
+    array_copy.sort_by(|&a, &b| basics_compare(element_to_comparable(a), element_to_comparable(b)));
+    allocator.alloc(array_copy)
+}
+pub fn array_sort_with<
+    'a,
+    A: Copy,
+    ElementCompare: Fn(A) -> ElementCompare1,
+    ElementCompare1: Fn(A) -> std::cmp::Ordering,
+>(
+    allocator: &'a Bump,
+    element_compare: ElementCompare,
+    array: ArrayArray<'a, A>,
+) -> ArrayArray<'a, A> {
+    let mut array_copy: Vec<A> = array.to_vec();
+    array_copy.sort_by(|&a, &b| element_compare(a)(b));
+    allocator.alloc(array_copy)
+}
+
+pub fn array_to_list<'a, A: Copy>(allocator: &'a Bump, array: ArrayArray<A>) -> ListList<'a, A> {
+    double_ended_iterator_to_list(allocator, array.iter().map(|&e| e))
+}
+pub fn array_to_indexed_list<'a, A: Copy>(
+    allocator: &'a Bump,
+    array: ArrayArray<A>,
+) -> ListList<'a, (f64, A)> {
+    double_ended_iterator_to_list(
+        allocator,
+        array
+            .iter()
+            .enumerate()
+            .map(|(index, &element)| (index as f64, element)),
+    )
+}
+pub fn array_foldl<'a, A: Copy, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) -> State>(
+    reduce: Reduce,
+    initial_state: State,
+    array: ArrayArray<'a, A>,
+) -> State {
+    array
+        .iter()
+        .fold(initial_state, |state, &element| reduce(element)(state))
+}
+pub fn array_foldr<'a, A: Copy, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) -> State>(
+    reduce: Reduce,
+    initial_state: State,
+    array: ArrayArray<'a, A>,
+) -> State {
+    array
+        .iter()
+        .rev()
+        .fold(initial_state, |state, &element| reduce(element)(state))
+}
+
+fn array_append<'a, A: Copy>(
+    allocator: &'a Bump,
+    left: ArrayArray<A>,
+    right: ArrayArray<A>,
+) -> ArrayArray<'a, A> {
+    let mut left_as_vec: Vec<A> = left.to_vec();
+    left_as_vec.extend_from_slice(right);
+    allocator.alloc(left_as_vec)
+}
+
+pub fn char_is_upper(char: char) -> bool {
+    char.is_ascii_uppercase()
+}
+pub fn char_is_lower(char: char) -> bool {
+    char.is_ascii_lowercase()
+}
+pub fn char_is_alpha(char: char) -> bool {
+    char.is_ascii_alphabetic()
+}
+pub fn char_is_alpha_num(char: char) -> bool {
+    char.is_ascii_alphanumeric()
+}
+pub fn char_is_digit(char: char) -> bool {
+    char.is_ascii_digit()
+}
+pub fn char_is_hex_digit(char: char) -> bool {
+    char.is_ascii_hexdigit()
+}
+pub fn char_is_oct_digit(char: char) -> bool {
+    match char {
+        '0'..='7' => true,
+        _ => false,
+    }
+}
+pub fn char_to_upper(char: char) -> char {
+    match char.to_uppercase().next() {
+        None => char,
+        Some(approximate_uppercase) => approximate_uppercase,
+    }
+}
+pub fn char_to_lower(char: char) -> char {
+    match char.to_lowercase().next() {
+        None => char,
+        Some(approximate_lowercase) => approximate_lowercase,
+    }
+}
+pub fn char_to_code(char: char) -> f64 {
+    char as u32 as f64
+}
+pub fn char_from_code(code: f64) -> char {
+    char::from_u32(code as u32).unwrap_or('\\0')
+}
+
+pub fn string_is_empty(string: StringString) -> bool {
+    string.is_empty()
+}
+pub fn string_length(string: StringString) -> f64 {
+    string.chars().count() as f64
+}
+pub fn string_from_int<'a>(allocator: &'a Bump, int: f64) -> StringString<'a> {
+    allocator.alloc((int as i64).to_string())
+}
+pub fn string_from_float<'a>(allocator: &'a Bump, float: f64) -> StringString<'a> {
+    allocator.alloc(float.to_string())
+}
+pub fn string_from_char<'a>(allocator: &'a Bump, char: char) -> StringString<'a> {
+    allocator.alloc(char.to_string())
+}
+pub fn string_repeat<'a>(
+    allocator: &'a Bump,
+    length: f64,
+    segment: StringString,
+) -> StringString<'a> {
+    if length <= 0_f64 {
+        &""
     } else {
-        -1
+        allocator.alloc(segment.repeat(length as usize))
+    }
+}
+pub fn string_cons<'a>(
+    allocator: &'a Bump,
+    new_first_char: char,
+    tail_string: StringString,
+) -> StringString<'a> {
+    let mut tail_string_copy: String = tail_string.to_owned();
+    tail_string_copy.insert(0, new_first_char);
+    allocator.alloc(tail_string_copy)
+}
+pub fn string_all<IsExpected: Fn(char) -> bool>(
+    is_expected: IsExpected,
+    string: StringString,
+) -> bool {
+    string.chars().all(is_expected)
+}
+pub fn string_any<IsNeedle: Fn(char) -> bool>(is_needle: IsNeedle, string: StringString) -> bool {
+    string.chars().any(is_needle)
+}
+pub fn string_filter<'a, Keep: Fn(char) -> bool>(
+    allocator: &'a Bump,
+    keep: Keep,
+    string: StringString,
+) -> StringString<'a> {
+    allocator.alloc(
+        string
+            .chars()
+            .filter(|&element| keep(element))
+            .collect::<String>(),
+    )
+}
+pub fn string_map<'a, ElementChange: Fn(char) -> char>(
+    allocator: &'a Bump,
+    element_change: ElementChange,
+    string: StringString,
+) -> StringString<'a> {
+    allocator.alloc(string.chars().map(element_change).collect::<String>())
+}
+pub fn string_foldl<State, Reduce: Fn(char) -> Reduce1, Reduce1: Fn(State) -> State>(
+    reduce: Reduce,
+    initial_state: State,
+    string: StringString,
+) -> State {
+    string
+        .chars()
+        .fold(initial_state, |state, element| reduce(element)(state))
+}
+pub fn string_foldr<State, Reduce: Fn(char) -> Reduce1, Reduce1: Fn(State) -> State>(
+    reduce: Reduce,
+    initial_state: State,
+    string: StringString,
+) -> State {
+    string
+        .chars()
+        .rev()
+        .fold(initial_state, |state, element| reduce(element)(state))
+}
+pub fn string_to_list<'a>(allocator: &'a Bump, string: StringString) -> ListList<'a, char> {
+    double_ended_iterator_to_list(allocator, string.chars())
+}
+pub fn string_from_list<'a>(allocator: &'a Bump, list: ListList<char>) -> StringString<'a> {
+    allocator.alloc(list.iter().collect::<String>())
+}
+pub fn string_reverse<'a>(allocator: &'a Bump, string: StringString) -> StringString<'a> {
+    allocator.alloc(string.chars().rev().collect::<String>())
+}
+pub fn string_uncons<'a>(string: StringString<'a>) -> Option<(char, StringString<'a>)> {
+    let mut string_chars_iterator: std::str::Chars = string.chars();
+    match string_chars_iterator.next() {
+        Option::None => Option::None,
+        Option::Some(head_char) => Option::Some((head_char, string_chars_iterator.as_str())),
     }
 }
 
-@Sendable public static func ElmKernelParser_isAsciiCode(
-    _ code: Double,
-    _ offset: Double,
-    _ string: String
-) -> Bool {
-    Double(stringUtf16CodePointAt(string, Int(offset))) == code
-}
-
-@Sendable public static func ElmKernelParser_chompBase10(
-    _ offsetOriginal: Double,
-    _ string: String
-) -> Double {
-    var offset: Int = Int(offsetOriginal)
-    var foundNonBase10: Bool = false
-    while (offset < string.utf16.count) && !(foundNonBase10) {
-        let code: Unicode.UTF16.CodeUnit = stringUtf16CodePointAt(string, offset)
-        foundNonBase10 = !(code < 0x30 || 0x39 < code)
-        offset = offset + 1
-    }
-    return Double(offset)
-}
-
-@Sendable public static func ElmKernelParser_consumeBase(
-    _ baseAsDouble: Double,
-    _ offsetOriginal: Double,
-    _ string: String
-) -> Tuple<Double, Double> {
-    let base: Int = Int(baseAsDouble)
-    var offset: Int = Int(offsetOriginal)
-    var total: Int = 0
-    var foundNonBase: Bool = false
-    while (offset < string.utf16.count) && !(foundNonBase) {
-        let digit: Int = Int(stringUtf16CodePointAt(string, offset) - 0x30)
-        if digit < 0 || base <= digit {
-            foundNonBase = true
-        } else {
-            total = base * total + digit
-            offset = offset + 1
+pub fn string_left(taken_count: f64, string: StringString) -> StringString {
+    if taken_count <= 0_f64 {
+        &""
+    } else {
+        match string.char_indices().nth(taken_count as usize) {
+            Option::None => string,
+            Option::Some((end_exclusive, _)) => &string[..end_exclusive],
         }
     }
-    return .Tuple(Double(offset), Double(total))
 }
-
-@Sendable public static func ElmKernelParser_consumeBase16(
-    _ offsetOriginal: Double,
-    _ string: String
-) -> Tuple<Double, Double> {
-    var offset: Int = Int(offsetOriginal)
-    var total: Int = 0
-    var foundNonBase16: Bool = false
-    while (offset < string.utf16.count) && !(foundNonBase16) {
-        let code: Unicode.UTF16.CodeUnit = stringUtf16CodePointAt(string, offset)
-        if 0x30 <= code && code <= 0x39 {
-            total = 16 * total + Int(code) - 0x30
-            offset = offset + 1
-        } else if 0x41 <= code && code <= 0x46 {
-            total = 16 * total + Int(code) - 55
-            offset = offset + 1
-        } else if 0x61 <= code && code <= 0x66 {
-            total = 16 * total + Int(code) - 87
-            offset = offset + 1
-        } else {
-            foundNonBase16 = true
+pub fn string_drop_left(skipped_count: f64, string: StringString) -> StringString {
+    if skipped_count <= 0_f64 {
+        string
+    } else {
+        match string.char_indices().nth(skipped_count as usize) {
+            Option::None => &"",
+            Option::Some((start, _)) => &string[start..],
         }
     }
-    return .Tuple(Double(offset), Double(total))
 }
-
-@Sendable public static func ElmKernelParser_findSubString(
-    _ smallString: String,
-    _ offsetOriginalAsDouble: Double,
-    _ rowOriginal: Double,
-    _ colOriginal: Double,
-    _ bigString: String
-)
-    -> Triple<Double, Double, Double>
-{
-    let offsetOriginal: Int = Int(offsetOriginalAsDouble)
-    let bigStringStartingWithOffsetOriginal: Substring =
-        Substring(
-            bigString.utf16[
-                bigString.utf16.index(
-                    bigString.utf16.startIndex,
-                    offsetBy: offsetOriginal
-                )...
-            ]
-        )
-    let foundStartOffset: Int? =
-        switch bigStringStartingWithOffsetOriginal
-            .range(of: smallString)
+pub fn string_right(taken_count: f64, string: StringString) -> StringString {
+    if taken_count <= 0_f64 {
+        &""
+    } else {
+        match string
+            .char_indices()
+            .nth_back((taken_count - 1_f64) as usize)
         {
-        case .none: .none
-        case let .some(foundRangeAfterOffsetOriginal):
-            offsetOriginal
-                + foundRangeAfterOffsetOriginal.lowerBound
-                .utf16Offset(in: bigStringStartingWithOffsetOriginal)
-        }
-    var row: Int = Int(rowOriginal)
-    var col: Int = Int(colOriginal)
-    var offset: Int = offsetOriginal
-    let foundEndOffsetOrBigStringEnd: Int =
-        switch foundStartOffset {
-        case .none: bigString.utf16.count
-        case let .some(foundIndexAfterOffsetOriginal):
-            foundIndexAfterOffsetOriginal
-                + smallString.utf16.count
-        }
-    while offset < foundEndOffsetOrBigStringEnd {
-        let code: Unicode.UTF16.CodeUnit =
-            stringUtf16CodePointAt(bigString, offset)
-        if code == 0x000A /* \\n */ {
-            offset = offset + 1
-            col = 1
-            row = row + 1
-        } else {
-            col = col + 1
-            offset =
-                if Unicode.UTF16.isSurrogate(code) {
-                    offset + 2
-                } else {
-                    offset + 1
-                }
-        }
-    }
-    let startOffsetOrNegative1ForNotFound: Double =
-        switch foundStartOffset {
-        case .none: -1.0
-        case let .some(startOffset): Double(startOffset)
-        }
-    return .Triple(
-        startOffsetOrNegative1ForNotFound, Double(row), Double(col)
-    )
-}
-
-@Sendable public static func VirtualDom_noJavaScriptUri(_ uri: String) -> String {
-    switch uri.wholeMatch(of: #/^\\s*j\\s*a\\s*v\\s*a\\s*s\\s*c\\s*r\\s*i\\s*p\\s*t\\s*:/#.ignoresCase()) {
-    case .some(_): ""
-    case .none:
-        uri
-    }
-}
-
-@Sendable public static func VirtualDom_noJavaScriptOrHtmlUri(_ uri: String) -> String {
-    switch uri.wholeMatch(
-        of:
-            #/^\\s*(j\\s*a\\s*v\\s*a\\s*s\\s*c\\s*r\\s*i\\s*p\\s*t\\s*:|d\\s*a\\s*t\\s*a\\s*:\\s*t\\s*e\\s*x\\s*t\\s*\\/\\s*h\\s*t\\s*m\\s*l\\s*(,|;))/#
-            .ignoresCase()
-    )
-    {
-    case .some(_): ""
-    case .none:
-        uri
-    }
-}
-
-public enum Generated_message_preventDefault_stopPropagation<
-    message: Sendable, preventDefault: Sendable, stopPropagation: Sendable
->: Sendable {
-    case Record(
-        message: message, preventDefault: preventDefault, stopPropagation: stopPropagation)
-    var message: message {
-        switch self {
-        case let .Record(result, _, _): result
-        }
-    }
-    var preventDefault: preventDefault {
-        switch self {
-        case let .Record(_, result, _): result
-        }
-    }
-    var stopPropagation: stopPropagation {
-        switch self {
-        case let .Record(_, _, result): result
+            Option::None => string,
+            Option::Some((start, _)) => &string[start..],
         }
     }
 }
-
-public typealias VirtualDom_CustomHandledEvent<event> =
-    Generated_message_preventDefault_stopPropagation<event, Bool, Bool>
-
-public enum VirtualDom_Handler<event: Sendable>: Sendable {
-    case VirtualDom_Normal(JsonDecode_Decoder<event>)
-    case VirtualDom_MayStopPropagation(JsonDecode_Decoder<Tuple<event, Bool>>)
-    case VirtualDom_MayPreventDefault(JsonDecode_Decoder<Tuple<event, Bool>>)
-    case VirtualDom_Custom(JsonDecode_Decoder<VirtualDom_CustomHandledEvent<event>>)
-}
-
-public indirect enum VirtualDom_Attribute<event: Sendable>: Sendable {
-    case VirtualDom_ModifierAttribute(
-        namespace: String?,
-        key: String,
-        value: String
-    )
-    case VirtualDom_ModifierStyle(key: String, value: String)
-    case VirtualDom_ModifierProperty(
-        key: String,
-        value: JsonDecode_Value
-    )
-    case VirtualDom_ModifierEventListener(
-        name: String,
-        handler: VirtualDom_Handler<event>
-    )
-}
-
-public indirect enum VirtualDom_Node<event: Sendable>: Sendable {
-    case VirtualDom_Text(String)
-    case VirtualDom_Element(
-        tag: String,
-        namespace: String?,
-        subs: List_List<VirtualDom_Node<event>>,
-        modifiers: List_List<VirtualDom_Attribute<event>>
-    )
-    case VirtualDom_ElementKeyed(
-        tag: String,
-        namespace: String?,
-        subs: List_List<Tuple<String, VirtualDom_Node<event>>>,
-        modifiers: List_List<VirtualDom_Attribute<event>>
-    )
-    case VirtualDom_NodeLazy(
-        // to know when to construct:
-        // element-wise check for all pairs with typeErasedEq
-        keys: [any Equatable & Sendable],
-        construct: @Sendable () -> VirtualDom_Node<event>
-    )
-}
-
-@Sendable
-public static func VirtualDom_customHandledEventMap<event: Sendable, eventMapped: Sendable>(
-    _ eventChange: (event) -> eventMapped,
-    _ handledEvent: VirtualDom_CustomHandledEvent<event>
-)
-    -> VirtualDom_CustomHandledEvent<eventMapped>
-{
-    .Record(
-        message: eventChange(handledEvent.message),
-        preventDefault: handledEvent.preventDefault,
-        stopPropagation: handledEvent.stopPropagation
-    )
-}
-
-@Sendable public static func VirtualDom_text<event>(_ string: String) -> VirtualDom_Node<event>
-{
-    .VirtualDom_Text(string)
-}
-
-@Sendable public static func VirtualDom_node<event>(
-    _ tag: String,
-    _ modifiers: List_List<VirtualDom_Attribute<event>>,
-    _ subs: List_List<VirtualDom_Node<event>>
-)
-    -> VirtualDom_Node<event>
-{
-    .VirtualDom_Element(
-        tag: tag,
-        namespace: .none,
-        subs: subs, modifiers: modifiers)
-}
-
-@Sendable public static func VirtualDom_nodeNS<event>(
-    namespace_: String,
-    _ tag: String,
-    _ modifiers: List_List<VirtualDom_Attribute<event>>,
-    _ subs: List_List<VirtualDom_Node<event>>
-)
-    -> VirtualDom_Node<event>
-{
-    .VirtualDom_Element(
-        tag: tag,
-        namespace: .some(namespace_),
-        subs: subs, modifiers: modifiers)
-}
-
-@Sendable public static func VirtualDom_KeyedNode<event>(
-    _ tag: String,
-    _ modifiers: List_List<VirtualDom_Attribute<event>>,
-    _ subs: List_List<Tuple<String, VirtualDom_Node<event>>>
-)
-    -> VirtualDom_Node<event>
-{
-    .VirtualDom_ElementKeyed(
-        tag: tag,
-        namespace: .none,
-        subs: subs, modifiers: modifiers)
-}
-
-@Sendable public static func VirtualDom_KeyedNodeNS<event>(
-    namespace_: String,
-    _ tag: String,
-    _ modifiers: List_List<VirtualDom_Attribute<event>>,
-    _ subs: List_List<Tuple<String, VirtualDom_Node<event>>>
-)
-    -> VirtualDom_Node<event>
-{
-    .VirtualDom_ElementKeyed(
-        tag: tag,
-        namespace: .some(namespace_),
-        subs: subs, modifiers: modifiers)
-}
-
-@Sendable public static func VirtualDom_style<event>(
-    _ key: String,
-    _ value: String
-)
-    -> VirtualDom_Attribute<event>
-{
-    .VirtualDom_ModifierStyle(
-        key: key,
-        value: value)
-}
-
-@Sendable public static func VirtualDom_property<event>(
-    _ key: String,
-    _ value: JsonDecode_Value
-)
-    -> VirtualDom_Attribute<event>
-{
-    .VirtualDom_ModifierProperty(
-        key: key,
-        value: value)
-}
-
-@Sendable public static func VirtualDom_attribute<event>(_ key: String, _ value: String)
-    -> VirtualDom_Attribute<event>
-{
-    .VirtualDom_ModifierAttribute(
-        namespace: .none,
-        key: key,
-        value: value)
-}
-
-@Sendable public static func VirtualDom_attributeNS<event>(
-    _ namespace_: String,
-    _ key: String,
-    _ value: String
-)
-    -> VirtualDom_Attribute<event>
-{
-    .VirtualDom_ModifierAttribute(
-        namespace: .some(namespace_),
-        key: key,
-        value: value)
-}
-@Sendable public static func VirtualDom_on<event>(
-    _ name: String,
-    _ handler: VirtualDom_Handler<event>
-)
-    -> VirtualDom_Attribute<event>
-{
-    .VirtualDom_ModifierEventListener(
-        name: name,
-        handler: handler)
-}
-
-@Sendable public static func VirtualDom_mapAttribute<event, eventMapped>(
-    _ eventChange: @escaping @Sendable (event) -> eventMapped,
-    _ modifier: VirtualDom_Attribute<event>
-)
-    -> VirtualDom_Attribute<eventMapped>
-{
-    switch modifier {
-    case let .VirtualDom_ModifierAttribute(namespace: namespace, key: key, value: value):
-        .VirtualDom_ModifierAttribute(namespace: namespace, key: key, value: value)
-    case let .VirtualDom_ModifierStyle(key: key, value: value):
-        .VirtualDom_ModifierStyle(key: key, value: value)
-    case let .VirtualDom_ModifierProperty(key: key, value: value):
-        .VirtualDom_ModifierProperty(key: key, value: value)
-    case let .VirtualDom_ModifierEventListener(name: name, handler: handler):
-        .VirtualDom_ModifierEventListener(
-            name: name,
-            handler: VirtualDom_handlerMap(eventChange, handler)
-        )
-    }
-}
-static func VirtualDom_handlerMap<event, eventMapped>(
-    _ eventChange: @escaping @Sendable (event) -> eventMapped,
-    _ handler: VirtualDom_Handler<event>
-)
-    -> VirtualDom_Handler<eventMapped>
-{
-    switch handler {
-    case let .VirtualDom_Normal(decoder):
-        .VirtualDom_Normal(JsonDecode_map(eventChange, decoder))
-    case let .VirtualDom_MayStopPropagation(decoder):
-        .VirtualDom_MayStopPropagation(
-            JsonDecode_map(
-                { decoded in
-                    .Tuple(eventChange(decoded.first), decoded.second)
-                },
-                decoder
-            )
-        )
-    case let .VirtualDom_MayPreventDefault(decoder):
-        .VirtualDom_MayPreventDefault(
-            JsonDecode_map(
-                { decoded in
-                    .Tuple(eventChange(decoded.first), decoded.second)
-                },
-                decoder
-            )
-        )
-    case let .VirtualDom_Custom(decoder):
-        .VirtualDom_Custom(
-            JsonDecode_map(
-                { custom in
-                    VirtualDom_customHandledEventMap(eventChange, custom)
-                },
-                decoder
-            )
-        )
-    }
-}
-
-@Sendable public static func VirtualDom_map<event, eventMapped>(
-    _ eventChange: @escaping @Sendable (event) -> eventMapped,
-    _ node: VirtualDom_Node<event>
-)
-    -> VirtualDom_Node<eventMapped>
-{
-    switch node {
-    case let .VirtualDom_Text(text): .VirtualDom_Text(text)
-    case let .VirtualDom_Element(
-        tag: tag, namespace: namespace, subs: subs, modifiers: modifiers):
-        .VirtualDom_Element(
-            tag: tag,
-            namespace: namespace,
-            subs: List_map({ sub in VirtualDom_map(eventChange, sub) }, subs),
-            modifiers:
-                List_map(
-                    { modifier in VirtualDom_mapAttribute(eventChange, modifier) },
-                    modifiers
-                )
-        )
-    case let .VirtualDom_ElementKeyed(
-        tag: tag, namespace: namespace, subs: subs, modifiers: modifiers):
-        .VirtualDom_ElementKeyed(
-            tag: tag,
-            namespace: namespace,
-            subs: List_map(
-                { sub in .Tuple(sub.first, VirtualDom_map(eventChange, sub.second)) },
-                subs),
-            modifiers:
-                List_map(
-                    { modifier in VirtualDom_mapAttribute(eventChange, modifier) },
-                    modifiers
-                )
-        )
-    case let .VirtualDom_NodeLazy(keys: keys, construct: construct):
-        .VirtualDom_NodeLazy(
-            keys: keys,
-            construct: { VirtualDom_map(eventChange, construct()) }
-        )
-    }
-}
-
-@Sendable public static func VirtualDom_lazy<a: Equatable & Sendable, event>(
-    _ construct: @escaping @Sendable (a) -> VirtualDom_Node<event>,
-    _ a: a
-)
-    -> VirtualDom_Node<event>
-{
-    .VirtualDom_NodeLazy(
-        keys: [a],
-        construct: { construct(a) }
-    )
-}
-@Sendable
-public static func VirtualDom_lazy2<a: Equatable & Sendable, b: Equatable & Sendable, event>(
-    _ construct:
-        @escaping @Sendable (a) -> (b) ->
-        VirtualDom_Node<event>,
-    _ a: a,
-    _ b: b
-)
-    -> VirtualDom_Node<event>
-{
-    .VirtualDom_NodeLazy(
-        keys: [a, b],
-        construct: { construct(a)(b) }
-    )
-}
-@Sendable
-public static func VirtualDom_lazy3<
-    a: Equatable & Sendable, b: Equatable & Sendable, c: Equatable & Sendable, event
->(
-    _ construct:
-        @escaping @Sendable (a) -> (b) -> (c) ->
-        VirtualDom_Node<event>,
-    _ a: a,
-    _ b: b,
-    _ c: c
-)
-    -> VirtualDom_Node<event>
-{
-    .VirtualDom_NodeLazy(
-        keys: [a, b, c],
-        construct: { construct(a)(b)(c) }
-    )
-}
-@Sendable
-public static func VirtualDom_lazy4<
-    a: Equatable & Sendable, b: Equatable & Sendable, c: Equatable & Sendable,
-    d: Equatable & Sendable, event
->(
-    _ construct:
-        @escaping @Sendable (a) -> (b) -> (c) -> (d) ->
-        VirtualDom_Node<event>,
-    _ a: a,
-    _ b: b,
-    _ c: c,
-    _ d: d
-)
-    -> VirtualDom_Node<event>
-{
-    .VirtualDom_NodeLazy(
-        keys: [a, b, c, d],
-        construct: { construct(a)(b)(c)(d) }
-    )
-}
-@Sendable
-public static func VirtualDom_lazy5<
-    a: Equatable & Sendable, b: Equatable & Sendable, c: Equatable & Sendable,
-    d: Equatable & Sendable, e: Equatable & Sendable, event
->(
-    _ construct:
-        @escaping @Sendable (a) -> (b) -> (c) -> (d) -> (e) ->
-        VirtualDom_Node<event>,
-    _ a: a,
-    _ b: b,
-    _ c: c,
-    _ d: d,
-    _ e: e
-)
-    -> VirtualDom_Node<event>
-{
-    .VirtualDom_NodeLazy(
-        keys: [a, b, c, d, e],
-        construct: { construct(a)(b)(c)(d)(e) }
-    )
-}
-@Sendable
-public static func VirtualDom_lazy6<
-    a: Equatable & Sendable, b: Equatable & Sendable, c: Equatable & Sendable,
-    d: Equatable & Sendable, e: Equatable & Sendable, f: Equatable & Sendable, event
->(
-    _ construct:
-        @escaping @Sendable (a) -> (b) -> (c) -> (d) -> (e) -> (f) ->
-        VirtualDom_Node<event>,
-    _ a: a,
-    _ b: b,
-    _ c: c,
-    _ d: d,
-    _ e: e,
-    _ f: f
-)
-    -> VirtualDom_Node<event>
-{
-    .VirtualDom_NodeLazy(
-        keys: [a, b, c, d, e, f],
-        construct: { construct(a)(b)(c)(d)(e)(f) }
-    )
-}
-@Sendable
-public static func VirtualDom_lazy7<
-    a: Equatable & Sendable, b: Equatable & Sendable, c: Equatable & Sendable,
-    d: Equatable & Sendable, e: Equatable & Sendable, f: Equatable & Sendable,
-    g: Equatable & Sendable, event
->(
-    _ construct:
-        @escaping @Sendable (a) -> (b) -> (c) -> (d) -> (e) -> (f) -> (g) ->
-        VirtualDom_Node<event>,
-    _ a: a,
-    _ b: b,
-    _ c: c,
-    _ d: d,
-    _ e: e,
-    _ f: f,
-    _ g: g
-)
-    -> VirtualDom_Node<event>
-{
-    .VirtualDom_NodeLazy(
-        keys: [a, b, c, d, e, f, g],
-        construct: { construct(a)(b)(c)(d)(e)(f)(g) }
-    )
-}
-@Sendable
-public static func VirtualDom_lazy8<
-    a: Equatable & Sendable, b: Equatable & Sendable, c: Equatable & Sendable,
-    d: Equatable & Sendable, e: Equatable & Sendable, f: Equatable & Sendable,
-    g: Equatable & Sendable, h: Equatable & Sendable, event
->(
-    _ construct:
-        @escaping @Sendable (a) -> (b) -> (c) -> (d) -> (e) -> (f) -> (g) -> (h) ->
-        VirtualDom_Node<event>,
-    _ a: a,
-    _ b: b,
-    _ c: c,
-    _ d: d,
-    _ e: e,
-    _ f: f,
-    _ g: g,
-    _ h: h
-)
-    -> VirtualDom_Node<event>
-{
-    .VirtualDom_NodeLazy(
-        keys: [a, b, c, d, e, f, g, h],
-        construct: { construct(a)(b)(c)(d)(e)(f)(g)(h) }
-    )
-}
-
-public enum Random_Seed: Sendable, Equatable {
-    // FUTURE improvement: change to ints
-    // the first number is the state of the RNG and stepped with each random generation
-    // the second state is the increment which corresponds to an independent RNG
-    case Random_Seed(Double, Double)
-}
-
-public struct Random_Generator<a: Sendable>: Sendable {
-    let step: @Sendable (Random_Seed) -> (a, Random_Seed)
-}
-
-public static let Random_independentSeed: Random_Generator<Random_Seed> =
-    Random_Generator(step: { (seed0: Random_Seed) in
-        @Sendable func makeIndependentSeed(_ state: Double, _ b: Double, _ c: Double)
-            -> Random_Seed
-        {
-            // Although it probably doesn't hold water theoretically, xor two
-            // random numbers to make an increment less likely to be
-            // pathological. Then make sure that it's odd, which is required.
-            // Next make sure it is positive. Finally step it once before use.
-            Random_next(
-                .Random_Seed(
-                    state, Bitwise_shiftRightZfBy(0.0, Bitwise_or(1.0, Bitwise_xor(b, c)))
-                )
-            )
-        }
-        let gen: Random_Generator<Double> = Random_int(0.0, 4294967295.0)
-        return
-            Random_map3(
-                { state in { b in { c in makeIndependentSeed(state, b, c) } } },
-                gen,
-                gen,
-                gen
-            ).step(seed0)
-    })
-
-public static let Random_maxInt: Double = 2147483647.0
-public static let Random_minInt: Double = -2147483648.0
-
-@Sendable public static func Random_andThen<a: Sendable, b: Sendable>(
-    _ callback: @Sendable @escaping (a) -> Random_Generator<b>,
-    _ generator: Random_Generator<a>
-) -> Random_Generator<b> {
-    Random_Generator(step: { (seed: Random_Seed) in
-        let (result, newSeed) = generator.step(seed)
-        return callback(result).step(newSeed)
-    })
-}
-
-@Sendable public static func Random_constant<a: Sendable>(_ value: a) -> Random_Generator<a> {
-    Random_Generator(step: { (seed: Random_Seed) in (value, seed) })
-}
-
-@Sendable public static func Random_float(_ a: Double, _ b: Double) -> Random_Generator<Double>
-{
-    Random_Generator(step: { (seed0: Random_Seed) in
-        // Get 64 bits of randomness
-        let seed1: Random_Seed = Random_next(seed0)
-        let n1: Double = Random_peel(seed1)
-        let n0: Double = Random_peel(seed0)
-        // Get a uniformly distributed IEEE-754 double between 0.0 and 1.0
-        let lo: Double = Double(Bitwise_and(134217727.0, n1))
-        let hi: Double = Double(Bitwise_and(67108863.0, n0))
-        let val: Double =
-            // These magic constants are 2^27 and 2^53
-            Basics_fdiv((hi * 134217728.0) + lo, 9007199254740992.0)
-        // Scale it into our range
-        let range: Double = abs(b - a)
-        let scaled: Double = Basics_add(Basics_mul(val, range), a)
-        return (scaled, Random_next(seed1))
-    })
-}
-
-@Sendable public static func Random_getByWeight<a: Sendable>(
-    _ firstWeighted: Tuple<Double, a>,
-    _ others: List_List<Tuple<Double, a>>,
-    _ countdown: Double
-) -> a {
-    switch firstWeighted {
-    case let .Tuple(weight, value):
-        switch others {
-        case .List_Empty:
-            value
-        case let .List_Cons(second, otherOthers):
-            if countdown <= abs(weight) {
-                value
-            } else {
-                Random_getByWeight(second, otherOthers, countdown - abs(weight))
-            }
-        }
-    }
-}
-
-@Sendable public static func Random_initialSeed(_ x: Double) -> Random_Seed {
-    switch Random_next(.Random_Seed(0.0, 1013904223.0)) {
-    case let .Random_Seed(state1, incr):
-        let state2: Double =
-            Bitwise_shiftRightZfBy(0.0, Basics_add(state1, x))
-        return Random_next(.Random_Seed(state2, incr))
-    }
-}
-
-@Sendable public static func Random_int(_ a: Double, _ b: Double) -> Random_Generator<Double> {
-    Random_Generator(step: { (seed0: Random_Seed) in
-        let (lo, hi): (Double, Double) =
-            if a < b {
-                (a, b)
-            } else {
-                (b, a)
-            }
-        let range: Double = ((hi - lo) + 1.0)
-        // fast path for power of 2
-        if Bitwise_and(range - 1.0, range) == 0.0 {
-            return
-                (
-                    Bitwise_shiftRightZfBy(
-                        0.0,
-                        Bitwise_and(range - 1.0, Random_peel(seed0))
-                    )
-                        + lo,
-                    Random_next(seed0)
-                )
-        } else {
-            let threshold: Double =
-                // essentially: period % max
-                Bitwise_shiftRightZfBy(
-                    0.0,
-                    Basics_remainderBy(
-                        range,
-                        Bitwise_shiftRightZfBy(0.0, -range)
-                    )
-                )
-            @Sendable func accountForBias(_ seed: Random_Seed) -> (Double, Random_Seed) {
-                let x: Double = Random_peel(seed)
-                let seedN: Random_Seed = Random_next(seed)
-                return if x < threshold {
-                    // in practice this recurses almost never
-                    accountForBias(seedN)
-                } else {
-                    (Basics_remainderBy(range, x) + lo, seedN)
-                }
-            }
-            return accountForBias(seed0)
-        }
-    })
-}
-
-@Sendable public static func Random_lazy<a: Sendable>(
-    _ callback: @Sendable @escaping (Unit) -> Random_Generator<a>
-) -> Random_Generator<a> {
-    Random_Generator(step: { (seed: Random_Seed) in
-        callback(.Unit).step(seed)
-    })
-}
-
-@Sendable public static func Random_list<a: Sendable>(
-    _ n: Double, _ elementGenerator: Random_Generator<a>
-) -> Random_Generator<List_List<a>> {
-    let gen: @Sendable (Random_Seed) -> (a, Random_Seed) = elementGenerator.step
-    return Random_Generator(step: { (seed: Random_Seed) in
-        Random_listHelp(.List_Empty, n, gen, seed)
-    })
-}
-
-@Sendable public static func Random_listHelp<a: Sendable>(
-    _ revList: List_List<a>,
-    _ n: Double,
-    _ gen: @Sendable @escaping (Random_Seed) -> (a, Random_Seed),
-    _ seed: Random_Seed
-) -> (List_List<a>, Random_Seed) {
-    if Basics_lt(n, 1.0) {
-        return (revList, seed)
+pub fn string_drop_right(skipped_count: f64, string: StringString) -> StringString {
+    if skipped_count <= 0_f64 {
+        string
     } else {
-        let (value, newSeed): (a, Random_Seed) = gen(seed)
-        return
-            Random_listHelp(
-                .List_Cons(value, revList),
-                n - 1.0,
-                gen,
-                newSeed
-            )
+        match string
+            .char_indices()
+            .nth_back((skipped_count - 1_f64) as usize)
+        {
+            Option::None => &"",
+            Option::Some((end_exclusive, _)) => &string[..end_exclusive],
+        }
     }
 }
-
-@Sendable public static func Random_map<a: Sendable, b: Sendable>(
-    _ valueChange: @Sendable @escaping (a) -> b,
-    _ generator: Random_Generator<a>
-) -> Random_Generator<b> {
-    Random_Generator(step: { (seed0: Random_Seed) in
-        let (value, seed1): (a, Random_Seed) = generator.step(seed0)
-        return (valueChange(value), seed1)
-    })
-}
-@Sendable
-public static func Random_map2<
-    a: Sendable, b: Sendable, combined: Sendable
->(
-    _ combine: @Sendable @escaping (a) -> (b) -> combined,
-    _ aGenerator: Random_Generator<a>,
-    _ bGenerator: Random_Generator<b>
-) -> Random_Generator<combined> {
-    Random_Generator(step: { (seed0: Random_Seed) in
-        let (a, seed1): (a, Random_Seed) = aGenerator.step(seed0)
-        let (b, seed2): (b, Random_Seed) = bGenerator.step(seed1)
-        return (combine(a)(b), seed2)
-    })
-}
-@Sendable
-public static func Random_map3<
-    a: Sendable, b: Sendable, c: Sendable, combined: Sendable
->(
-    _ combine: @Sendable @escaping (a) -> (b) -> (c) -> combined,
-    _ aGenerator: Random_Generator<a>,
-    _ bGenerator: Random_Generator<b>,
-    _ cGenerator: Random_Generator<c>
-) -> Random_Generator<combined> {
-    Random_Generator(step: { (seed0: Random_Seed) in
-        let (a, seed1): (a, Random_Seed) = aGenerator.step(seed0)
-        let (b, seed2): (b, Random_Seed) = bGenerator.step(seed1)
-        let (c, seed3): (c, Random_Seed) = cGenerator.step(seed2)
-        return (combine(a)(b)(c), seed3)
-    })
-}
-@Sendable
-public static func Random_map4<
-    a: Sendable, b: Sendable, c: Sendable, d: Sendable, combined: Sendable
->(
-    _ combine: @Sendable @escaping (a) -> (b) -> (c) -> (d) -> combined,
-    _ aGenerator: Random_Generator<a>,
-    _ bGenerator: Random_Generator<b>,
-    _ cGenerator: Random_Generator<c>,
-    _ dGenerator: Random_Generator<d>
-) -> Random_Generator<combined> {
-    Random_Generator(step: { (seed0: Random_Seed) in
-        let (a, seed1): (a, Random_Seed) = aGenerator.step(seed0)
-        let (b, seed2): (b, Random_Seed) = bGenerator.step(seed1)
-        let (c, seed3): (c, Random_Seed) = cGenerator.step(seed2)
-        let (d, seed4): (d, Random_Seed) = dGenerator.step(seed3)
-        return (combine(a)(b)(c)(d), seed4)
-    })
-}
-@Sendable
-public static func Random_map5<
-    a: Sendable, b: Sendable, c: Sendable, d: Sendable, e: Sendable, combined: Sendable
->(
-    _ combine: @Sendable @escaping (a) -> (b) -> (c) -> (d) -> (e) -> combined,
-    _ aGenerator: Random_Generator<a>,
-    _ bGenerator: Random_Generator<b>,
-    _ cGenerator: Random_Generator<c>,
-    _ dGenerator: Random_Generator<d>,
-    _ eGenerator: Random_Generator<e>
-) -> Random_Generator<combined> {
-    Random_Generator(step: { (seed0: Random_Seed) in
-        let (a, seed1): (a, Random_Seed) = aGenerator.step(seed0)
-        let (b, seed2): (b, Random_Seed) = bGenerator.step(seed1)
-        let (c, seed3): (c, Random_Seed) = cGenerator.step(seed2)
-        let (d, seed4): (d, Random_Seed) = dGenerator.step(seed3)
-        let (e, seed5): (e, Random_Seed) = eGenerator.step(seed4)
-        return (combine(a)(b)(c)(d)(e), seed5)
-    })
-}
-
-@Sendable public static func Random_next(_ generated_0: Random_Seed) -> Random_Seed {
-    // step the RNG to produce the next seed
-    // this is incredibly simple: multiply the state by a constant factor, modulus it
-    // by 2^32, and add a magic addend. The addend can be varied to produce independent
-    // RNGs, so it is stored as part of the seed. It is given to the new seed unchanged.
-    switch generated_0 {
-    case let .Random_Seed(state0, incr):
-        // The magic constant is from Numerical Recipes
-        .Random_Seed(Bitwise_shiftRightZfBy(0.0, (state0 * 1664525.0) + incr), incr)
+pub fn string_slice<'a>(
+    start_inclusive_possibly_negative: f64,
+    end_exclusive_possibly_negative: f64,
+    string: StringString<'a>,
+) -> StringString<'a> {
+    let start_inclusive_or_none_if_too_big: Option<usize> =
+        normalize_string_slice_index_from_end_if_negative(
+            start_inclusive_possibly_negative,
+            string,
+        );
+    match start_inclusive_or_none_if_too_big {
+        Option::None => &"",
+        Option::Some(start_inclusive) => {
+            let end_exclusive_or_none_if_too_big: Option<usize> =
+                normalize_string_slice_index_from_end_if_negative(
+                    end_exclusive_possibly_negative,
+                    string,
+                );
+            match end_exclusive_or_none_if_too_big {
+                Option::None => &string[start_inclusive..],
+                Option::Some(end_exclusive) => {
+                    if end_exclusive <= start_inclusive {
+                        &""
+                    } else {
+                        &string[start_inclusive..end_exclusive]
+                    }
+                }
+            }
+        }
     }
 }
-
-@Sendable public static func Random_pair<a: Sendable, b: Sendable>(
-    _ genA: Random_Generator<a>,
-    _ genB: Random_Generator<b>
-) -> Random_Generator<Tuple<a, b>> {
-    Random_map2({ (a: a) in { (b: b) in .Tuple(a, b) } }, genA, genB)
-}
-
-// obtain a pseudorandom 32-bit integer from a seed
-@Sendable public static func Random_peel(_ seed: Random_Seed) -> Double {
-    // This is the RXS-M-SH version of PCG, see section 6.3.4 of the paper
-    // and line 184 of pcg_variants.h in the 0.94 (non-minimal) C implementation,
-    // the latter of which is the source of the magic constant.
-    switch seed {
-    case let .Random_Seed(state, _):
-        let word: Double =
-            Bitwise_xor(
-                state,
-                Bitwise_shiftRightZfBy(
-                    Bitwise_shiftRightZfBy(28.0, state) + 4.0,
-                    state
-                )
-            )
-            * 277803737.0
-        return Bitwise_shiftRightZfBy(
-            0.0,
-            Bitwise_xor(
-                Bitwise_shiftRightZfBy(22.0, word),
-                word
-            )
-        )
+/// Option::None means too big
+fn normalize_string_slice_index_from_end_if_negative(
+    elm_index: f64,
+    string: StringString,
+) -> Option<usize> {
+    if elm_index >= 0_f64 {
+        match string.char_indices().nth(elm_index as usize) {
+            Option::None => Option::None,
+            Option::Some((end_inclusive, _)) => Option::Some(end_inclusive),
+        }
+    } else {
+        match string
+            .char_indices()
+            .nth_back((elm_index.abs() - 1_f64) as usize)
+        {
+            Option::None => Option::Some(0),
+            Option::Some((end_inclusive, _)) => Option::Some(end_inclusive),
+        }
     }
 }
-
-@Sendable public static func Random_step<a: Sendable>(
-    _ generator: Random_Generator<a>,
-    _ seed: Random_Seed
-) -> Tuple<a, Random_Seed> {
-    let (value, newSeed): (a, Random_Seed) = generator.step(seed)
-    return .Tuple(value, newSeed)
+pub fn string_replace<'a>(
+    allocator: &'a Bump,
+    from: StringString,
+    to: StringString,
+    string: StringString<'a>,
+) -> StringString<'a> {
+    allocator.alloc(string.replace(from, to))
 }
-
-@Sendable public static func Random_uniform<a: Sendable>(_ value: a, _ valueList: List_List<a>)
-    -> Random_Generator<a>
-{
-    Random_weighted(Random_addOne(value), List_map(Random_addOne, valueList))
+pub fn string_append<'a>(
+    allocator: &'a Bump,
+    left: StringString,
+    right: StringString,
+) -> StringString<'a> {
+    allocator.alloc(left.to_owned() + right)
 }
-@Sendable public static func Random_addOne<a: Sendable>(_ value: a) -> Tuple<Double, a> {
-    .Tuple(1.0, value)
-}
-
-@Sendable public static func Random_weighted<a: Sendable>(
-    _ first: Tuple<Double, a>,
-    _ others: List_List<Tuple<Double, a>>
-) -> Random_Generator<a> {
-    @Sendable func normalize<ignored: Sendable>(_ weighted: Tuple<Double, ignored>) -> Double {
-        abs(weighted.first)
+pub fn string_concat<'a>(
+    allocator: &'a Bump,
+    segments: ListList<StringString>,
+) -> StringString<'a> {
+    let mut string_builder = String::new();
+    for segment in segments.iter() {
+        string_builder.push_str(segment);
     }
-    let total: Double = normalize(first) + List_sum(List_map(normalize, others))
-    return Random_map(
-        { (countdown: Double) in
-            Random_getByWeight(first, others, countdown)
-        },
-        Random_float(0.0, total)
+    allocator.alloc(string_builder)
+}
+pub fn string_join<'a>(
+    allocator: &'a Bump,
+    in_between: StringString,
+    segments: ListList<StringString>,
+) -> StringString<'a> {
+    match segments {
+        &ListListGuts::ListEmpty => &"",
+        &ListListGuts::ListCons(head_segment, tail_segments) => {
+            let mut string_builder = head_segment.to_owned();
+            for segment in tail_segments.iter() {
+                string_builder.push_str(in_between);
+                string_builder.push_str(segment);
+            }
+            allocator.alloc(string_builder)
+        }
+    }
+}
+pub fn string_split<'a>(
+    allocator: &'a Bump,
+    separator: StringString,
+    string: StringString<'a>,
+) -> ListList<'a, StringString<'a>> {
+    iterator_to_list(allocator, string.split(separator))
+}
+pub fn string_words<'a>(
+    allocator: &'a Bump,
+    string: StringString<'a>,
+) -> ListList<'a, StringString<'a>> {
+    iterator_to_list(allocator, string.split_whitespace())
+}
+pub fn string_lines<'a>(
+    allocator: &'a Bump,
+    string: StringString<'a>,
+) -> ListList<'a, StringString<'a>> {
+    iterator_to_list(allocator, string.lines())
+}
+pub fn string_contains(needle: StringString, string: StringString) -> bool {
+    string.contains(needle)
+}
+pub fn string_indexes<'a>(
+    allocator: &'a Bump,
+    needle: StringString,
+    string: StringString<'a>,
+) -> ListList<'a, f64> {
+    // this is a fairly expensive operation, O(chars * matches). Anyone know something faster?
+    iterator_to_list(
+        allocator,
+        string
+            .match_indices(needle)
+            .filter_map(|(instance_byte_index, _)| {
+                // translate byte index to char position
+                string
+                    .char_indices()
+                    .map(|(char_index, _)| char_index)
+                    .find(|&char_index| instance_byte_index >= char_index)
+                    // find should always succeed
+                    .map(|char_index_usize| char_index_usize as f64)
+            }),
     )
+}
+pub fn string_indices<'a>(
+    allocator: &'a Bump,
+    needle: StringString,
+    string: StringString<'a>,
+) -> ListList<'a, f64> {
+    string_indexes(allocator, needle, string)
+}
+pub fn string_starts_with(prefix_to_check_for: StringString, string: StringString) -> bool {
+    string.starts_with(prefix_to_check_for)
+}
+pub fn string_ends_with(suffix_to_check_for: StringString, string: StringString) -> bool {
+    string.ends_with(suffix_to_check_for)
+}
+pub fn string_to_float(string: StringString) -> Option<f64> {
+    match string.parse::<f64>() {
+        Result::Err(_) => Option::None,
+        Result::Ok(float) => Option::Some(float),
+    }
+}
+pub fn string_to_int(string: StringString) -> Option<f64> {
+    match string.parse::<i64>() {
+        Result::Err(_) => Option::None,
+        Result::Ok(int) => Option::Some(int as f64),
+    }
+}
+pub fn string_to_upper<'a>(allocator: &'a Bump, string: StringString) -> StringString<'a> {
+    allocator.alloc(string.to_uppercase())
+}
+pub fn string_to_lower<'a>(allocator: &'a Bump, string: StringString) -> StringString<'a> {
+    allocator.alloc(string.to_lowercase())
+}
+pub fn string_pad<'a>(
+    allocator: &'a Bump,
+    minimum_full_char_count: f64,
+    padding: char,
+    string: StringString,
+) -> StringString<'a> {
+    let half_to_pad: f64 = (minimum_full_char_count - string.chars().count() as f64) / 2_f64;
+    let padding_string: String = padding.to_string();
+    let mut padded: String = padding_string.repeat(half_to_pad.ceil() as usize);
+    padded.push_str(string);
+    padded.push_str(&padding_string.repeat(half_to_pad.floor() as usize));
+    allocator.alloc(padded)
+}
+pub fn string_pad_left<'a>(
+    allocator: &'a Bump,
+    minimum_length: f64,
+    padding: char,
+    string: StringString,
+) -> StringString<'a> {
+    let mut padded: String = padding
+        .to_string()
+        .repeat((minimum_length - string.chars().count() as f64) as usize);
+    padded.push_str(string);
+    allocator.alloc(padded)
+}
+pub fn string_pad_right<'a>(
+    allocator: &'a Bump,
+    minimum_length: f64,
+    padding: char,
+    string: StringString,
+) -> StringString<'a> {
+    let mut padded: String = string.to_owned();
+    padded.push_str(
+        &padding
+            .to_string()
+            .repeat((minimum_length - string.chars().count() as f64) as usize),
+    );
+    allocator.alloc(padded)
+}
+pub fn string_trim(string: StringString) -> StringString {
+    string.trim()
+}
+pub fn string_trim_left(string: StringString) -> StringString {
+    string.trim_start()
+}
+pub fn string_trim_right(string: StringString) -> StringString {
+    string.trim_end()
+}
+
+pub fn debug_to_string<'a, A: std::fmt::Debug>(allocator: &'a Bump, data: A) -> StringString<'a> {
+    allocator.alloc(format!("{:?}", data)).as_str()
+}
+pub fn debug_log<'a, A: std::fmt::Debug>(data: A) -> A {
+    println!("{:?}", data);
+    data
+}
+pub fn debug_todo<Any>(message: StringString) -> Any {
+    todo!("{}", message)
+}
+pub fn maybe_with_default<A>(on_nothing: A, maybe: Option<A>) -> A {
+    maybe.unwrap_or(on_nothing)
+}
+pub fn maybe_and_then<A, B, ValueToMaybe: Fn(A) -> Option<B>>(
+    value_to_maybe: ValueToMaybe,
+    maybe: Option<A>,
+) -> Option<B> {
+    maybe.and_then(value_to_maybe)
+}
+
+pub fn maybe_map<A, B, ValueChange: Fn(A) -> B>(
+    value_change: ValueChange,
+    maybe: Option<A>,
+) -> Option<B> {
+    maybe.map(value_change)
+}
+pub fn maybe_map2<A, B, Combined, Combine: Fn(A) -> Combine1, Combine1: Fn(B) -> Combined>(
+    combine: Combine,
+    a_maybe: Option<A>,
+    b_maybe: Option<B>,
+) -> Option<Combined> {
+    a_maybe.zip(b_maybe).map(|(a, b)| combine(a)(b))
+}
+pub fn maybe_map3<
+    A,
+    B,
+    C,
+    Combined,
+    Combine: Fn(A) -> Combine1,
+    Combine1: Fn(B) -> Combine2,
+    Combine2: Fn(C) -> Combined,
+>(
+    combine: Combine,
+    a_maybe: Option<A>,
+    b_maybe: Option<B>,
+    c_maybe: Option<C>,
+) -> Option<Combined> {
+    a_maybe
+        .zip(b_maybe)
+        .zip(c_maybe)
+        .map(|((a, b), c)| combine(a)(b)(c))
+}
+pub fn maybe_map4<
+    A,
+    B,
+    C,
+    D,
+    Combined,
+    Combine: Fn(A) -> Combine1,
+    Combine1: Fn(B) -> Combine2,
+    Combine2: Fn(C) -> Combine3,
+    Combine3: Fn(D) -> Combined,
+>(
+    combine: Combine,
+    a_maybe: Option<A>,
+    b_maybe: Option<B>,
+    c_maybe: Option<C>,
+    d_maybe: Option<D>,
+) -> Option<Combined> {
+    a_maybe
+        .zip(b_maybe)
+        .zip(c_maybe)
+        .zip(d_maybe)
+        .map(|(((a, b), c), d)| combine(a)(b)(c)(d))
+}
+pub fn maybe_map5<
+    A,
+    B,
+    C,
+    D,
+    E,
+    Combined,
+    Combine: Fn(A) -> Combine1,
+    Combine1: Fn(B) -> Combine2,
+    Combine2: Fn(C) -> Combine3,
+    Combine3: Fn(D) -> Combine4,
+    Combine4: Fn(E) -> Combined,
+>(
+    combine: Combine,
+    a_maybe: Option<A>,
+    b_maybe: Option<B>,
+    c_maybe: Option<C>,
+    d_maybe: Option<D>,
+    e_maybe: Option<E>,
+) -> Option<Combined> {
+    a_maybe
+        .zip(b_maybe)
+        .zip(c_maybe)
+        .zip(d_maybe)
+        .zip(e_maybe)
+        .map(|((((a, b), c), d), e)| combine(a)(b)(c)(d)(e))
+}
+
+pub fn result_with_default<A, X>(value_on_err: A, result: ResultResult<X, A>) -> A {
+    result.unwrap_or(value_on_err)
+}
+pub fn result_from_maybe<A, X>(error_on_nothing: X, maybe: Option<A>) -> ResultResult<X, A> {
+    maybe.ok_or(error_on_nothing)
+}
+pub fn result_map_error<A, X, Y, ErrorChange: Fn(X) -> Y>(
+    error_change: ErrorChange,
+    result: ResultResult<X, A>,
+) -> ResultResult<Y, A> {
+    result.map_err(error_change)
+}
+pub fn result_and_then<A, B, X, ValueToResult: Fn(A) -> ResultResult<X, B>>(
+    value_to_result: ValueToResult,
+    result: ResultResult<X, A>,
+) -> ResultResult<X, B> {
+    result.and_then(value_to_result)
+}
+pub fn result_map<A, B, X, ValueChange: Fn(A) -> B>(
+    value_change: ValueChange,
+    result: ResultResult<X, A>,
+) -> ResultResult<X, B> {
+    result.map(value_change)
+}
+pub fn result_map2<A, B, Combined, X, Combine: Fn(A) -> Combine1, Combine1: Fn(B) -> Combined>(
+    combine: Combine,
+    a_result: ResultResult<X, A>,
+    b_result: ResultResult<X, B>,
+) -> ResultResult<X, Combined> {
+    Result::Ok(combine(a_result?)(b_result?))
+}
+pub fn result_map3<
+    A,
+    B,
+    C,
+    Combined,
+    X,
+    Combine: Fn(A) -> Combine1,
+    Combine1: Fn(B) -> Combine2,
+    Combine2: Fn(C) -> Combined,
+>(
+    combine: Combine,
+    a_result: ResultResult<X, A>,
+    b_result: ResultResult<X, B>,
+    c_result: ResultResult<X, C>,
+) -> ResultResult<X, Combined> {
+    Result::Ok(combine(a_result?)(b_result?)(c_result?))
+}
+pub fn result_map4<
+    A,
+    B,
+    C,
+    D,
+    Combined,
+    X,
+    Combine: Fn(A) -> Combine1,
+    Combine1: Fn(B) -> Combine2,
+    Combine2: Fn(C) -> Combine3,
+    Combine3: Fn(D) -> Combined,
+>(
+    combine: Combine,
+    a_result: ResultResult<X, A>,
+    b_result: ResultResult<X, B>,
+    c_result: ResultResult<X, C>,
+    d_result: ResultResult<X, D>,
+) -> ResultResult<X, Combined> {
+    Result::Ok(combine(a_result?)(b_result?)(c_result?)(d_result?))
+}
+pub fn result_map5<
+    A,
+    B,
+    C,
+    D,
+    E,
+    Combined,
+    X,
+    Combine: Fn(A) -> Combine1,
+    Combine1: Fn(B) -> Combine2,
+    Combine2: Fn(C) -> Combine3,
+    Combine3: Fn(D) -> Combine4,
+    Combine4: Fn(E) -> Combined,
+>(
+    combine: Combine,
+    a_result: ResultResult<X, A>,
+    b_result: ResultResult<X, B>,
+    c_result: ResultResult<X, C>,
+    d_result: ResultResult<X, D>,
+    e_result: ResultResult<X, E>,
+) -> ResultResult<X, Combined> {
+    Result::Ok(combine(a_result?)(b_result?)(c_result?)(d_result?)(
+        e_result?,
+    ))
 }
 """

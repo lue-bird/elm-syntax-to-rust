@@ -36,7 +36,7 @@ pub fn sample_plus2<'a>(allocator: &'a Bump, n: f64) -> f64 {
 
 -   not supported are
     -   ports that use non-json values like `port sendMessage : String -> Cmd msg`, glsl
-    -   `elm/file`, `elm/http`, `elm/browser`, `elm-explorations/markdown`, `elm-explorations/webgl`, `elm-explorations/benchmark` (currently also `Bitwise`, `elm/json`, `elm/random`, `elm/time`, `elm/bytes`, `elm/virtual-dom`, `elm-explorations/linear-algebra` TODO)
+    -   `elm/file`, `elm/http`, `elm/browser`, `elm-explorations/markdown`, `elm-explorations/webgl`, `elm-explorations/benchmark` (currently also `Bitwise`, `elm/json`, `elm/random`, `elm/time`, `elm/bytes`, `elm/regex`, `elm/virtual-dom`, `elm-explorations/linear-algebra` TODO)
     -   `Task`, `Process`, `Platform.Task`, `Platform.ProcessId`, `Platform.Router`, `Platform.sendToApp`, `Platform.sendToSelf`, `Random.generate`, `Time.now`, `Time.every`, `Time.here`, `Time.getZoneName`, `Bytes.getHostEndianness`, `Math.Matrix4` (due to rust's standard library not exposing many [simd types and operations available in apple's SDK](https://developer.apple.com/documentation/simd/simd_double4x4))
     -   extensible record types outside of module-level value/function declarations. For example, these declarations might not work:
         ```elm
@@ -50,15 +50,16 @@ pub fn sample_plus2<'a>(allocator: &'a Bump, n: f64) -> f64 {
         userId : { u | name : String, server : Domain } -> String
         ```
         In the non-allowed cases listed above, we assume that you intended to use a regular record type with only the extension fields which can lead to rust compile errors if you actually pass in additional fields.
+    - elm's `toLocale[Case]` functions will just behave like `toCase`
 -   dependencies cannot internally use the same module names as the transpiled project
 -   the resulting code might not be readable or even conventionally formatted and comments are not preserved
--  web search is abysmal; literally the worst part of the language. Even querying excluding `-app -rustui -ios -apple -xcode -taylor -ai -popular -ArgumentParser` etc, prepare for a lot of shallowness, irrelevance, pain and disappointment. Rust's source code itself is also riddled with indirections etc so... best of luck :)
 
 Please [report any issues](https://github.com/lue-bird/elm-syntax-to-rust/issues/new) you notice <3
 
 ### why rust?
 -   it runs fast natively and as wasm
 -   it feels like a superset of elm which makes transpiling and "ffi" easier
+-   it's overall a very polished and active language with a good standard library and good tooling
 
 ### how do I use the transpiled output?
 An example can be found in [`example-hello-world/`](https://github.com/lue-bird/elm-syntax-to-rust/tree/main/example-hello-world).
