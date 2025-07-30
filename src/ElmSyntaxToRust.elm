@@ -533,7 +533,7 @@ choiceTypeDeclaration typeAliasesInModule syntaxChoiceType =
     { name = syntaxChoiceType.name
     , parameters =
         syntaxChoiceType.parameters
-            |> List.map normalizeToRustPascalCase
+            |> List.map toRustPascalCaseName
     , variants =
         syntaxChoiceType.variants
             |> FastDict.map
@@ -573,12 +573,7 @@ printRustEnumDeclaration :
     -> Print
 printRustEnumDeclaration rustEnumType =
     Print.exactly
-        ((if rustEnumType.indirect then
-            "pub enum "
-
-          else
-            "pub enum "
-         )
+        ("pub enum "
             ++ rustEnumType.name
             ++ (case rustEnumType.parameters of
                     [] ->
@@ -605,6 +600,61 @@ printRustEnumDeclaration rustEnumType =
                                         { name = name
                                         , values = values
                                         }
+                                )
+                                Print.linebreakIndented
+                        )
+                )
+            )
+        |> Print.followedBy Print.linebreakIndented
+        |> Print.followedBy printExactlyCurlyClosing
+
+
+printRustStructDeclaration :
+    { name : String
+    , parameters : List String
+    , fields : FastDict.Dict String RustType
+    }
+    -> Print
+printRustStructDeclaration rustEnumType =
+    Print.exactly
+        ("pub struct "
+            ++ rustEnumType.name
+            ++ (case rustEnumType.parameters of
+                    [] ->
+                        ""
+
+                    parameter0 :: parameter1Up ->
+                        "<"
+                            ++ ((parameter0 :: parameter1Up)
+                                    |> String.join ", "
+                               )
+                            ++ ">"
+               )
+            ++ " {"
+        )
+        |> Print.followedBy
+            (Print.withIndentAtNextMultipleOf4
+                (Print.linebreakIndented
+                    |> Print.followedBy
+                        (rustEnumType.fields
+                            |> FastDict.toList
+                            |> Print.listMapAndIntersperseAndFlatten
+                                (\( name, value ) ->
+                                    let
+                                        valuePrint : Print
+                                        valuePrint =
+                                            value
+                                                |> printRustTypeNotParenthesized
+                                                    Nothing
+                                    in
+                                    Print.exactly (name ++ ":")
+                                        |> Print.followedBy
+                                            (Print.withIndentAtNextMultipleOf4
+                                                (Print.spaceOrLinebreakIndented
+                                                    (valuePrint |> Print.lineSpread)
+                                                    |> Print.followedBy valuePrint
+                                                )
+                                            )
                                 )
                                 Print.linebreakIndented
                         )
@@ -689,7 +739,7 @@ typeAliasDeclaration typeAliasesInModule inferredTypeAlias =
     { name = inferredTypeAlias.name
     , parameters =
         inferredTypeAlias.parameters
-            |> List.map normalizeToRustPascalCase
+            |> List.map toRustPascalCaseName
     , type_ =
         inferredTypeAlias.type_
             |> type_ { typeAliasesInModule = typeAliasesInModule }
@@ -704,7 +754,7 @@ printRustTypealiasDeclaration :
     -> Print
 printRustTypealiasDeclaration rustTypeAliasDeclaration =
     Print.exactly
-        ("public typealias "
+        ("pub type "
             ++ rustTypeAliasDeclaration.name
             ++ rustTypeParametersToString rustTypeAliasDeclaration.parameters
             ++ " ="
@@ -718,6 +768,7 @@ printRustTypealiasDeclaration rustTypeAliasDeclaration =
                         )
                 )
             )
+        |> Print.followedBy (Print.exactly ";")
 
 
 type_ :
@@ -748,7 +799,7 @@ type_ context inferredType =
             else
                 RustTypeVariable
                     (variable.name
-                        |> normalizeToRustPascalCase
+                        |> toRustPascalCaseName
                     )
 
         ElmSyntaxTypeInfer.TypeNotVariable inferredTypeNotVariable ->
@@ -943,6 +994,8 @@ type TypeIncomingOrOutgoing
     | TypeOutgoing
 
 
+{-| TODO remove position
+-}
 printRustTypeNotParenthesized : Maybe TypeIncomingOrOutgoing -> RustType -> Print
 printRustTypeNotParenthesized position rustType =
     -- IGNORE TCO
@@ -1023,6 +1076,8 @@ printRustTypeRecord fields =
             |> Print.followedBy printExactlyParenClosing
 
 
+{-| TODO remove escaping
+-}
 printRustTypeFunctionInput : { escaping : Bool } -> List RustType -> Print
 printRustTypeFunctionInput config input =
     let
@@ -1850,11 +1905,44 @@ charIsLatinAlphaNumOrUnderscoreFast c =
            (code == 95)
 
 
-normalizeToRustPascalCase : String -> String
-normalizeToRustPascalCase name =
+toSnakeCaseRustName : String -> String
+toSnakeCaseRustName name =
+    name
+        |> toSnakeCase
+        |> variableNameDisambiguateFromRustKeywords
+
+
+toSnakeCase : String -> String
+toSnakeCase string =
+    string
+        |> stringFirstCharToLower
+        |> String.toList
+        |> List.map
+            (\char ->
+                if char |> Char.isUpper then
+                    "_" ++ (char |> Char.toLower |> String.fromChar)
+
+                else
+                    char |> String.fromChar
+            )
+        |> String.concat
+
+
+toRustPascalCaseName : String -> String
+toRustPascalCaseName name =
     name
         |> String.split "_"
-        |> List.map stringFirstCharToUpper
+        |> List.map
+            (\segment ->
+                case segment of
+                    "" ->
+                        -- there's probably a reason the name contains
+                        -- multiple consecutive underscores
+                        "1"
+
+                    segmentNotEmpty ->
+                        segmentNotEmpty |> stringFirstCharToUpper
+            )
         |> String.concat
         |> variableNameDisambiguateFromRustKeywords
 
@@ -2260,7 +2348,7 @@ pattern patternInferred =
                                             ++ "Guts"
                                         ]
                                     , name =
-                                        normalizeToRustPascalCase variant.name
+                                        toRustPascalCaseName variant.name
                                     , isReference = True
                                     }
 
@@ -4890,29 +4978,6 @@ referenceToRustName reference =
         |> toSnakeCaseRustName
 
 
-toSnakeCaseRustName : String -> String
-toSnakeCaseRustName name =
-    name
-        |> toSnakeCase
-        |> variableNameDisambiguateFromRustKeywords
-
-
-toSnakeCase : String -> String
-toSnakeCase string =
-    string
-        |> stringFirstCharToLower
-        |> String.toList
-        |> List.map
-            (\char ->
-                if char |> Char.isUpper then
-                    "_" ++ (char |> Char.toLower |> String.fromChar)
-
-                else
-                    char |> String.fromChar
-            )
-        |> String.concat
-
-
 printRustPatternNotParenthesized : RustPattern -> Print
 printRustPatternNotParenthesized rustPattern =
     -- IGNORE TCO
@@ -5169,6 +5234,14 @@ modules :
                     { parameters : List String
                     , variants :
                         FastDict.Dict String (List RustType)
+
+                    -- TODO , lifetimeParameter : Maybe String
+                    }
+            , structs :
+                FastDict.Dict
+                    String
+                    { parameters : List String
+                    , fields : FastDict.Dict String RustType
                     }
             }
         }
@@ -5803,6 +5876,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                 , fns = FastDict.empty
                 , typeAliases = FastDict.empty
                 , enumTypes = FastDict.empty
+                , structs = FastDict.empty
                 }
             }
 
@@ -6300,104 +6374,6 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                     enumDeclarationInfo.cases
                                 }
                             )
-                        |> FastDict.union
-                            (allElmRecords
-                                |> FastSet.foldl
-                                    (\elmRecordFields soFar ->
-                                        case elmRecordFields of
-                                            -- record given to Platform.worker
-                                            [ "init", "subscriptions", "update" ] ->
-                                                soFar
-
-                                            -- Regex.Options
-                                            [ "caseInsensitive", "multiline" ] ->
-                                                soFar
-
-                                            -- Regex.Match
-                                            [ "index", "match", "number", "submatches" ] ->
-                                                soFar
-
-                                            -- record used by Time.custom
-                                            [ "offset", "start" ] ->
-                                                soFar
-
-                                            -- record used by Math.Vector2 functions
-                                            [ "x", "y" ] ->
-                                                soFar
-
-                                            -- record used by Math.Vector3 functions
-                                            [ "x", "y", "z" ] ->
-                                                soFar
-
-                                            -- record used by Math.Vector4 functions
-                                            [ "w", "x", "y", "z" ] ->
-                                                soFar
-
-                                            elmRecordFieldsNotAlreadyInDefaultDeclarations ->
-                                                let
-                                                    rustRecordFields : List String
-                                                    rustRecordFields =
-                                                        elmRecordFieldsNotAlreadyInDefaultDeclarations
-                                                            |> List.map toSnakeCaseRustName
-
-                                                    rustTypeName : String
-                                                    rustTypeName =
-                                                        generatedRecordTypeName rustRecordFields
-                                                in
-                                                soFar
-                                     -- TODO instead introduce structs field for the record declarations
-                                     {- parameters = rustRecordFields
-                                        , cases =
-                                            FastDict.singleton "Record"
-                                                (rustRecordFields
-                                                    |> List.map
-                                                        (\rustRecordField ->
-                                                            { label = Just rustRecordField
-                                                            , value = RustTypeVariable rustRecordField
-                                                            }
-                                                        )
-                                                )
-                                        , computedProperties =
-                                            rustRecordFields
-                                                |> List.foldl
-                                                    (\rustRecordField computedPropertiesSoFar ->
-                                                        computedPropertiesSoFar
-                                                            |> FastDict.insert rustRecordField
-                                                                { type_ = RustTypeVariable rustRecordField
-                                                                , value =
-                                                                    RustExpressionMatch
-                                                                        { matched = RustExpressionSelf
-                                                                        , case0 =
-                                                                            { pattern =
-                                                                                RustPatternRecord
-                                                                                    (rustRecordFields
-                                                                                        |> List.map
-                                                                                            (\valueName ->
-                                                                                                ( valueName
-                                                                                                , if valueName == rustRecordField then
-                                                                                                    RustPatternVariable "result"
-                                     
-                                                                                                  else
-                                                                                                    RustPatternIgnore
-                                                                                                )
-                                                                                            )
-                                                                                        |> FastDict.fromList
-                                                                                    )
-                                                                            , result =
-                                                                                RustExpressionReference
-                                                                                    { qualification = []
-                                                                                    , name = "result"
-                                                                                    }
-                                                                            }
-                                                                        , case1Up = []
-                                                                        }
-                                                                }
-                                                    )
-                                                    FastDict.empty
-                                     -}
-                                    )
-                                    FastDict.empty
-                            )
                 , typeAliases =
                     transpiledRustDeclarations.declarations.typeAliases
                         |> FastDict.map
@@ -6406,6 +6382,62 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                 , type_ = typeAliasInfo.type_
                                 }
                             )
+                , structs =
+                    allElmRecords
+                        |> FastSet.foldl
+                            (\elmRecordFields soFar ->
+                                case elmRecordFields of
+                                    -- record given to Platform.worker
+                                    [ "init", "subscriptions", "update" ] ->
+                                        soFar
+
+                                    -- Regex.Options
+                                    [ "caseInsensitive", "multiline" ] ->
+                                        soFar
+
+                                    -- Regex.Match
+                                    [ "index", "match", "number", "submatches" ] ->
+                                        soFar
+
+                                    -- record used by Time.custom
+                                    [ "offset", "start" ] ->
+                                        soFar
+
+                                    -- record used by Math.Vector2 functions
+                                    [ "x", "y" ] ->
+                                        soFar
+
+                                    -- record used by Math.Vector3 functions
+                                    [ "x", "y", "z" ] ->
+                                        soFar
+
+                                    -- record used by Math.Vector4 functions
+                                    [ "w", "x", "y", "z" ] ->
+                                        soFar
+
+                                    elmRecordFieldsNotAlreadyInDefaultDeclarations ->
+                                        let
+                                            rustRecordFields : List String
+                                            rustRecordFields =
+                                                elmRecordFieldsNotAlreadyInDefaultDeclarations
+                                                    |> List.map toRustPascalCaseName
+                                        in
+                                        soFar
+                                            |> FastDict.insert
+                                                (generatedRecordTypeName rustRecordFields)
+                                                { parameters = rustRecordFields
+                                                , fields =
+                                                    rustRecordFields
+                                                        |> List.map
+                                                            (\rustRecordField ->
+                                                                ( rustRecordField
+                                                                , RustTypeVariable rustRecordField
+                                                                )
+                                                            )
+                                                        |> FastDict.fromList
+                                                }
+                            )
+                            FastDict.empty
                 }
             , errors =
                 (modulesInferred.errors |> List.reverse)
@@ -6884,11 +6916,11 @@ generatedParameterNameForIndex parameterIndex =
 variableNameDisambiguateFromRustKeywords : String -> String
 variableNameDisambiguateFromRustKeywords variableName =
     if
-        -- to avoid overlaps, push other variables further with -_
+        -- to avoid overlaps, push other variables further with -1
         (variableName |> String.endsWith "_")
             || (rustKeywords |> FastSet.member variableName)
     then
-        variableName ++ "_"
+        variableName ++ "1"
 
     else
         variableName
@@ -6896,6 +6928,11 @@ variableNameDisambiguateFromRustKeywords variableName =
 
 {-| both weak, reserved and strong.
 see https://doc.rust-lang.org/reference/keywords.html
+
+Make sure to apply this to _both_ lower and uppercase names,
+even those that have underscores
+as e.g. `Self`, `self`, `macro_rules` are reserved
+
 -}
 rustKeywords : FastSet.Set String
 rustKeywords =
@@ -6925,7 +6962,6 @@ rustKeywords =
         , "return"
         , "self"
         , "Self"
-        , "static"
         , "struct"
         , "super"
         , "trait"
@@ -7405,7 +7441,7 @@ expression context expressionTypedNode =
                                             ++ "_"
                                             ++ reference.choiceTypeName
                                             ++ "Guts"
-                                            |> normalizeToRustPascalCase
+                                            |> toRustPascalCaseName
                                         ]
                                     , isReference = True
                                     }
@@ -14612,6 +14648,12 @@ rustDeclarationsToModuleString :
             , variants :
                 FastDict.Dict String (List RustType)
             }
+    , structs :
+        FastDict.Dict
+            String
+            { parameters : List String
+            , fields : FastDict.Dict String RustType
+            }
     }
     -> String
 rustDeclarationsToModuleString rustDeclarations =
@@ -14661,6 +14703,23 @@ use bumpalo::Bump;
 
 """
         ++ defaultDeclarations
+        ++ """
+
+"""
+        ++ (rustDeclarations.structs
+                |> fastDictMapAndToList
+                    (\name info ->
+                        printRustStructDeclaration
+                            { name = name
+                            , parameters = info.parameters
+                            , fields = info.fields
+                            }
+                    )
+                |> Print.listMapAndIntersperseAndFlatten
+                    (\rustValueOrFunctionPrint -> rustValueOrFunctionPrint)
+                    printLinebreakLinebreakIndented
+                |> Print.toString
+           )
         ++ """
 
 """
@@ -14731,24 +14790,24 @@ use bumpalo::Bump;
         ++ ((rustDeclarations.lets
                 |> fastDictMapAndToList
                     (\name valueOrFunctionInfo ->
-                        { name = name
-                        , result = valueOrFunctionInfo.result
-                        , resultType = valueOrFunctionInfo.resultType
-                        }
+                        printRustLetDeclaration
+                            { name = name
+                            , result = valueOrFunctionInfo.result
+                            , resultType = valueOrFunctionInfo.resultType
+                            }
                     )
-                |> List.map printRustLetDeclaration
             )
                 ++ (rustDeclarations.fns
                         |> fastDictMapAndToList
                             (\name valueOrFunctionInfo ->
-                                { name = name
-                                , parameters = valueOrFunctionInfo.parameters
-                                , result = valueOrFunctionInfo.result
-                                , resultType = valueOrFunctionInfo.resultType
-                                , lifetimeParameters = valueOrFunctionInfo.lifetimeParameters
-                                }
+                                printRustFuncDeclaration
+                                    { name = name
+                                    , parameters = valueOrFunctionInfo.parameters
+                                    , result = valueOrFunctionInfo.result
+                                    , resultType = valueOrFunctionInfo.resultType
+                                    , lifetimeParameters = valueOrFunctionInfo.lifetimeParameters
+                                    }
                             )
-                        |> List.map printRustFuncDeclaration
                    )
                 |> Print.listMapAndIntersperseAndFlatten
                     (\rustValueOrFunctionPrint ->

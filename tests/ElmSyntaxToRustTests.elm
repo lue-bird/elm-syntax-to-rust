@@ -125,6 +125,12 @@ elmModuleSourceTranspileToRust source =
                                         String
                                         (List ElmSyntaxToRust.RustType)
                                 }
+                        , structs :
+                            FastDict.Dict
+                                String
+                                { parameters : List String
+                                , fields : FastDict.Dict String ElmSyntaxToRust.RustType
+                                }
                         }
                     }
                 transpiledResult =
