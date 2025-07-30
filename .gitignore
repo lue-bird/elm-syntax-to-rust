@@ -5,6 +5,8 @@ elm-stuff
 node_modules
 .build
 dist
+elm.rs
+elmMain.js
 
 zombie
 

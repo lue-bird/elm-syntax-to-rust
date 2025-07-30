@@ -70,7 +70,7 @@ type RustPattern
     = RustPatternIgnore
     | RustPatternBool Bool
     | RustPatternInteger Int
-    | RustPatternUnicodeScalar Char
+    | RustPatternChar Char
     | RustPatternStringLiteral String
     | RustPatternVariable String
     | RustPatternAlias { variable : String, pattern : RustPattern }
@@ -95,7 +95,7 @@ type RustExpression
     = RustExpressionUnit
     | RustExpressionF64 Float
     | -- NUMBER currently represented as Double | RustExpressionInt64 Int
-      RustExpressionUnicodeScalar Char
+      RustExpressionChar Char
     | RustExpressionStringLiteral String
     | RustExpressionSelf
     | RustExpressionReference
@@ -533,7 +533,7 @@ choiceTypeDeclaration typeAliasesInModule syntaxChoiceType =
     { name = syntaxChoiceType.name
     , parameters =
         syntaxChoiceType.parameters
-            |> List.map variableNameDisambiguateFromRustKeywords
+            |> List.map normalizeToRustPascalCase
     , variants =
         syntaxChoiceType.variants
             |> FastDict.map
@@ -541,7 +541,7 @@ choiceTypeDeclaration typeAliasesInModule syntaxChoiceType =
                     variantValues
                         |> List.map
                             (\value ->
-                                value |> type_ typeAliasesInModule
+                                value |> type_ { typeAliasesInModule = typeAliasesInModule }
                             )
                 )
     }
@@ -689,10 +689,10 @@ typeAliasDeclaration typeAliasesInModule inferredTypeAlias =
     { name = inferredTypeAlias.name
     , parameters =
         inferredTypeAlias.parameters
-            |> List.map variableNameDisambiguateFromRustKeywords
+            |> List.map normalizeToRustPascalCase
     , type_ =
         inferredTypeAlias.type_
-            |> type_ typeAliasesInModule
+            |> type_ { typeAliasesInModule = typeAliasesInModule }
     }
 
 
@@ -721,20 +721,25 @@ printRustTypealiasDeclaration rustTypeAliasDeclaration =
 
 
 type_ :
-    (String
-     ->
-        Maybe
-            (FastDict.Dict
-                String
-                { parameters : List String
-                , recordFieldOrder : Maybe (List String)
-                , type_ : ElmSyntaxTypeInfer.Type
-                }
-            )
-    )
+    { typeAliasesInModule :
+        String
+        ->
+            Maybe
+                (FastDict.Dict
+                    String
+                    { parameters : List String
+                    , recordFieldOrder : Maybe (List String)
+                    , type_ : ElmSyntaxTypeInfer.Type
+                    }
+                )
+
+    -- TODO add path : String
+    }
     -> ElmSyntaxTypeInfer.Type
-    -> RustType
-type_ typeAliasesInModule inferredType =
+    ->
+        -- TODO add fnConstraints : List { variable : String, input : RustType, output : RustType }
+        RustType
+type_ context inferredType =
     case inferredType of
         ElmSyntaxTypeInfer.TypeVariable variable ->
             if variable.name |> String.startsWith "number" then
@@ -747,7 +752,7 @@ type_ typeAliasesInModule inferredType =
                     )
 
         ElmSyntaxTypeInfer.TypeNotVariable inferredTypeNotVariable ->
-            typeNotVariable typeAliasesInModule
+            typeNotVariable context
                 inferredTypeNotVariable
 
 
@@ -768,20 +773,25 @@ generatedLifetimeVariableName =
 
 
 typeNotVariable :
-    (String
-     ->
-        Maybe
-            (FastDict.Dict
-                String
-                { parameters : List String
-                , recordFieldOrder : Maybe (List String)
-                , type_ : ElmSyntaxTypeInfer.Type
-                }
-            )
-    )
+    { typeAliasesInModule :
+        String
+        ->
+            Maybe
+                (FastDict.Dict
+                    String
+                    { parameters : List String
+                    , recordFieldOrder : Maybe (List String)
+                    , type_ : ElmSyntaxTypeInfer.Type
+                    }
+                )
+
+    -- TODO add path
+    }
     -> ElmSyntaxTypeInfer.TypeNotVariable
-    -> RustType
-typeNotVariable typeAliasesInModule inferredTypeNotVariable =
+    ->
+        -- TODO add fnConstraints : List { variable : String, input : RustType, output : RustType }
+        RustType
+typeNotVariable context inferredTypeNotVariable =
     -- IGNORE TCO
     case inferredTypeNotVariable of
         ElmSyntaxTypeInfer.TypeUnit ->
@@ -794,7 +804,7 @@ typeNotVariable typeAliasesInModule inferredTypeNotVariable =
                     typeConstruct.arguments
                         |> List.map
                             (\argument ->
-                                argument |> type_ typeAliasesInModule
+                                argument |> type_ { typeAliasesInModule = context.typeAliasesInModule }
                             )
             in
             case
@@ -831,7 +841,7 @@ typeNotVariable typeAliasesInModule inferredTypeNotVariable =
                                 |> referenceToRustName
                         , isFunction =
                             case
-                                inferredTypeConstructToFunction typeAliasesInModule
+                                inferredTypeConstructToFunction context.typeAliasesInModule
                                     typeConstruct
                             of
                                 Nothing ->
@@ -843,16 +853,16 @@ typeNotVariable typeAliasesInModule inferredTypeNotVariable =
 
         ElmSyntaxTypeInfer.TypeTuple typeTuple ->
             RustTypeTuple
-                { part0 = typeTuple.part0 |> type_ typeAliasesInModule
-                , part1 = typeTuple.part1 |> type_ typeAliasesInModule
+                { part0 = typeTuple.part0 |> type_ { typeAliasesInModule = context.typeAliasesInModule }
+                , part1 = typeTuple.part1 |> type_ { typeAliasesInModule = context.typeAliasesInModule }
                 , part2Up = []
                 }
 
         ElmSyntaxTypeInfer.TypeTriple typeTriple ->
             RustTypeTuple
-                { part0 = typeTriple.part0 |> type_ typeAliasesInModule
-                , part1 = typeTriple.part1 |> type_ typeAliasesInModule
-                , part2Up = [ typeTriple.part2 |> type_ typeAliasesInModule ]
+                { part0 = typeTriple.part0 |> type_ { typeAliasesInModule = context.typeAliasesInModule }
+                , part1 = typeTriple.part1 |> type_ { typeAliasesInModule = context.typeAliasesInModule }
+                , part2Up = [ typeTriple.part2 |> type_ { typeAliasesInModule = context.typeAliasesInModule } ]
                 }
 
         ElmSyntaxTypeInfer.TypeRecord recordFields ->
@@ -864,8 +874,8 @@ typeNotVariable typeAliasesInModule inferredTypeNotVariable =
                             (\name valueType soFar ->
                                 soFar
                                     |> FastDict.insert
-                                        (name |> variableNameDisambiguateFromRustKeywords)
-                                        (valueType |> type_ typeAliasesInModule)
+                                        (name |> toSnakeCaseRustName)
+                                        (valueType |> type_ { typeAliasesInModule = context.typeAliasesInModule })
                             )
                             FastDict.empty
             in
@@ -882,8 +892,8 @@ typeNotVariable typeAliasesInModule inferredTypeNotVariable =
 
         ElmSyntaxTypeInfer.TypeFunction typeFunction ->
             RustTypeFunction
-                { input = [ typeFunction.input |> type_ typeAliasesInModule ]
-                , output = typeFunction.output |> type_ typeAliasesInModule
+                { input = [ typeFunction.input |> type_ { typeAliasesInModule = context.typeAliasesInModule } ]
+                , output = typeFunction.output |> type_ { typeAliasesInModule = context.typeAliasesInModule }
                 }
 
         ElmSyntaxTypeInfer.TypeRecordExtension typeRecordExtension ->
@@ -899,8 +909,8 @@ typeNotVariable typeAliasesInModule inferredTypeNotVariable =
                             (\name valueType soFar ->
                                 soFar
                                     |> FastDict.insert
-                                        (name |> variableNameDisambiguateFromRustKeywords)
-                                        (valueType |> type_ typeAliasesInModule)
+                                        (name |> toSnakeCaseRustName)
+                                        (valueType |> type_ { typeAliasesInModule = context.typeAliasesInModule })
                             )
                             FastDict.empty
             in
@@ -1111,7 +1121,7 @@ printRustTypeFunction positionOrNothing typeFunction =
     (input0Print :: input1UpPrints)
         |> Print.listMapAndIntersperseAndFlatten
             (\typePrint ->
-                Print.exactly "Fn"
+                Print.exactly "impl Fn"
                     |> Print.followedBy
                         (Print.withIndentIncreasedBy 3 typePrint)
                     |> Print.followedBy
@@ -1526,22 +1536,35 @@ f64Literal double =
         asString ++ "_f64"
 
 
-{-| TODO remove
--}
-rustReferenceToString :
-    { moduleOrigin : Maybe String
-    , name : String
-    }
-    -> String
-rustReferenceToString reference =
-    case reference.moduleOrigin of
-        Nothing ->
-            reference.name
+printRustCharLiteral : Char -> Print
+printRustCharLiteral char =
+    Print.exactly ("'" ++ (char |> charToEscaped) ++ "'")
 
-        Just moduleName ->
-            moduleName
-                ++ "."
-                ++ reference.name
+
+charToEscaped : Char -> String
+charToEscaped character =
+    case character of
+        '\'' ->
+            "\\'"
+
+        '\\' ->
+            "\\\\"
+
+        '\t' ->
+            "\\t"
+
+        '\n' ->
+            "\\n"
+
+        '\u{000D}' ->
+            "\\r"
+
+        otherCharacter ->
+            if characterIsNotPrint otherCharacter then
+                "\\u" ++ characterHex otherCharacter
+
+            else
+                String.fromChar otherCharacter
 
 
 printRustStringLiteral : String -> Print
@@ -1902,19 +1925,22 @@ inferredPatternIntroducedVariables patternTypedNode =
             []
 
         ElmSyntaxTypeInfer.PatternVariable variable ->
-            [ { name = variable, type_ = patternTypedNode.type_ } ]
+            [ { name = variable |> toSnakeCaseRustName
+              , type_ = patternTypedNode.type_
+              }
+            ]
 
         ElmSyntaxTypeInfer.PatternRecord fieldVariables ->
             fieldVariables
                 |> List.map
                     (\fieldVariable ->
-                        { name = fieldVariable.value
+                        { name = fieldVariable.value |> toSnakeCaseRustName
                         , type_ = fieldVariable.type_
                         }
                     )
 
         ElmSyntaxTypeInfer.PatternAs patternAs ->
-            { name = patternAs.variable.value
+            { name = patternAs.variable.value |> toSnakeCaseRustName
             , type_ = patternAs.variable.type_
             }
                 :: (patternAs.pattern |> inferredPatternIntroducedVariables)
@@ -1944,54 +1970,6 @@ inferredPatternIntroducedVariables patternTypedNode =
                 |> List.concatMap inferredPatternIntroducedVariables
 
 
-rustPatternIntroducedVariables : RustPattern -> List String
-rustPatternIntroducedVariables rustPattern =
-    -- IGNORE TCO
-    case rustPattern of
-        RustPatternIgnore ->
-            []
-
-        RustPatternBool _ ->
-            []
-
-        RustPatternInteger _ ->
-            []
-
-        RustPatternUnicodeScalar _ ->
-            []
-
-        RustPatternStringLiteral _ ->
-            []
-
-        RustPatternVariable variable ->
-            [ variable ]
-
-        RustPatternAlias rustPatternAlias ->
-            rustPatternAlias.variable
-                :: (rustPatternAlias.pattern |> rustPatternIntroducedVariables)
-
-        RustPatternTuple partPatterns ->
-            (partPatterns.part0 |> rustPatternIntroducedVariables)
-                ++ (partPatterns.part1 |> rustPatternIntroducedVariables)
-                ++ (partPatterns.part2Up
-                        |> List.concatMap rustPatternIntroducedVariables
-                   )
-
-        RustPatternVariant patternVariant ->
-            patternVariant.values
-                |> List.concatMap
-                    rustPatternIntroducedVariables
-
-        RustPatternRecord recordPatternInexhaustiveFieldNames ->
-            recordPatternInexhaustiveFieldNames
-                |> FastDict.foldl
-                    (\_ field soFar ->
-                        (field |> rustPatternIntroducedVariables)
-                            ++ soFar
-                    )
-                    []
-
-
 pattern :
     ElmSyntaxTypeInfer.TypedNode
         ElmSyntaxTypeInfer.Pattern
@@ -2010,7 +1988,7 @@ pattern patternInferred =
             rustPatternIgnoreIntroducedVariablesSetEmpty
 
         ElmSyntaxTypeInfer.PatternChar charValue ->
-            { pattern = RustPatternUnicodeScalar charValue
+            { pattern = RustPatternChar charValue
             , introducedVariables = FastSet.empty
             }
 
@@ -2027,9 +2005,9 @@ pattern patternInferred =
         ElmSyntaxTypeInfer.PatternVariable variableName ->
             { pattern =
                 RustPatternVariable
-                    (variableName |> variableNameDisambiguateFromRustKeywords)
+                    (variableName |> toSnakeCaseRustName)
             , introducedVariables =
-                FastSet.singleton variableName
+                FastSet.singleton (variableName |> toSnakeCaseRustName)
             }
 
         ElmSyntaxTypeInfer.PatternParenthesized inParens ->
@@ -2131,7 +2109,7 @@ pattern patternInferred =
                             { fields =
                                 soFar.fields
                                     |> FastDict.insert
-                                        (fieldName |> variableNameDisambiguateFromRustKeywords)
+                                        (fieldName |> toSnakeCaseRustName)
                                         RustPatternIgnore
                             , introducedVariables =
                                 soFar.introducedVariables
@@ -2139,34 +2117,33 @@ pattern patternInferred =
                         )
                         (\fieldName _ () soFar ->
                             let
-                                disambiguatedFieldName : String
-                                disambiguatedFieldName =
-                                    fieldName |> variableNameDisambiguateFromRustKeywords
+                                rustFieldName : String
+                                rustFieldName =
+                                    fieldName |> toSnakeCaseRustName
                             in
                             { fields =
                                 soFar.fields
-                                    |> FastDict.insert
-                                        disambiguatedFieldName
+                                    |> FastDict.insert rustFieldName
                                         (RustPatternVariable
-                                            disambiguatedFieldName
+                                            rustFieldName
                                         )
                             , introducedVariables =
                                 soFar.introducedVariables
-                                    |> FastSet.insert fieldName
+                                    |> FastSet.insert rustFieldName
                             }
                         )
                         (\fieldName () soFar ->
                             let
-                                disambiguatedFieldName : String
-                                disambiguatedFieldName =
-                                    fieldName |> variableNameDisambiguateFromRustKeywords
+                                rustFieldName : String
+                                rustFieldName =
+                                    fieldName |> toSnakeCaseRustName
                             in
                             { fields =
                                 soFar.fields
                                     |> FastDict.insert
-                                        disambiguatedFieldName
+                                        rustFieldName
                                         (RustPatternVariable
-                                            disambiguatedFieldName
+                                            rustFieldName
                                         )
                             , introducedVariables =
                                 soFar.introducedVariables
@@ -4910,6 +4887,12 @@ referenceToRustName reference =
                 ++ "_"
                 ++ reference.name
     )
+        |> toSnakeCaseRustName
+
+
+toSnakeCaseRustName : String -> String
+toSnakeCaseRustName name =
+    name
         |> toSnakeCase
         |> variableNameDisambiguateFromRustKeywords
 
@@ -4945,11 +4928,11 @@ printRustPatternNotParenthesized rustPattern =
                 printRustPatternFalse
 
         RustPatternInteger int64 ->
-            -- NUMBER currently represented as Double
-            Print.exactly (int64 |> Basics.toFloat |> String.fromFloat)
+            -- NUMBER currently represented as f64
+            Print.exactly (f64Literal (int64 |> Basics.toFloat))
 
-        RustPatternUnicodeScalar char ->
-            printRustStringLiteral (char |> String.fromChar)
+        RustPatternChar char ->
+            printRustCharLiteral char
 
         RustPatternStringLiteral string ->
             printRustStringLiteral string
@@ -6355,7 +6338,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                     rustRecordFields : List String
                                                     rustRecordFields =
                                                         elmRecordFieldsNotAlreadyInDefaultDeclarations
-                                                            |> List.map variableNameDisambiguateFromRustKeywords
+                                                            |> List.map toSnakeCaseRustName
 
                                                     rustTypeName : String
                                                     rustTypeName =
@@ -6732,7 +6715,7 @@ valueOrFunctionDeclaration moduleContext syntaxDeclarationValueOrFunction =
                         rustResultType : RustType
                         rustResultType =
                             syntaxDeclarationValueOrFunction.type_
-                                |> type_ typeAliasesInModule
+                                |> type_ { typeAliasesInModule = typeAliasesInModule }
                     in
                     if typeWithExpandedAliases |> inferredTypeIsConcreteRustType then
                         { parameters = Nothing
@@ -6744,7 +6727,18 @@ valueOrFunctionDeclaration moduleContext syntaxDeclarationValueOrFunction =
                     else
                         { parameters =
                             Just
-                                [ { pattern = RustPatternVariable generatedAllocatorVariableName
+                                [ { pattern =
+                                        if
+                                            (result
+                                                |> rustExpressionCountUsesOfReference
+                                                    { qualification = [], name = generatedAllocatorVariableName }
+                                            )
+                                                == 0
+                                        then
+                                            RustPatternIgnore
+
+                                        else
+                                            RustPatternVariable generatedAllocatorVariableName
                                   , type_ =
                                         RustTypeBorrow
                                             { lifetimeVariable = Just generatedLifetimeVariableName
@@ -6786,7 +6780,7 @@ valueOrFunctionDeclaration moduleContext syntaxDeclarationValueOrFunction =
                                                 (syntaxParameterCount + additionalParameterIndex)
                                         , type_ =
                                             additionalParameterInferredType
-                                                |> type_ typeAliasesInModule
+                                                |> type_ { typeAliasesInModule = typeAliasesInModule }
                                         }
                                     )
 
@@ -6808,7 +6802,18 @@ valueOrFunctionDeclaration moduleContext syntaxDeclarationValueOrFunction =
                     in
                     { parameters =
                         Just
-                            ({ pattern = RustPatternVariable generatedAllocatorVariableName
+                            ({ pattern =
+                                if
+                                    (result
+                                        |> rustExpressionCountUsesOfReference
+                                            { qualification = [], name = generatedAllocatorVariableName }
+                                    )
+                                        == 0
+                                then
+                                    RustPatternIgnore
+
+                                else
+                                    RustPatternVariable generatedAllocatorVariableName
                              , type_ =
                                 RustTypeBorrow
                                     { lifetimeVariable = Just generatedLifetimeVariableName
@@ -6822,7 +6827,7 @@ valueOrFunctionDeclaration moduleContext syntaxDeclarationValueOrFunction =
                                                     parameter |> pattern |> .pattern
                                                 , type_ =
                                                     parameter.type_
-                                                        |> type_ typeAliasesInModule
+                                                        |> type_ { typeAliasesInModule = typeAliasesInModule }
                                                 }
                                             )
                                    )
@@ -6837,7 +6842,7 @@ valueOrFunctionDeclaration moduleContext syntaxDeclarationValueOrFunction =
                             )
                     , resultType =
                         rustFullTypeAsFunction.output
-                            |> type_ typeAliasesInModule
+                            |> type_ { typeAliasesInModule = typeAliasesInModule }
                     , result = fullResult
                     , lifetimeParameters = [ generatedLifetimeVariableName ]
                     }
@@ -6876,8 +6881,6 @@ generatedParameterNameForIndex parameterIndex =
     "generated_" ++ (parameterIndex |> String.fromInt)
 
 
-{-| TODO on each use, check if needs to be normalized
--}
 variableNameDisambiguateFromRustKeywords : String -> String
 variableNameDisambiguateFromRustKeywords variableName =
     if
@@ -7005,7 +7008,7 @@ expression context expressionTypedNode =
             Ok (RustExpressionF64 doubleValue)
 
         ElmSyntaxTypeInfer.ExpressionChar charValue ->
-            Ok (RustExpressionUnicodeScalar charValue)
+            Ok (RustExpressionChar charValue)
 
         ElmSyntaxTypeInfer.ExpressionString stringValue ->
             Ok (RustExpressionStringLiteral stringValue)
@@ -7021,11 +7024,12 @@ expression context expressionTypedNode =
                                   , type_ =
                                         typeFunction.input
                                             |> type_
-                                                (\moduleNameToAccess ->
-                                                    context.moduleInfo
-                                                        |> FastDict.get moduleNameToAccess
-                                                        |> Maybe.map .typeAliases
-                                                )
+                                                { typeAliasesInModule =
+                                                    \moduleNameToAccess ->
+                                                        context.moduleInfo
+                                                            |> FastDict.get moduleNameToAccess
+                                                            |> Maybe.map .typeAliases
+                                                }
                                   }
                                 ]
                             , result =
@@ -7038,7 +7042,7 @@ expression context expressionTypedNode =
                                     , field =
                                         fieldName
                                             |> String.replace "." ""
-                                            |> variableNameDisambiguateFromRustKeywords
+                                            |> toSnakeCaseRustName
                                     }
                             }
                         )
@@ -7063,7 +7067,7 @@ expression context expressionTypedNode =
                                     [ { pattern = RustPatternVariable "generated_left"
                                       , type_ =
                                             leftInferredType
-                                                |> type_ typeAliasesInModule
+                                                |> type_ { typeAliasesInModule = typeAliasesInModule }
                                       }
                                     ]
                                 , result =
@@ -7072,7 +7076,7 @@ expression context expressionTypedNode =
                                             [ { pattern = RustPatternVariable "generated_right"
                                               , type_ =
                                                     rightInferredType
-                                                        |> type_ typeAliasesInModule
+                                                        |> type_ { typeAliasesInModule = typeAliasesInModule }
                                               }
                                             ]
                                         , result =
@@ -7422,11 +7426,12 @@ expression context expressionTypedNode =
                                     (\input ->
                                         input
                                             |> type_
-                                                (\moduleNameToAccess ->
-                                                    context.moduleInfo
-                                                        |> FastDict.get moduleNameToAccess
-                                                        |> Maybe.map .typeAliases
-                                                )
+                                                { typeAliasesInModule =
+                                                    \moduleNameToAccess ->
+                                                        context.moduleInfo
+                                                            |> FastDict.get moduleNameToAccess
+                                                            |> Maybe.map .typeAliases
+                                                }
                                     )
                          of
                             [] ->
@@ -7525,7 +7530,7 @@ expression context expressionTypedNode =
                                             (\fieldName soFar ->
                                                 soFar
                                                     |> FastDict.insert
-                                                        (fieldName |> variableNameDisambiguateFromRustKeywords)
+                                                        (fieldName |> toSnakeCaseRustName)
                                                         (RustExpressionReference
                                                             { qualification = []
                                                             , name = generatedFieldValueParameterName fieldName
@@ -7551,11 +7556,12 @@ expression context expressionTypedNode =
                                                       , type_ =
                                                             parameter.type_
                                                                 |> type_
-                                                                    (\moduleNameToAccess ->
-                                                                        context.moduleInfo
-                                                                            |> FastDict.get moduleNameToAccess
-                                                                            |> Maybe.map .typeAliases
-                                                                    )
+                                                                    { typeAliasesInModule =
+                                                                        \moduleNameToAccess ->
+                                                                            context.moduleInfo
+                                                                                |> FastDict.get moduleNameToAccess
+                                                                                |> Maybe.map .typeAliases
+                                                                    }
                                                       }
                                                     ]
                                                 , result = resultSoFar
@@ -7582,7 +7588,7 @@ expression context expressionTypedNode =
                                 context.variablesFromWithinDeclarationInScope
                                     |> FastSet.member reference.name
                             then
-                                Just (reference.name |> variableNameDisambiguateFromRustKeywords)
+                                Just (reference.name |> toSnakeCaseRustName)
 
                             else
                                 Nothing
@@ -7676,11 +7682,12 @@ expression context expressionTypedNode =
                                                         ElmSyntaxTypeInfer.TypeNotVariable (ElmSyntaxTypeInfer.TypeFunction expressionTypeFunction) ->
                                                             expressionTypeFunction.input
                                                                 |> type_
-                                                                    (\moduleName ->
-                                                                        context.moduleInfo
-                                                                            |> FastDict.get moduleName
-                                                                            |> Maybe.map .typeAliases
-                                                                    )
+                                                                    { typeAliasesInModule =
+                                                                        \moduleName ->
+                                                                            context.moduleInfo
+                                                                                |> FastDict.get moduleName
+                                                                                |> Maybe.map .typeAliases
+                                                                    }
 
                                                         _ ->
                                                             -- error?
@@ -7849,7 +7856,7 @@ expression context expressionTypedNode =
                         , field =
                             recordAccess.fieldName
                                 |> String.replace "." ""
-                                |> variableNameDisambiguateFromRustKeywords
+                                |> toSnakeCaseRustName
                         }
                 )
                 (recordAccess.record |> expression context)
@@ -7979,16 +7986,14 @@ expression context expressionTypedNode =
                                     )
                                     FastDict.empty
                     in
-                    RustExpressionRecord
-                        fieldResults
+                    RustExpressionRecord fieldResults
                 )
                 (fieldNodes
                     |> listMapAndCombineOk
                         (\field ->
                             Result.map
                                 (\fieldValue ->
-                                    ( field.name
-                                        |> variableNameDisambiguateFromRustKeywords
+                                    ( field.name |> toSnakeCaseRustName
                                     , fieldValue
                                     )
                                 )
@@ -8019,7 +8024,7 @@ expression context expressionTypedNode =
                                         , name =
                                             recordUpdate.recordVariable.value.name
                                         }
-                                        |> variableNameDisambiguateFromRustKeywords
+                                        |> toSnakeCaseRustName
 
                                 rustOriginalRecordVariableReferenceExpression : RustExpression
                                 rustOriginalRecordVariableReferenceExpression =
@@ -8056,7 +8061,7 @@ expression context expressionTypedNode =
                                 (\field ->
                                     Result.map
                                         (\fieldValue ->
-                                            ( field.name |> variableNameDisambiguateFromRustKeywords
+                                            ( field.name |> toSnakeCaseRustName
                                             , fieldValue
                                             )
                                         )
@@ -8107,7 +8112,7 @@ expression context expressionTypedNode =
                                                 [ { pattern = parameter.pattern
                                                   , type_ =
                                                         parameter.type_
-                                                            |> type_ typeAliasesInModule
+                                                            |> type_ { typeAliasesInModule = typeAliasesInModule }
                                                   }
                                                 ]
                                             , result = soFar
@@ -8123,7 +8128,7 @@ expression context expressionTypedNode =
                                         |> .pattern
                               , type_ =
                                     lambda.parameter0.type_
-                                        |> type_ typeAliasesInModule
+                                        |> type_ { typeAliasesInModule = typeAliasesInModule }
                               }
                             ]
                         , result =
@@ -8398,7 +8403,7 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
                                             )
                                   , type_ =
                                         parameterInferredType
-                                            |> type_ typeAliasesInModule
+                                            |> type_ { typeAliasesInModule = typeAliasesInModule }
                                   }
                                 ]
                             , result = resultSoFar
@@ -8477,7 +8482,7 @@ rustExpressionAlterBindingNames variableNameChange rustExpression =
         RustExpressionF64 _ ->
             rustExpression
 
-        RustExpressionUnicodeScalar _ ->
+        RustExpressionChar _ ->
             rustExpression
 
         RustExpressionStringLiteral _ ->
@@ -8794,7 +8799,7 @@ rustPatternAlterBindingNames variableNameChange inferredPattern =
         RustPatternBool _ ->
             inferredPattern
 
-        RustPatternUnicodeScalar _ ->
+        RustPatternChar _ ->
             inferredPattern
 
         RustPatternStringLiteral _ ->
@@ -9626,7 +9631,7 @@ rustExpressionCallCondense call =
                 , arguments = [ call.argument ]
                 }
 
-        RustExpressionUnicodeScalar _ ->
+        RustExpressionChar _ ->
             RustExpressionCall
                 { called = call.called
                 , arguments = [ call.argument ]
@@ -9706,7 +9711,7 @@ rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck rustExpres
         RustExpressionF64 _ ->
             False
 
-        RustExpressionUnicodeScalar _ ->
+        RustExpressionChar _ ->
             False
 
         RustExpressionStringLiteral _ ->
@@ -9828,7 +9833,7 @@ rustExpressionInnermostLambdaResult rustExpression =
         RustExpressionF64 _ ->
             { statements = [], result = rustExpression }
 
-        RustExpressionUnicodeScalar _ ->
+        RustExpressionChar _ ->
             { statements = [], result = rustExpression }
 
         RustExpressionStringLiteral _ ->
@@ -9965,7 +9970,7 @@ rustExpressionIsConstant rustExpression =
         RustExpressionF64 _ ->
             True
 
-        RustExpressionUnicodeScalar _ ->
+        RustExpressionChar _ ->
             True
 
         RustExpressionStringLiteral _ ->
@@ -10048,7 +10053,7 @@ rustExpressionCountUsesOfReference referenceToCountUsesOf rustExpression =
         RustExpressionStringLiteral _ ->
             0
 
-        RustExpressionUnicodeScalar _ ->
+        RustExpressionChar _ ->
             0
 
         RustExpressionNegateOperation inNegation ->
@@ -10239,7 +10244,7 @@ rustExpressionSubstituteReferences referenceToExpression rustExpression =
         RustExpressionF64 _ ->
             rustExpression
 
-        RustExpressionUnicodeScalar _ ->
+        RustExpressionChar _ ->
             rustExpression
 
         RustExpressionStringLiteral _ ->
@@ -10699,12 +10704,12 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
                         rustName : String
                         rustName =
                             syntaxLetDeclarationValueOrFunctionNode.declaration.name
-                                |> variableNameDisambiguateFromRustKeywords
+                                |> toSnakeCaseRustName
 
                         rustResultType : RustType
                         rustResultType =
                             syntaxLetDeclarationValueOrFunctionNode.declaration.type_
-                                |> type_ typeAliasesInModule
+                                |> type_ { typeAliasesInModule = typeAliasesInModule }
                     in
                     if rustResultType |> rustTypeIsConcrete then
                         RustStatementLetDeclaration
@@ -10754,7 +10759,7 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
                                                 context.path
                                         , type_ =
                                             additionalParameterInferredType
-                                                |> type_ typeAliasesInModule
+                                                |> type_ { typeAliasesInModule = typeAliasesInModule }
                                         }
                                     )
 
@@ -10783,7 +10788,7 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
                                         { name =
                                             case parameter.value of
                                                 ElmSyntaxTypeInfer.PatternVariable patternVariable ->
-                                                    variableNameDisambiguateFromRustKeywords patternVariable
+                                                    toSnakeCaseRustName patternVariable
 
                                                 _ ->
                                                     generatedParameterNameForIndexAtPath
@@ -10791,14 +10796,14 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
                                                         context.path
                                         , type_ =
                                             parameter.type_
-                                                |> type_ typeAliasesInModule
+                                                |> type_ { typeAliasesInModule = typeAliasesInModule }
                                         }
                                     )
                             )
                                 ++ additionalGeneratedParameters
                         , resultType =
                             rustFullTypeAsFunction.output
-                                |> type_ typeAliasesInModule
+                                |> type_ { typeAliasesInModule = typeAliasesInModule }
                         , introducedTypeParameters = introducedTypeParameters
                         , result = fullResult
                         }
@@ -12514,7 +12519,7 @@ syntaxTypeApplySpecialization specialization syntaxType =
                                                 ( Elm.Syntax.Node.empty fieldName
                                                 , Elm.Syntax.Node.empty
                                                     (Elm.Syntax.TypeAnnotation.GenericType
-                                                        (variable ++ "_" ++ variableNameDisambiguateFromRustKeywords fieldName)
+                                                        (variable ++ "_" ++ toSnakeCaseRustName fieldName)
                                                     )
                                                 )
                                         )
@@ -12607,7 +12612,7 @@ syntaxTypeApplySpecialization specialization syntaxType =
                                                             ( Elm.Syntax.Node.empty specializationFieldName
                                                             , Elm.Syntax.Node.empty
                                                                 (Elm.Syntax.TypeAnnotation.GenericType
-                                                                    (recordVariableName ++ "_" ++ variableNameDisambiguateFromRustKeywords specializationFieldName)
+                                                                    (recordVariableName ++ "_" ++ toSnakeCaseRustName specializationFieldName)
                                                                 )
                                                             )
                                                         )
@@ -13653,7 +13658,7 @@ rustExpressionIsSpaceSeparated rustExpression =
         RustExpressionUnit ->
             False
 
-        RustExpressionUnicodeScalar _ ->
+        RustExpressionChar _ ->
             False
 
         RustExpressionF64 _ ->
@@ -13735,8 +13740,8 @@ printRustExpressionNotParenthesized rustExpression =
         RustExpressionIfElse ifElse ->
             printRustExpressionIfElse ifElse
 
-        RustExpressionUnicodeScalar charValue ->
-            printRustStringLiteral (charValue |> String.fromChar)
+        RustExpressionChar charValue ->
+            printRustCharLiteral charValue
 
         RustExpressionF64 double ->
             Print.exactly (double |> f64Literal)
@@ -13977,7 +13982,7 @@ patternIsSpaceSeparated rustPattern =
         RustPatternInteger _ ->
             False
 
-        RustPatternUnicodeScalar _ ->
+        RustPatternChar _ ->
             False
 
         RustPatternStringLiteral _ ->
@@ -14401,7 +14406,7 @@ rustPatternContainsBindings rustPattern =
         RustPatternInteger _ ->
             False
 
-        RustPatternUnicodeScalar _ ->
+        RustPatternChar _ ->
             False
 
         RustPatternStringLiteral _ ->
