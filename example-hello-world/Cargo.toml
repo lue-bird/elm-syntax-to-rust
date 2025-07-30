@@ -1,0 +1,5 @@
+[package]
+name = "default-declarations"
+edition = "2024"              # not lower
+[dependencies]
+bumpalo = "3.19.0"

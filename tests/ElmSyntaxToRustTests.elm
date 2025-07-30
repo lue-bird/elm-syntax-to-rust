@@ -92,7 +92,7 @@ elmModuleSourceTranspileToRust source =
                 transpiledResult :
                     { errors : List String
                     , declarations :
-                        { funcs :
+                        { fns :
                             FastDict.Dict
                                 String
                                 { parameters :
@@ -102,6 +102,7 @@ elmModuleSourceTranspileToRust source =
                                         }
                                 , result : ElmSyntaxToRust.RustExpression
                                 , resultType : ElmSyntaxToRust.RustType
+                                , lifetimeParameters : List String
                                 }
                         , lets :
                             FastDict.Dict

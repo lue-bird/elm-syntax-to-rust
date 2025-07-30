@@ -35,11 +35,11 @@ import Unicode
 type RustType
     = RustTypeUnit
     | RustTypeConstruct
-        { moduleOrigin : Maybe String
+        { qualification : List String
         , name : String
         , arguments : List RustType
+        , lifetimeArgument : Maybe String
         , -- TODO also encode if Equatable or not
-          -- TODO , lifetimeVariable : String
           isFunction : Bool
         }
     | RustTypeTuple
@@ -738,24 +738,33 @@ type_ typeAliasesInModule inferredType =
     case inferredType of
         ElmSyntaxTypeInfer.TypeVariable variable ->
             if variable.name |> String.startsWith "number" then
-                rustTypeDouble
+                rustTypeF64
 
             else
-                RustTypeVariable (variable.name |> variableNameDisambiguateFromRustKeywords)
+                RustTypeVariable
+                    (variable.name
+                        |> normalizeToRustPascalCase
+                    )
 
         ElmSyntaxTypeInfer.TypeNotVariable inferredTypeNotVariable ->
             typeNotVariable typeAliasesInModule
                 inferredTypeNotVariable
 
 
-rustTypeDouble : RustType
-rustTypeDouble =
+rustTypeF64 : RustType
+rustTypeF64 =
     RustTypeConstruct
-        { moduleOrigin = rustReferenceF64.moduleOrigin
-        , name = rustReferenceF64.name
+        { qualification = []
+        , name = "f64"
         , arguments = []
+        , lifetimeArgument = Nothing
         , isFunction = False
         }
+
+
+generatedLifetimeVariableName : String
+generatedLifetimeVariableName =
+    "a"
 
 
 typeNotVariable :
@@ -798,7 +807,13 @@ typeNotVariable typeAliasesInModule inferredTypeNotVariable =
                     RustTypeConstruct
                         { arguments = rustArguments
                         , name = coreRust.name
-                        , moduleOrigin = coreRust.moduleOrigin
+                        , qualification = coreRust.qualification
+                        , lifetimeArgument =
+                            if coreRust.hasLifetimeParameter then
+                                Just generatedLifetimeVariableName
+
+                            else
+                                Nothing
                         , isFunction =
                             -- core elm declarations don't have a function type alias
                             False
@@ -807,7 +822,8 @@ typeNotVariable typeAliasesInModule inferredTypeNotVariable =
                 Nothing ->
                     RustTypeConstruct
                         { arguments = rustArguments
-                        , moduleOrigin = Nothing
+                        , lifetimeArgument = Just generatedLifetimeVariableName
+                        , qualification = []
                         , name =
                             { moduleOrigin = typeConstruct.moduleOrigin
                             , name = typeConstruct.name
@@ -826,26 +842,17 @@ typeNotVariable typeAliasesInModule inferredTypeNotVariable =
                         }
 
         ElmSyntaxTypeInfer.TypeTuple typeTuple ->
-            RustTypeConstruct
-                { moduleOrigin = Nothing
-                , name = "Tuple"
-                , isFunction = False
-                , arguments =
-                    [ typeTuple.part0 |> type_ typeAliasesInModule
-                    , typeTuple.part1 |> type_ typeAliasesInModule
-                    ]
+            RustTypeTuple
+                { part0 = typeTuple.part0 |> type_ typeAliasesInModule
+                , part1 = typeTuple.part1 |> type_ typeAliasesInModule
+                , part2Up = []
                 }
 
         ElmSyntaxTypeInfer.TypeTriple typeTriple ->
-            RustTypeConstruct
-                { moduleOrigin = Nothing
-                , name = "Triple"
-                , isFunction = False
-                , arguments =
-                    [ typeTriple.part0 |> type_ typeAliasesInModule
-                    , typeTriple.part1 |> type_ typeAliasesInModule
-                    , typeTriple.part2 |> type_ typeAliasesInModule
-                    ]
+            RustTypeTuple
+                { part0 = typeTriple.part0 |> type_ typeAliasesInModule
+                , part1 = typeTriple.part1 |> type_ typeAliasesInModule
+                , part2Up = [ typeTriple.part2 |> type_ typeAliasesInModule ]
                 }
 
         ElmSyntaxTypeInfer.TypeRecord recordFields ->
@@ -863,13 +870,14 @@ typeNotVariable typeAliasesInModule inferredTypeNotVariable =
                             FastDict.empty
             in
             RustTypeConstruct
-                { moduleOrigin = Nothing
+                { qualification = []
                 , name =
                     generatedRecordTypeName
                         (rustFields |> FastDict.keys)
                 , isFunction = False
                 , arguments =
                     rustFields |> FastDict.values
+                , lifetimeArgument = Nothing
                 }
 
         ElmSyntaxTypeInfer.TypeFunction typeFunction ->
@@ -897,13 +905,14 @@ typeNotVariable typeAliasesInModule inferredTypeNotVariable =
                             FastDict.empty
             in
             RustTypeConstruct
-                { moduleOrigin = Nothing
+                { qualification = []
                 , name =
                     generatedRecordTypeName
                         (rustFields |> FastDict.keys)
                 , isFunction = False
                 , arguments =
                     rustFields |> FastDict.values
+                , lifetimeArgument = Nothing
                 }
 
 
@@ -1102,13 +1111,13 @@ printRustTypeFunction positionOrNothing typeFunction =
     (input0Print :: input1UpPrints)
         |> Print.listMapAndIntersperseAndFlatten
             (\typePrint ->
-                Print.exactly "Fn("
+                Print.exactly "Fn"
                     |> Print.followedBy
                         (Print.withIndentIncreasedBy 3 typePrint)
                     |> Print.followedBy
-                        (Print.spaceOrLinebreakIndented fullLineSpread)
+                        (Print.emptyOrLinebreakIndented fullLineSpread)
                     |> Print.followedBy
-                        (Print.exactly ") ->")
+                        (Print.exactly " ->")
             )
             Print.empty
         |> Print.followedBy
@@ -1383,10 +1392,11 @@ printRustTypeTuple parts =
 printRustTypeConstruct :
     Maybe TypeIncomingOrOutgoing
     ->
-        { moduleOrigin : Maybe String
+        { qualification : List String
         , name : String
         , arguments : List RustType
         , isFunction : Bool
+        , lifetimeArgument : Maybe String
         }
     -> Print
 printRustTypeConstruct positionOrNothing typeConstruct =
@@ -1394,29 +1404,27 @@ printRustTypeConstruct positionOrNothing typeConstruct =
         referencePrint : Print
         referencePrint =
             Print.exactly
-                ((case positionOrNothing of
-                    Nothing ->
-                        ""
-
-                    Just position ->
-                        case position of
-                            TypeIncoming ->
-                                if typeConstruct.isFunction then
-                                    "@escaping "
-
-                                else
-                                    ""
-
-                            TypeOutgoing ->
-                                ""
-                 )
-                    ++ rustReferenceToString
-                        { moduleOrigin = typeConstruct.moduleOrigin
-                        , name = typeConstruct.name
-                        }
+                (qualifiedReferenceToRustName
+                    { qualification = typeConstruct.qualification
+                    , name = typeConstruct.name
+                    }
                 )
     in
-    case typeConstruct.arguments of
+    case
+        (case typeConstruct.lifetimeArgument of
+            Nothing ->
+                []
+
+            Just lifetimeArgument ->
+                [ Print.exactly ("'" ++ lifetimeArgument) ]
+        )
+            ++ (typeConstruct.arguments
+                    |> List.map
+                        (\argument ->
+                            argument |> printRustTypeNotParenthesized Nothing
+                        )
+               )
+    of
         [] ->
             referencePrint
 
@@ -1424,11 +1432,7 @@ printRustTypeConstruct positionOrNothing typeConstruct =
             let
                 argumentPrints : List Print
                 argumentPrints =
-                    (argument0 :: argument1Up)
-                        |> List.map
-                            (\argument ->
-                                argument |> printRustTypeNotParenthesized Nothing
-                            )
+                    argument0 :: argument1Up
 
                 fullLineSpread : Print.LineSpread
                 fullLineSpread =
@@ -1522,6 +1526,8 @@ f64Literal double =
         asString ++ "_f64"
 
 
+{-| TODO remove
+-}
 rustReferenceToString :
     { moduleOrigin : Maybe String
     , name : String
@@ -1827,6 +1833,7 @@ normalizeToRustPascalCase name =
         |> String.split "_"
         |> List.map stringFirstCharToUpper
         |> String.concat
+        |> variableNameDisambiguateFromRustKeywords
 
 
 stringFirstCharToUpper : String -> String
@@ -2387,18 +2394,27 @@ typeConstructReferenceToCoreRust :
     }
     ->
         Maybe
-            { moduleOrigin : Maybe String
+            { qualification : List String
             , name : String
+            , hasLifetimeParameter : Bool
             }
 typeConstructReferenceToCoreRust reference =
     case reference.moduleOrigin of
         "Basics" ->
             case reference.name of
                 "Order" ->
-                    Just { moduleOrigin = Just "std::cmp", name = "Ordering" }
+                    Just
+                        { qualification = [ "std", "cmp" ]
+                        , name = "Ordering"
+                        , hasLifetimeParameter = False
+                        }
 
                 "Bool" ->
-                    Just { moduleOrigin = Nothing, name = "bool" }
+                    Just
+                        { qualification = []
+                        , name = "bool"
+                        , hasLifetimeParameter = False
+                        }
 
                 "Int" ->
                     -- NUMBER currently Int is treated as Float
@@ -2408,14 +2424,18 @@ typeConstructReferenceToCoreRust reference =
                     justRustReferenceF64
 
                 "Never" ->
-                    Just { moduleOrigin = Nothing, name = "Never" }
+                    Just
+                        { qualification = []
+                        , name = "BasicsNever"
+                        , hasLifetimeParameter = False
+                        }
 
                 _ ->
                     Nothing
 
         "String" ->
             -- "String" is the only possible reference.name
-            justRustReferenceString
+            justRustReferenceStringString
 
         "Char" ->
             -- "Char" is the only possible reference.name
@@ -2425,21 +2445,17 @@ typeConstructReferenceToCoreRust reference =
             -- "List" is the only possible reference.name
             justRustReferenceListList
 
-        "Dict" ->
-            -- "Dict" is the only possible reference.name
-            Just { moduleOrigin = Nothing, name = "Dictionary" }
-
-        "Set" ->
-            -- "Set" is the only possible reference.name
-            Just { moduleOrigin = Nothing, name = "Set" }
-
         "Array" ->
             -- "Array" is the only possible reference.name
-            Just { moduleOrigin = Nothing, name = "Array" }
+            Just
+                { qualification = []
+                , name = "ArrayArray"
+                , hasLifetimeParameter = True
+                }
 
         "Maybe" ->
             -- "Maybe" is the only possible reference.name
-            justRustReferenceMaybeMaybe
+            justRustReferenceOption
 
         "Result" ->
             -- "Result" is the only possible reference.name
@@ -2447,18 +2463,34 @@ typeConstructReferenceToCoreRust reference =
 
         "Json.Encode" ->
             -- "Value" is the only possible reference.name
-            Just { moduleOrigin = Nothing, name = "json_encode_Value" }
+            Just
+                { qualification = []
+                , name = "JsonEncodeValue"
+                , hasLifetimeParameter = True
+                }
 
         "Json.Decode" ->
             case reference.name of
                 "Value" ->
-                    Just { moduleOrigin = Nothing, name = "json_decode_Value" }
+                    Just
+                        { qualification = []
+                        , name = "JsonDecodeValue"
+                        , hasLifetimeParameter = True
+                        }
 
                 "Decoder" ->
-                    Just { moduleOrigin = Nothing, name = "json_decode_Decoder" }
+                    Just
+                        { qualification = []
+                        , name = "JsonDecodeDecoder"
+                        , hasLifetimeParameter = True
+                        }
 
                 "Error" ->
-                    Just { moduleOrigin = Nothing, name = "json_decode_Error" }
+                    Just
+                        { qualification = []
+                        , name = "JsonDecodeError"
+                        , hasLifetimeParameter = True
+                        }
 
                 _ ->
                     Nothing
@@ -2466,13 +2498,25 @@ typeConstructReferenceToCoreRust reference =
         "Regex" ->
             case reference.name of
                 "Regex" ->
-                    Just { moduleOrigin = Nothing, name = "regex_Regex" }
+                    Just
+                        { qualification = []
+                        , name = "RegexRegex"
+                        , hasLifetimeParameter = True
+                        }
 
                 "Options" ->
-                    Just { moduleOrigin = Nothing, name = "regex_Options" }
+                    Just
+                        { qualification = []
+                        , name = "RegexOptions"
+                        , hasLifetimeParameter = False
+                        }
 
                 "Match" ->
-                    Just { moduleOrigin = Nothing, name = "regex_Match" }
+                    Just
+                        { qualification = []
+                        , name = "RegexMatch"
+                        , hasLifetimeParameter = False
+                        }
 
                 _ ->
                     Nothing
@@ -2480,10 +2524,18 @@ typeConstructReferenceToCoreRust reference =
         "Random" ->
             case reference.name of
                 "Seed" ->
-                    Just { moduleOrigin = Nothing, name = "random_Seed" }
+                    Just
+                        { qualification = []
+                        , name = "RandomSeed"
+                        , hasLifetimeParameter = False
+                        }
 
                 "Generator" ->
-                    Just { moduleOrigin = Nothing, name = "random_Generator" }
+                    Just
+                        { qualification = []
+                        , name = "RandomGenerator"
+                        , hasLifetimeParameter = True
+                        }
 
                 _ ->
                     Nothing
@@ -2491,19 +2543,39 @@ typeConstructReferenceToCoreRust reference =
         "Time" ->
             case reference.name of
                 "Posix" ->
-                    Just { moduleOrigin = Nothing, name = "time_Posix" }
+                    Just
+                        { qualification = []
+                        , name = "TimePosix"
+                        , hasLifetimeParameter = False
+                        }
 
                 "Zone" ->
-                    Just { moduleOrigin = Nothing, name = "time_Zone" }
+                    Just
+                        { qualification = []
+                        , name = "TimeZone"
+                        , hasLifetimeParameter = False
+                        }
 
                 "Month" ->
-                    Just { moduleOrigin = Nothing, name = "time_Month" }
+                    Just
+                        { qualification = []
+                        , name = "TimeMonth"
+                        , hasLifetimeParameter = False
+                        }
 
                 "Weekday" ->
-                    Just { moduleOrigin = Nothing, name = "time_Weekday" }
+                    Just
+                        { qualification = []
+                        , name = "TimeWeekday"
+                        , hasLifetimeParameter = False
+                        }
 
-                "time_ZoneName" ->
-                    Just { moduleOrigin = Nothing, name = "time_ZoneName" }
+                "TimeZoneName" ->
+                    Just
+                        { qualification = []
+                        , name = "TimeZoneName"
+                        , hasLifetimeParameter = False
+                        }
 
                 _ ->
                     Nothing
@@ -2511,10 +2583,18 @@ typeConstructReferenceToCoreRust reference =
         "Bytes" ->
             case reference.name of
                 "Endianness" ->
-                    Just { moduleOrigin = Nothing, name = "Bytes_Endianness" }
+                    Just
+                        { qualification = []
+                        , name = "BytesEndianness"
+                        , hasLifetimeParameter = False
+                        }
 
                 "Bytes" ->
-                    Just { moduleOrigin = Nothing, name = "Bytes_Bytes" }
+                    Just
+                        { qualification = []
+                        , name = "BytesBytes"
+                        , hasLifetimeParameter = True
+                        }
 
                 _ ->
                     Nothing
@@ -2522,28 +2602,52 @@ typeConstructReferenceToCoreRust reference =
         "Bytes.Decode" ->
             case reference.name of
                 "Decoder" ->
-                    Just { moduleOrigin = Nothing, name = "BytesDecode_Decoder" }
+                    Just
+                        { qualification = []
+                        , name = "BytesDecodeDecoder"
+                        , hasLifetimeParameter = True
+                        }
 
                 "Step" ->
-                    Just { moduleOrigin = Nothing, name = "BytesDecode_Step" }
+                    Just
+                        { qualification = []
+                        , name = "BytesDecodeStep"
+                        , hasLifetimeParameter = False
+                        }
 
                 _ ->
                     Nothing
 
         "Bytes.Encode" ->
             -- "Encoder" is the only possible reference.name
-            Just { moduleOrigin = Nothing, name = "BytesEncode_Encoder" }
+            Just
+                { qualification = []
+                , name = "BytesEncodeEncoder"
+                , hasLifetimeParameter = True
+                }
 
         "VirtualDom" ->
             case reference.name of
                 "Node" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_Node" }
+                    Just
+                        { qualification = []
+                        , name = "VirtualDomNode"
+                        , hasLifetimeParameter = True
+                        }
 
                 "Attribute" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_Attribute" }
+                    Just
+                        { qualification = []
+                        , name = "VirtualDomAttribute"
+                        , hasLifetimeParameter = True
+                        }
 
                 "Handler" ->
-                    Just { moduleOrigin = Nothing, name = "VirtualDom_Handler" }
+                    Just
+                        { qualification = []
+                        , name = "VirtualDomHandler"
+                        , hasLifetimeParameter = True
+                        }
 
                 _ ->
                     Nothing
@@ -2551,7 +2655,11 @@ typeConstructReferenceToCoreRust reference =
         "Math.Vector2" ->
             case reference.name of
                 "Vec2" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector2_Vec2" }
+                    Just
+                        { qualification = []
+                        , name = "MathVector2Vec2"
+                        , hasLifetimeParameter = False
+                        }
 
                 _ ->
                     Nothing
@@ -2559,7 +2667,11 @@ typeConstructReferenceToCoreRust reference =
         "Math.Vector3" ->
             case reference.name of
                 "Vec3" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector3_Vec3" }
+                    Just
+                        { qualification = []
+                        , name = "MathVector3Vec3"
+                        , hasLifetimeParameter = False
+                        }
 
                 _ ->
                     Nothing
@@ -2567,7 +2679,11 @@ typeConstructReferenceToCoreRust reference =
         "Math.Vector4" ->
             case reference.name of
                 "Vec4" ->
-                    Just { moduleOrigin = Nothing, name = "MathVector4_Vec4" }
+                    Just
+                        { qualification = []
+                        , name = "MathVector4Vec4"
+                        , hasLifetimeParameter = False
+                        }
 
                 _ ->
                     Nothing
@@ -2579,7 +2695,11 @@ typeConstructReferenceToCoreRust reference =
         "Platform" ->
             case reference.name of
                 "Program" ->
-                    Just { moduleOrigin = Nothing, name = "Platform_Program" }
+                    Just
+                        { qualification = []
+                        , name = "PlatformProgram"
+                        , hasLifetimeParameter = True
+                        }
 
                 -- "Task" | "ProcessId" | "Router"
                 _ ->
@@ -2587,49 +2707,91 @@ typeConstructReferenceToCoreRust reference =
 
         "Platform.Cmd" ->
             -- "Cmd" is the only possible reference.name
-            Just { moduleOrigin = Nothing, name = "PlatformCmd_Cmd" }
+            Just
+                { qualification = []
+                , name = "PlatformCmdCmd"
+                , hasLifetimeParameter = True
+                }
 
         "Platform.Sub" ->
             -- "Sub" is the only possible reference.name
-            Just { moduleOrigin = Nothing, name = "PlatformSub_Sub" }
+            Just
+                { qualification = []
+                , name = "PlatformSubSub"
+                , hasLifetimeParameter = True
+                }
 
         _ ->
             Nothing
 
 
-justRustReferenceF64 : Maybe { moduleOrigin : Maybe String, name : String }
+justRustReferenceF64 :
+    Maybe
+        { qualification : List String
+        , name : String
+        , hasLifetimeParameter : Bool
+        }
 justRustReferenceF64 =
     Just rustReferenceF64
 
 
-rustReferenceF64 : { moduleOrigin : Maybe String, name : String }
+rustReferenceF64 :
+    { qualification : List String
+    , name : String
+    , hasLifetimeParameter : Bool
+    }
 rustReferenceF64 =
-    { moduleOrigin = Nothing, name = "f64" }
+    { qualification = [], name = "f64", hasLifetimeParameter = False }
 
 
-justRustReferenceString : Maybe { moduleOrigin : Maybe String, name : String }
-justRustReferenceString =
-    Just { moduleOrigin = Nothing, name = "String" }
+justRustReferenceStringString :
+    Maybe
+        { qualification : List String
+        , name : String
+        , hasLifetimeParameter : Bool
+        }
+justRustReferenceStringString =
+    Just { qualification = [], name = "StringString", hasLifetimeParameter = True }
 
 
-justRustReferenceChar : Maybe { moduleOrigin : Maybe String, name : String }
+justRustReferenceChar :
+    Maybe
+        { qualification : List String
+        , name : String
+        , hasLifetimeParameter : Bool
+        }
 justRustReferenceChar =
-    Just { moduleOrigin = Nothing, name = "char" }
+    Just { qualification = [], name = "char", hasLifetimeParameter = False }
 
 
-justRustReferenceListList : Maybe { moduleOrigin : Maybe String, name : String }
+justRustReferenceListList :
+    Maybe
+        { qualification : List String
+        , name : String
+        , hasLifetimeParameter : Bool
+        }
 justRustReferenceListList =
-    Just { moduleOrigin = Nothing, name = "list_List" }
+    Just { qualification = [], name = "ListList", hasLifetimeParameter = True }
 
 
-justRustReferenceMaybeMaybe : Maybe { moduleOrigin : Maybe String, name : String }
-justRustReferenceMaybeMaybe =
-    Just { moduleOrigin = Nothing, name = "Maybe_Maybe" }
+justRustReferenceOption :
+    Maybe
+        { qualification : List String
+        , name : String
+        , hasLifetimeParameter : Bool
+        }
+justRustReferenceOption =
+    Just { qualification = [], name = "Option", hasLifetimeParameter = False }
 
 
-justRustReferenceResultResult : Maybe { moduleOrigin : Maybe String, name : String }
+justRustReferenceResultResult :
+    Maybe
+        { qualification : List String
+        , name : String
+        , hasLifetimeParameter : Bool
+        }
 justRustReferenceResultResult =
-    Just { moduleOrigin = Nothing, name = "Result_Result" }
+    Just { qualification = [], name = "ResultResult", hasLifetimeParameter = False }
 
 
 variantToCoreRust :
@@ -2721,7 +2883,7 @@ variantToCoreRust reference =
 
 {-| Use `typeConstructReferenceToCoreRust` for types
 
-TODO use variantToCoreRust for variants
+TODO on call, actually use requiresAllocator
 
 -}
 referenceToCoreRust :
@@ -2733,120 +2895,263 @@ referenceToCoreRust :
         Maybe
             { qualification : List String
             , name : String
-
-            -- TODO , requiresAllocator : Bool
+            , requiresAllocator : Bool
             }
 referenceToCoreRust reference =
     case reference.moduleOrigin of
         "Basics" ->
             case reference.name of
                 "identity" ->
-                    Just { qualification = [], name = "basics_identity" }
+                    Just
+                        { qualification = []
+                        , name = "basics_identity"
+                        , requiresAllocator = False
+                        }
 
                 "always" ->
-                    Just { qualification = [], name = "basics_always" }
+                    Just
+                        { qualification = []
+                        , name = "basics_always"
+                        , requiresAllocator = False
+                        }
 
                 "compare" ->
-                    Just { qualification = [], name = "basics_compare" }
+                    Just
+                        { qualification = []
+                        , name = "basics_compare"
+                        , requiresAllocator = False
+                        }
 
                 "max" ->
-                    Just { qualification = [], name = "basics_max" }
+                    Just
+                        { qualification = []
+                        , name = "basics_max"
+                        , requiresAllocator = False
+                        }
 
                 "min" ->
-                    Just { qualification = [], name = "basics_min" }
+                    Just
+                        { qualification = []
+                        , name = "basics_min"
+                        , requiresAllocator = False
+                        }
 
                 "not" ->
-                    Just { qualification = [], name = "basics_not" }
+                    Just
+                        { qualification = []
+                        , name = "basics_not"
+                        , requiresAllocator = False
+                        }
 
                 "xor" ->
-                    Just { qualification = [], name = "basics_neq" }
+                    Just
+                        { qualification = []
+                        , name = "basics_neq"
+                        , requiresAllocator = False
+                        }
 
                 "e" ->
-                    Just { qualification = [ "std", "f64", "consts" ], name = "E" }
+                    Just
+                        { qualification = [ "std", "f64", "consts" ]
+                        , name = "E"
+                        , requiresAllocator = False
+                        }
 
                 "pi" ->
-                    Just { qualification = [ "std", "f64", "consts" ], name = "PI" }
+                    Just
+                        { qualification = [ "std", "f64", "consts" ]
+                        , name = "PI"
+                        , requiresAllocator = False
+                        }
 
                 "ceiling" ->
-                    Just { qualification = [ "f64" ], name = "ceil" }
+                    Just
+                        { qualification = [ "f64" ]
+                        , name = "ceil"
+                        , requiresAllocator = False
+                        }
 
                 "floor" ->
-                    Just { qualification = [ "f64" ], name = "floor" }
+                    Just
+                        { qualification = [ "f64" ]
+                        , name = "floor"
+                        , requiresAllocator = False
+                        }
 
                 "round" ->
-                    Just { qualification = [ "f64" ], name = "round" }
+                    Just
+                        { qualification = [ "f64" ]
+                        , name = "round"
+                        , requiresAllocator = False
+                        }
 
                 "truncate" ->
-                    Just { qualification = [ "f64" ], name = "trunc" }
+                    Just
+                        { qualification = [ "f64" ]
+                        , name = "trunc"
+                        , requiresAllocator = False
+                        }
 
                 "negate" ->
-                    Just { qualification = [ "std", "ops", "Neg" ], name = "neg" }
+                    Just
+                        { qualification = [ "std", "ops", "Neg" ]
+                        , name = "neg"
+                        , requiresAllocator = False
+                        }
 
                 "abs" ->
-                    Just { qualification = [ "f64" ], name = "abs" }
+                    Just
+                        { qualification = [ "f64" ]
+                        , name = "abs"
+                        , requiresAllocator = False
+                        }
 
                 "toFloat" ->
-                    Just { qualification = [], name = "basics_identity" }
+                    Just
+                        { qualification = []
+                        , name = "basics_identity"
+                        , requiresAllocator = False
+                        }
 
                 "isNaN" ->
-                    Just { qualification = [ "f64" ], name = "is_nan" }
+                    Just
+                        { qualification = [ "f64" ]
+                        , name = "is_nan"
+                        , requiresAllocator = False
+                        }
 
                 "isInfinite" ->
-                    Just { qualification = [ "f64" ], name = "is_infinite" }
+                    Just
+                        { qualification = [ "f64" ]
+                        , name = "is_infinite"
+                        , requiresAllocator = False
+                        }
 
                 "remainderBy" ->
-                    Just { qualification = [], name = "basics_remainder_by" }
+                    Just
+                        { qualification = []
+                        , name = "basics_remainder_by"
+                        , requiresAllocator = False
+                        }
 
                 "modBy" ->
-                    Just { qualification = [], name = "basics_mod_by" }
+                    Just
+                        { qualification = []
+                        , name = "basics_mod_by"
+                        , requiresAllocator = False
+                        }
 
                 "sin" ->
-                    Just { qualification = [ "f64" ], name = "sin" }
+                    Just
+                        { qualification = [ "f64" ]
+                        , name = "sin"
+                        , requiresAllocator = False
+                        }
 
                 "cos" ->
-                    Just { qualification = [ "f64" ], name = "cos" }
+                    Just
+                        { qualification = [ "f64" ]
+                        , name = "cos"
+                        , requiresAllocator = False
+                        }
 
                 "tan" ->
-                    Just { qualification = [ "f64" ], name = "tan" }
+                    Just
+                        { qualification = [ "f64" ]
+                        , name = "tan"
+                        , requiresAllocator = False
+                        }
 
                 "asin" ->
-                    Just { qualification = [ "f64" ], name = "asin" }
+                    Just
+                        { qualification = [ "f64" ]
+                        , name = "asin"
+                        , requiresAllocator = False
+                        }
 
                 "acos" ->
-                    Just { qualification = [ "f64" ], name = "acos" }
+                    Just
+                        { qualification = [ "f64" ]
+                        , name = "acos"
+                        , requiresAllocator = False
+                        }
 
                 "atan" ->
-                    Just { qualification = [ "f64" ], name = "atan" }
+                    Just
+                        { qualification = [ "f64" ]
+                        , name = "atan"
+                        , requiresAllocator = False
+                        }
 
                 "atan2" ->
-                    Just { qualification = [ "f64" ], name = "atan2" }
+                    Just
+                        { qualification = [ "f64" ]
+                        , name = "atan2"
+                        , requiresAllocator = False
+                        }
 
                 "sqrt" ->
-                    Just { qualification = [ "f64" ], name = "sqrt" }
+                    Just
+                        { qualification = [ "f64" ]
+                        , name = "sqrt"
+                        , requiresAllocator = False
+                        }
 
                 "logBase" ->
-                    Just { qualification = [], name = "basics_log_base" }
+                    Just
+                        { qualification = []
+                        , name = "basics_log_base"
+                        , requiresAllocator = False
+                        }
 
                 "radians" ->
-                    Just { qualification = [], name = "basics_identity" }
+                    Just
+                        { qualification = []
+                        , name = "basics_identity"
+                        , requiresAllocator = False
+                        }
 
                 "degrees" ->
-                    Just { qualification = [], name = "basics_degrees" }
+                    Just
+                        { qualification = []
+                        , name = "basics_degrees"
+                        , requiresAllocator = False
+                        }
 
                 "turns" ->
-                    Just { qualification = [], name = "basics_turns" }
+                    Just
+                        { qualification = []
+                        , name = "basics_turns"
+                        , requiresAllocator = False
+                        }
 
                 "fromPolar" ->
-                    Just { qualification = [], name = "basics_from_polar" }
+                    Just
+                        { qualification = []
+                        , name = "basics_from_polar"
+                        , requiresAllocator = False
+                        }
 
                 "toPolar" ->
-                    Just { qualification = [], name = "basics_to_polar" }
+                    Just
+                        { qualification = []
+                        , name = "basics_to_polar"
+                        , requiresAllocator = False
+                        }
 
                 "clamp" ->
-                    Just { qualification = [], name = "basics_clamp" }
+                    Just
+                        { qualification = []
+                        , name = "basics_clamp"
+                        , requiresAllocator = False
+                        }
 
                 "never" ->
-                    Just { qualification = [], name = "basics_never" }
+                    Just
+                        { qualification = []
+                        , name = "basics_never"
+                        , requiresAllocator = False
+                        }
 
                 _ ->
                     Nothing
@@ -2854,25 +3159,53 @@ referenceToCoreRust reference =
         "Bitwise" ->
             case reference.name of
                 "complement" ->
-                    Just { qualification = [], name = "Bitwise_complement" }
+                    Just
+                        { qualification = []
+                        , name = "bitwise_complement"
+                        , requiresAllocator = False
+                        }
 
                 "and" ->
-                    Just { qualification = [], name = "Bitwise_and" }
+                    Just
+                        { qualification = []
+                        , name = "bitwise_and"
+                        , requiresAllocator = False
+                        }
 
                 "or" ->
-                    Just { qualification = [], name = "Bitwise_or" }
+                    Just
+                        { qualification = []
+                        , name = "bitwise_or"
+                        , requiresAllocator = False
+                        }
 
                 "xor" ->
-                    Just { qualification = [], name = "Bitwise_xor" }
+                    Just
+                        { qualification = []
+                        , name = "bitwise_xor"
+                        , requiresAllocator = False
+                        }
 
                 "shiftLeftBy" ->
-                    Just { qualification = [], name = "Bitwise_shiftLeftBy" }
+                    Just
+                        { qualification = []
+                        , name = "bitwise_shift_left_by"
+                        , requiresAllocator = False
+                        }
 
                 "shiftRightBy" ->
-                    Just { qualification = [], name = "Bitwise_shiftRightBy" }
+                    Just
+                        { qualification = []
+                        , name = "bitwise_shift_right_by"
+                        , requiresAllocator = False
+                        }
 
                 "shiftRightZfBy" ->
-                    Just { qualification = [], name = "Bitwise_shiftRightZfBy" }
+                    Just
+                        { qualification = []
+                        , name = "bitwise_shift_right_zf_by"
+                        , requiresAllocator = False
+                        }
 
                 _ ->
                     Nothing
@@ -2880,118 +3213,270 @@ referenceToCoreRust reference =
         "String" ->
             case reference.name of
                 "isEmpty" ->
-                    Just { qualification = [], name = "string_is_empty" }
+                    Just
+                        { qualification = []
+                        , name = "string_is_empty"
+                        , requiresAllocator = False
+                        }
 
                 "length" ->
-                    Just { qualification = [], name = "string_length" }
+                    Just
+                        { qualification = []
+                        , name = "string_length"
+                        , requiresAllocator = False
+                        }
 
                 "append" ->
-                    Just { qualification = [], name = "string_concat" }
+                    Just
+                        { qualification = []
+                        , name = "string_concat"
+                        , requiresAllocator = True
+                        }
 
                 "trim" ->
-                    Just { qualification = [], name = "string_trim" }
+                    Just
+                        { qualification = []
+                        , name = "string_trim"
+                        , requiresAllocator = False
+                        }
 
                 "trimLeft" ->
-                    Just { qualification = [], name = "string_trim_left" }
+                    Just
+                        { qualification = []
+                        , name = "string_trim_left"
+                        , requiresAllocator = False
+                        }
 
                 "trimRight" ->
-                    Just { qualification = [], name = "string_trim_right" }
+                    Just
+                        { qualification = []
+                        , name = "string_trim_right"
+                        , requiresAllocator = False
+                        }
 
                 "left" ->
-                    Just { qualification = [], name = "string_left" }
+                    Just
+                        { qualification = []
+                        , name = "string_left"
+                        , requiresAllocator = False
+                        }
 
                 "right" ->
-                    Just { qualification = [], name = "string_right" }
+                    Just
+                        { qualification = []
+                        , name = "string_right"
+                        , requiresAllocator = False
+                        }
 
                 "dropLeft" ->
-                    Just { qualification = [], name = "string_drop_left" }
+                    Just
+                        { qualification = []
+                        , name = "string_drop_left"
+                        , requiresAllocator = False
+                        }
 
                 "dropRight" ->
-                    Just { qualification = [], name = "string_drop_right" }
+                    Just
+                        { qualification = []
+                        , name = "string_drop_right"
+                        , requiresAllocator = False
+                        }
 
                 "padLeft" ->
-                    Just { qualification = [], name = "string_pad_left" }
+                    Just
+                        { qualification = []
+                        , name = "string_pad_left"
+                        , requiresAllocator = True
+                        }
 
                 "padRight" ->
-                    Just { qualification = [], name = "string_pad_right" }
+                    Just
+                        { qualification = []
+                        , name = "string_pad_right"
+                        , requiresAllocator = True
+                        }
 
                 "replace" ->
-                    Just { qualification = [], name = "string_replace" }
+                    Just
+                        { qualification = []
+                        , name = "string_replace"
+                        , requiresAllocator = True
+                        }
 
                 "toList" ->
-                    Just { qualification = [], name = "string_toList" }
+                    Just
+                        { qualification = []
+                        , name = "string_toList"
+                        , requiresAllocator = True
+                        }
 
                 "foldl" ->
-                    Just { qualification = [], name = "string_foldl" }
+                    Just
+                        { qualification = []
+                        , name = "string_foldl"
+                        , requiresAllocator = False
+                        }
 
                 "foldr" ->
-                    Just { qualification = [], name = "string_foldr" }
+                    Just
+                        { qualification = []
+                        , name = "string_foldr"
+                        , requiresAllocator = False
+                        }
 
                 "join" ->
-                    Just { qualification = [], name = "string_join" }
+                    Just
+                        { qualification = []
+                        , name = "string_join"
+                        , requiresAllocator = True
+                        }
 
                 "filter" ->
-                    Just { qualification = [], name = "string_filter" }
+                    Just
+                        { qualification = []
+                        , name = "string_filter"
+                        , requiresAllocator = True
+                        }
 
                 "any" ->
-                    Just { qualification = [], name = "string_any" }
+                    Just
+                        { qualification = []
+                        , name = "string_any"
+                        , requiresAllocator = False
+                        }
 
                 "all" ->
-                    Just { qualification = [], name = "string_all" }
+                    Just
+                        { qualification = []
+                        , name = "string_all"
+                        , requiresAllocator = False
+                        }
 
                 "map" ->
-                    Just { qualification = [], name = "string_map" }
+                    Just
+                        { qualification = []
+                        , name = "string_map"
+                        , requiresAllocator = True
+                        }
 
                 "repeat" ->
-                    Just { qualification = [], name = "string_repeat" }
+                    Just
+                        { qualification = []
+                        , name = "string_repeat"
+                        , requiresAllocator = True
+                        }
 
                 "split" ->
-                    Just { qualification = [], name = "string_split" }
+                    Just
+                        { qualification = []
+                        , name = "string_split"
+                        , requiresAllocator = True
+                        }
 
                 "lines" ->
-                    Just { qualification = [], name = "string_lines" }
+                    Just
+                        { qualification = []
+                        , name = "string_lines"
+                        , requiresAllocator = True
+                        }
 
                 "words" ->
-                    Just { qualification = [], name = "string_words" }
+                    Just
+                        { qualification = []
+                        , name = "string_words"
+                        , requiresAllocator = True
+                        }
 
                 "startsWith" ->
-                    Just { qualification = [], name = "string_starts_with" }
+                    Just
+                        { qualification = []
+                        , name = "string_starts_with"
+                        , requiresAllocator = False
+                        }
 
                 "endsWith" ->
-                    Just { qualification = [], name = "string_ends_with" }
+                    Just
+                        { qualification = []
+                        , name = "string_ends_with"
+                        , requiresAllocator = False
+                        }
 
                 "toInt" ->
-                    Just { qualification = [], name = "string_to_int" }
+                    Just
+                        { qualification = []
+                        , name = "string_to_int"
+                        , requiresAllocator = False
+                        }
 
                 "toFloat" ->
-                    Just { qualification = [], name = "string_to_float" }
+                    Just
+                        { qualification = []
+                        , name = "string_to_float"
+                        , requiresAllocator = False
+                        }
 
                 "fromInt" ->
-                    Just { qualification = [], name = "string_from_int" }
+                    Just
+                        { qualification = []
+                        , name = "string_from_int"
+                        , requiresAllocator = True
+                        }
 
                 "fromFloat" ->
-                    Just { qualification = [], name = "string_from_float" }
+                    Just
+                        { qualification = []
+                        , name = "string_from_float"
+                        , requiresAllocator = True
+                        }
 
                 "contains" ->
-                    Just { qualification = [], name = "string_contains" }
+                    Just
+                        { qualification = []
+                        , name = "string_contains"
+                        , requiresAllocator = False
+                        }
 
                 "fromChar" ->
-                    Just { qualification = [], name = "string_from_char" }
+                    Just
+                        { qualification = []
+                        , name = "string_from_char"
+                        , requiresAllocator = True
+                        }
 
                 "cons" ->
-                    Just { qualification = [], name = "string_cons" }
+                    Just
+                        { qualification = []
+                        , name = "string_cons"
+                        , requiresAllocator = True
+                        }
 
                 "uncons" ->
-                    Just { qualification = [], name = "string_uncons" }
+                    Just
+                        { qualification = []
+                        , name = "string_uncons"
+                        , requiresAllocator = False
+                        }
 
                 "slice" ->
-                    Just { qualification = [], name = "string_slice" }
+                    Just
+                        { qualification = []
+                        , name = "string_slice"
+                        , requiresAllocator = False
+                        }
 
                 "toLower" ->
-                    Just { qualification = [], name = "string_to_lower" }
+                    Just
+                        { qualification = []
+                        , name = "string_to_lower"
+                        , requiresAllocator = True
+                        }
 
                 "toUpper" ->
-                    Just { qualification = [], name = "string_to_upper" }
+                    Just
+                        { qualification = []
+                        , name = "string_to_upper"
+                        , requiresAllocator = True
+                        }
 
                 _ ->
                     Nothing
@@ -2999,43 +3484,95 @@ referenceToCoreRust reference =
         "Char" ->
             case reference.name of
                 "toCode" ->
-                    Just { qualification = [], name = "Char_to_code" }
+                    Just
+                        { qualification = []
+                        , name = "char_to_code"
+                        , requiresAllocator = False
+                        }
 
                 "fromCode" ->
-                    Just { qualification = [], name = "Char_from_code" }
+                    Just
+                        { qualification = []
+                        , name = "char_from_code"
+                        , requiresAllocator = False
+                        }
 
                 "toLower" ->
-                    Just { qualification = [], name = "Char_to_lower" }
+                    Just
+                        { qualification = []
+                        , name = "char_to_lower"
+                        , requiresAllocator = False
+                        }
 
                 "toUpper" ->
-                    Just { qualification = [], name = "Char_to_upper" }
+                    Just
+                        { qualification = []
+                        , name = "char_to_upper"
+                        , requiresAllocator = False
+                        }
 
                 "toLocaleLower" ->
-                    Just { qualification = [], name = "Char_to_lower" }
+                    Just
+                        { qualification = []
+                        , name = "char_to_lower"
+                        , requiresAllocator = False
+                        }
 
                 "toLocaleUpper" ->
-                    Just { qualification = [], name = "Char_to_upper" }
+                    Just
+                        { qualification = []
+                        , name = "char_to_upper"
+                        , requiresAllocator = False
+                        }
 
                 "isLower" ->
-                    Just { qualification = [], name = "Char_isLower" }
+                    Just
+                        { qualification = []
+                        , name = "char_is_lower"
+                        , requiresAllocator = False
+                        }
 
                 "isUpper" ->
-                    Just { qualification = [], name = "Char_isUpper" }
+                    Just
+                        { qualification = []
+                        , name = "char_is_upper"
+                        , requiresAllocator = False
+                        }
 
                 "isHexDigit" ->
-                    Just { qualification = [], name = "Char_isHexDigit" }
+                    Just
+                        { qualification = []
+                        , name = "char_is_hex_digit"
+                        , requiresAllocator = False
+                        }
 
                 "isOctDigit" ->
-                    Just { qualification = [], name = "Char_isOctDigit" }
+                    Just
+                        { qualification = []
+                        , name = "char_isOctDigit"
+                        , requiresAllocator = False
+                        }
 
                 "isDigit" ->
-                    Just { qualification = [], name = "Char_isDigit" }
+                    Just
+                        { qualification = []
+                        , name = "char_is_digit"
+                        , requiresAllocator = False
+                        }
 
                 "isAlpha" ->
-                    Just { qualification = [], name = "Char_isAlpha" }
+                    Just
+                        { qualification = []
+                        , name = "char_is_alpha"
+                        , requiresAllocator = False
+                        }
 
                 "isAlphaNum" ->
-                    Just { qualification = [], name = "Char_isAlphaNum" }
+                    Just
+                        { qualification = []
+                        , name = "char_is_alpha_num"
+                        , requiresAllocator = False
+                        }
 
                 _ ->
                     Nothing
@@ -3043,112 +3580,256 @@ referenceToCoreRust reference =
         "List" ->
             case reference.name of
                 "singleton" ->
-                    Just { qualification = [], name = "list_singleton" }
+                    Just
+                        { qualification = []
+                        , name = "list_singleton"
+                        , requiresAllocator = True
+                        }
 
                 "isEmpty" ->
-                    Just { qualification = [], name = "list_isEmpty" }
+                    Just
+                        { qualification = []
+                        , name = "list_isEmpty"
+                        , requiresAllocator = False
+                        }
 
                 "length" ->
-                    Just { qualification = [], name = "list_length" }
+                    Just
+                        { qualification = []
+                        , name = "list_length"
+                        , requiresAllocator = False
+                        }
 
                 "member" ->
-                    Just { qualification = [], name = "list_member" }
+                    Just
+                        { qualification = []
+                        , name = "list_member"
+                        , requiresAllocator = False
+                        }
 
                 "minimum" ->
-                    Just { qualification = [], name = "list_minimum" }
+                    Just
+                        { qualification = []
+                        , name = "list_minimum"
+                        , requiresAllocator = False
+                        }
 
                 "maximum" ->
-                    Just { qualification = [], name = "list_maximum" }
+                    Just
+                        { qualification = []
+                        , name = "list_maximum"
+                        , requiresAllocator = False
+                        }
 
                 "sum" ->
-                    Just { qualification = [], name = "list_sum" }
+                    Just
+                        { qualification = []
+                        , name = "list_sum"
+                        , requiresAllocator = False
+                        }
 
                 "product" ->
-                    Just { qualification = [], name = "list_product" }
+                    Just
+                        { qualification = []
+                        , name = "list_product"
+                        , requiresAllocator = False
+                        }
 
                 "append" ->
-                    Just { qualification = [], name = "list_append" }
+                    Just
+                        { qualification = []
+                        , name = "list_append"
+                        , requiresAllocator = True
+                        }
 
                 "concat" ->
-                    Just { qualification = [], name = "list_concat" }
+                    Just
+                        { qualification = []
+                        , name = "list_concat"
+                        , requiresAllocator = True
+                        }
 
                 "reverse" ->
-                    Just { qualification = [], name = "list_reverse" }
+                    Just
+                        { qualification = []
+                        , name = "list_reverse"
+                        , requiresAllocator = True
+                        }
 
                 "repeat" ->
-                    Just { qualification = [], name = "list_repeat" }
+                    Just
+                        { qualification = []
+                        , name = "list_repeat"
+                        , requiresAllocator = True
+                        }
 
                 "head" ->
-                    Just { qualification = [], name = "list_head" }
+                    Just
+                        { qualification = []
+                        , name = "list_head"
+                        , requiresAllocator = False
+                        }
 
                 "tail" ->
-                    Just { qualification = [], name = "list_tail" }
+                    Just
+                        { qualification = []
+                        , name = "list_tail"
+                        , requiresAllocator = False
+                        }
 
                 "all" ->
-                    Just { qualification = [], name = "list_all" }
+                    Just
+                        { qualification = []
+                        , name = "list_all"
+                        , requiresAllocator = False
+                        }
 
                 "any" ->
-                    Just { qualification = [], name = "list_any" }
+                    Just
+                        { qualification = []
+                        , name = "list_any"
+                        , requiresAllocator = False
+                        }
 
                 "filter" ->
-                    Just { qualification = [], name = "list_filter" }
+                    Just
+                        { qualification = []
+                        , name = "list_filter"
+                        , requiresAllocator = True
+                        }
 
                 "filterMap" ->
-                    Just { qualification = [], name = "list_filterMap" }
+                    Just
+                        { qualification = []
+                        , name = "list_filter_map"
+                        , requiresAllocator = True
+                        }
 
                 "map" ->
-                    Just { qualification = [], name = "list_map" }
+                    Just
+                        { qualification = []
+                        , name = "list_map"
+                        , requiresAllocator = True
+                        }
 
                 "indexedMap" ->
-                    Just { qualification = [], name = "list_indexedMap" }
+                    Just
+                        { qualification = []
+                        , name = "list_indexed_map"
+                        , requiresAllocator = True
+                        }
 
                 "map2" ->
-                    Just { qualification = [], name = "list_map2" }
+                    Just
+                        { qualification = []
+                        , name = "list_map2"
+                        , requiresAllocator = True
+                        }
 
                 "zip" ->
-                    Just { qualification = [], name = "list_zip" }
+                    Just
+                        { qualification = []
+                        , name = "list_zip"
+                        , requiresAllocator = True
+                        }
 
                 "map3" ->
-                    Just { qualification = [], name = "list_map3" }
+                    Just
+                        { qualification = []
+                        , name = "list_map3"
+                        , requiresAllocator = True
+                        }
 
                 "map4" ->
-                    Just { qualification = [], name = "list_map4" }
+                    Just
+                        { qualification = []
+                        , name = "list_map4"
+                        , requiresAllocator = True
+                        }
 
                 "map5" ->
-                    Just { qualification = [], name = "list_map5" }
+                    Just
+                        { qualification = []
+                        , name = "list_map5"
+                        , requiresAllocator = True
+                        }
 
                 "unzip" ->
-                    Just { qualification = [], name = "list_unzip" }
+                    Just
+                        { qualification = []
+                        , name = "list_unzip"
+                        , requiresAllocator = True
+                        }
 
                 "concatMap" ->
-                    Just { qualification = [], name = "list_concatMap" }
+                    Just
+                        { qualification = []
+                        , name = "list_concat_map"
+                        , requiresAllocator = True
+                        }
 
                 "sort" ->
-                    Just { qualification = [], name = "list_sort" }
+                    Just
+                        { qualification = []
+                        , name = "list_sort"
+                        , requiresAllocator = True
+                        }
 
                 "sortBy" ->
-                    Just { qualification = [], name = "list_sortBy" }
+                    Just
+                        { qualification = []
+                        , name = "list_sort_by"
+                        , requiresAllocator = True
+                        }
 
                 "sortWith" ->
-                    Just { qualification = [], name = "list_sortWith" }
+                    Just
+                        { qualification = []
+                        , name = "list_sort_with"
+                        , requiresAllocator = True
+                        }
 
                 "range" ->
-                    Just { qualification = [], name = "list_range" }
+                    Just
+                        { qualification = []
+                        , name = "list_range"
+                        , requiresAllocator = True
+                        }
 
                 "take" ->
-                    Just { qualification = [], name = "list_take" }
+                    Just
+                        { qualification = []
+                        , name = "list_take"
+                        , requiresAllocator = True
+                        }
 
                 "drop" ->
-                    Just { qualification = [], name = "list_drop" }
+                    Just
+                        { qualification = []
+                        , name = "list_drop"
+                        , requiresAllocator = False
+                        }
 
                 "intersperse" ->
-                    Just { qualification = [], name = "list_intersperse" }
+                    Just
+                        { qualification = []
+                        , name = "list_intersperse"
+                        , requiresAllocator = True
+                        }
 
                 "foldl" ->
-                    Just { qualification = [], name = "list_foldl" }
+                    Just
+                        { qualification = []
+                        , name = "list_foldl"
+                        , requiresAllocator = False
+                        }
 
                 "foldr" ->
-                    Just { qualification = [], name = "list_foldr" }
+                    Just
+                        { qualification = []
+                        , name = "list_foldr"
+                        , requiresAllocator = False
+                        }
 
                 _ ->
                     Nothing
@@ -3156,25 +3837,53 @@ referenceToCoreRust reference =
         "Maybe" ->
             case reference.name of
                 "withDefault" ->
-                    Just { qualification = [], name = "Maybe_withDefault" }
+                    Just
+                        { qualification = []
+                        , name = "maybe_with_default"
+                        , requiresAllocator = False
+                        }
 
                 "map" ->
-                    Just { qualification = [], name = "Maybe_map" }
+                    Just
+                        { qualification = []
+                        , name = "maybe_map"
+                        , requiresAllocator = False
+                        }
 
                 "map2" ->
-                    Just { qualification = [], name = "Maybe_map2" }
+                    Just
+                        { qualification = []
+                        , name = "maybe_map2"
+                        , requiresAllocator = False
+                        }
 
                 "map3" ->
-                    Just { qualification = [], name = "Maybe_map3" }
+                    Just
+                        { qualification = []
+                        , name = "maybe_map3"
+                        , requiresAllocator = False
+                        }
 
                 "map4" ->
-                    Just { qualification = [], name = "Maybe_map4" }
+                    Just
+                        { qualification = []
+                        , name = "maybe_map4"
+                        , requiresAllocator = False
+                        }
 
                 "map5" ->
-                    Just { qualification = [], name = "Maybe_map5" }
+                    Just
+                        { qualification = []
+                        , name = "maybe_map5"
+                        , requiresAllocator = False
+                        }
 
                 "andThen" ->
-                    Just { qualification = [], name = "Maybe_andThen" }
+                    Just
+                        { qualification = []
+                        , name = "maybe_and_then"
+                        , requiresAllocator = False
+                        }
 
                 _ ->
                     Nothing
@@ -3182,34 +3891,74 @@ referenceToCoreRust reference =
         "Result" ->
             case reference.name of
                 "map" ->
-                    Just { qualification = [], name = "Result_map" }
+                    Just
+                        { qualification = []
+                        , name = "result_map"
+                        , requiresAllocator = False
+                        }
 
                 "map2" ->
-                    Just { qualification = [], name = "Result_map2" }
+                    Just
+                        { qualification = []
+                        , name = "result_map2"
+                        , requiresAllocator = False
+                        }
 
                 "map3" ->
-                    Just { qualification = [], name = "Result_map3" }
+                    Just
+                        { qualification = []
+                        , name = "result_map3"
+                        , requiresAllocator = False
+                        }
 
                 "map4" ->
-                    Just { qualification = [], name = "Result_map4" }
+                    Just
+                        { qualification = []
+                        , name = "result_map4"
+                        , requiresAllocator = False
+                        }
 
                 "map5" ->
-                    Just { qualification = [], name = "Result_map5" }
+                    Just
+                        { qualification = []
+                        , name = "result_map5"
+                        , requiresAllocator = False
+                        }
 
                 "andThen" ->
-                    Just { qualification = [], name = "Result_andThen" }
+                    Just
+                        { qualification = []
+                        , name = "result_and_then"
+                        , requiresAllocator = False
+                        }
 
                 "withDefault" ->
-                    Just { qualification = [], name = "Result_withDefault" }
+                    Just
+                        { qualification = []
+                        , name = "result_with_default"
+                        , requiresAllocator = False
+                        }
 
                 "toMaybe" ->
-                    Just { qualification = [], name = "Result_toMaybe" }
+                    Just
+                        { qualification = []
+                        , name = "result_to_maybe"
+                        , requiresAllocator = False
+                        }
 
                 "fromMaybe" ->
-                    Just { qualification = [], name = "Result_fromMaybe" }
+                    Just
+                        { qualification = []
+                        , name = "result_from_maybe"
+                        , requiresAllocator = False
+                        }
 
                 "mapError" ->
-                    Just { qualification = [], name = "Result_mapError" }
+                    Just
+                        { qualification = []
+                        , name = "result_map_error"
+                        , requiresAllocator = False
+                        }
 
                 _ ->
                     Nothing
@@ -3217,590 +3966,137 @@ referenceToCoreRust reference =
         "Array" ->
             case reference.name of
                 "isEmpty" ->
-                    Just { qualification = [], name = "array_isEmpty" }
+                    Just
+                        { qualification = []
+                        , name = "array_is_empty"
+                        , requiresAllocator = False
+                        }
 
                 "length" ->
-                    Just { qualification = [], name = "array_length" }
+                    Just
+                        { qualification = []
+                        , name = "array_length"
+                        , requiresAllocator = False
+                        }
 
                 "get" ->
-                    Just { qualification = [], name = "array_get" }
+                    Just
+                        { qualification = []
+                        , name = "array_get"
+                        , requiresAllocator = False
+                        }
 
                 "empty" ->
-                    Just { qualification = [], name = "array_empty" }
+                    Just
+                        { qualification = []
+                        , name = "array_empty"
+                        , requiresAllocator = False
+                        }
 
                 "initialize" ->
-                    Just { qualification = [], name = "array_initialize" }
+                    Just
+                        { qualification = []
+                        , name = "array_initialize"
+                        , requiresAllocator = True
+                        }
 
                 "repeat" ->
-                    Just { qualification = [], name = "array_repeat" }
+                    Just
+                        { qualification = []
+                        , name = "array_repeat"
+                        , requiresAllocator = True
+                        }
 
                 "fromList" ->
-                    Just { qualification = [], name = "array_fromList" }
+                    Just
+                        { qualification = []
+                        , name = "array_from_list"
+                        , requiresAllocator = True
+                        }
 
                 "reverse" ->
-                    Just { qualification = [], name = "array_reverse" }
+                    Just
+                        { qualification = []
+                        , name = "array_reverse"
+                        , requiresAllocator = True
+                        }
 
                 "filter" ->
-                    Just { qualification = [], name = "array_filter" }
+                    Just
+                        { qualification = []
+                        , name = "array_filter"
+                        , requiresAllocator = True
+                        }
 
                 "push" ->
-                    Just { qualification = [], name = "array_push" }
+                    Just
+                        { qualification = []
+                        , name = "array_push"
+                        , requiresAllocator = True
+                        }
 
                 "set" ->
-                    Just { qualification = [], name = "array_set" }
+                    Just
+                        { qualification = []
+                        , name = "array_set"
+                        , requiresAllocator = True
+                        }
 
                 "slice" ->
-                    Just { qualification = [], name = "array_slice" }
+                    Just
+                        { qualification = []
+                        , name = "array_slice"
+                        , requiresAllocator = False
+                        }
 
                 "map" ->
-                    Just { qualification = [], name = "array_map" }
+                    Just
+                        { qualification = []
+                        , name = "array_map"
+                        , requiresAllocator = True
+                        }
 
                 "indexedMap" ->
-                    Just { qualification = [], name = "array_indexedMap" }
+                    Just
+                        { qualification = []
+                        , name = "array_indexed_map"
+                        , requiresAllocator = True
+                        }
 
                 "append" ->
-                    Just { qualification = [], name = "array_append" }
+                    Just
+                        { qualification = []
+                        , name = "array_append"
+                        , requiresAllocator = True
+                        }
 
                 "toList" ->
-                    Just { qualification = [], name = "array_toList" }
+                    Just
+                        { qualification = []
+                        , name = "array_to_list"
+                        , requiresAllocator = True
+                        }
 
                 "toIndexedList" ->
-                    Just { qualification = [], name = "array_toIndexedList" }
+                    Just
+                        { qualification = []
+                        , name = "array_to_indexed_list"
+                        , requiresAllocator = True
+                        }
 
                 "foldl" ->
-                    Just { qualification = [], name = "array_foldl" }
+                    Just
+                        { qualification = []
+                        , name = "array_foldl"
+                        , requiresAllocator = False
+                        }
 
                 "foldr" ->
-                    Just { qualification = [], name = "array_foldr" }
-
-                _ ->
-                    Nothing
-
-        "Json.Encode" ->
-            case reference.name of
-                "encode" ->
-                    Just { qualification = [], name = "json_encode_encode" }
-
-                "null" ->
-                    Just { qualification = [], name = "json_encode_null" }
-
-                "bool" ->
-                    Just { qualification = [], name = "json_encode_bool" }
-
-                "string" ->
-                    Just { qualification = [], name = "json_encode_string" }
-
-                "int" ->
-                    Just { qualification = [], name = "json_encode_int" }
-
-                "float" ->
-                    Just { qualification = [], name = "json_encode_float" }
-
-                "list" ->
-                    Just { qualification = [], name = "json_encode_list" }
-
-                "array" ->
-                    Just { qualification = [], name = "json_encode_array" }
-
-                "set" ->
-                    Just { qualification = [], name = "json_encode_set" }
-
-                "object" ->
-                    Just { qualification = [], name = "json_encode_object" }
-
-                "dict" ->
-                    Just { qualification = [], name = "json_encode_dict" }
-
-                _ ->
-                    Nothing
-
-        "Json.Decode" ->
-            case reference.name of
-                "string" ->
-                    Just { qualification = [], name = "json_decode_string" }
-
-                "bool" ->
-                    Just { qualification = [], name = "json_decode_bool" }
-
-                "int" ->
-                    Just { qualification = [], name = "json_decode_int" }
-
-                "float" ->
-                    Just { qualification = [], name = "json_decode_float" }
-
-                "nullable" ->
-                    Just { qualification = [], name = "json_decode_nullable" }
-
-                "list" ->
-                    Just { qualification = [], name = "json_decode_list" }
-
-                "array" ->
-                    Just { qualification = [], name = "json_decode_array" }
-
-                "dict" ->
-                    Just { qualification = [], name = "json_decode_dict" }
-
-                "keyValuePairs" ->
-                    Just { qualification = [], name = "json_decode_keyValuePairs" }
-
-                "oneOrMore" ->
-                    Just { qualification = [], name = "json_decode_oneOrMore" }
-
-                "field" ->
-                    Just { qualification = [], name = "json_decode_field" }
-
-                "at" ->
-                    Just { qualification = [], name = "json_decode_at" }
-
-                "index" ->
-                    Just { qualification = [], name = "json_decode_index" }
-
-                "maybe" ->
-                    Just { qualification = [], name = "json_decode_maybe" }
-
-                "oneOf" ->
-                    Just { qualification = [], name = "json_decode_oneOf" }
-
-                "decodeString" ->
-                    Just { qualification = [], name = "json_decode_decodeString" }
-
-                "decodeValue" ->
-                    Just { qualification = [], name = "json_decode_decodeValue" }
-
-                "errorToString" ->
-                    Just { qualification = [], name = "json_decode_errorToString" }
-
-                "map" ->
-                    Just { qualification = [], name = "json_decode_map" }
-
-                "map2" ->
-                    Just { qualification = [], name = "json_decode_map2" }
-
-                "map3" ->
-                    Just { qualification = [], name = "json_decode_map3" }
-
-                "map4" ->
-                    Just { qualification = [], name = "json_decode_map4" }
-
-                "map5" ->
-                    Just { qualification = [], name = "json_decode_map5" }
-
-                "map6" ->
-                    Just { qualification = [], name = "json_decode_map6" }
-
-                "map7" ->
-                    Just { qualification = [], name = "json_decode_map7" }
-
-                "map8" ->
-                    Just { qualification = [], name = "json_decode_map8" }
-
-                "lazy" ->
-                    Just { qualification = [], name = "json_decode_lazy" }
-
-                "value" ->
-                    Just { qualification = [], name = "json_decode_value" }
-
-                "null" ->
-                    Just { qualification = [], name = "json_decode_null" }
-
-                "succeed" ->
-                    Just { qualification = [], name = "json_decode_succeed" }
-
-                "fail" ->
-                    Just { qualification = [], name = "json_decode_fail" }
-
-                "andThen" ->
-                    Just { qualification = [], name = "json_decode_andThen" }
-
-                _ ->
-                    Nothing
-
-        "Regex" ->
-            case reference.name of
-                "fromString" ->
-                    Just { qualification = [], name = "regex_fromString" }
-
-                "fromStringWith" ->
-                    Just { qualification = [], name = "regex_fromStringWith" }
-
-                "never" ->
-                    Just { qualification = [], name = "regex_never" }
-
-                "contains" ->
-                    Just { qualification = [], name = "regex_contains" }
-
-                "split" ->
-                    Just { qualification = [], name = "regex_split" }
-
-                "find" ->
-                    Just { qualification = [], name = "regex_find" }
-
-                "replace" ->
-                    Just { qualification = [], name = "regex_replace" }
-
-                "splitAtMost" ->
-                    Just { qualification = [], name = "regex_splitAtMost" }
-
-                "findAtMost" ->
-                    Just { qualification = [], name = "regex_findAtMost" }
-
-                "replaceAtMost" ->
-                    Just { qualification = [], name = "regex_replaceAtMost" }
-
-                _ ->
-                    Nothing
-
-        "Random" ->
-            case reference.name of
-                "int" ->
-                    Just { qualification = [], name = "random_int" }
-
-                "float" ->
-                    Just { qualification = [], name = "random_float" }
-
-                "uniform" ->
-                    Just { qualification = [], name = "random_uniform" }
-
-                "weighted" ->
-                    Just { qualification = [], name = "random_weighted" }
-
-                "constant" ->
-                    Just { qualification = [], name = "random_constant" }
-
-                "list" ->
-                    Just { qualification = [], name = "random_list" }
-
-                "pair" ->
-                    Just { qualification = [], name = "random_pair" }
-
-                "map" ->
-                    Just { qualification = [], name = "random_map" }
-
-                "map2" ->
-                    Just { qualification = [], name = "random_map2" }
-
-                "map3" ->
-                    Just { qualification = [], name = "random_map3" }
-
-                "map4" ->
-                    Just { qualification = [], name = "random_map4" }
-
-                "map5" ->
-                    Just { qualification = [], name = "random_map5" }
-
-                "andThen" ->
-                    Just { qualification = [], name = "random_andThen" }
-
-                "lazy" ->
-                    Just { qualification = [], name = "random_lazy" }
-
-                "minInt" ->
-                    Just { qualification = [], name = "random_minInt" }
-
-                "maxInt" ->
-                    Just { qualification = [], name = "random_maxInt" }
-
-                "step" ->
-                    Just { qualification = [], name = "random_step" }
-
-                "initialSeed" ->
-                    Just { qualification = [], name = "random_initialSeed" }
-
-                "independentSeed" ->
-                    Just { qualification = [], name = "random_independentSeed" }
-
-                _ ->
-                    Nothing
-
-        "Time" ->
-            case reference.name of
-                "posixToMillis" ->
-                    Just { qualification = [], name = "time_posixToMillis" }
-
-                "millisToPosix" ->
-                    Just { qualification = [], name = "time_millisToPosix" }
-
-                "utc" ->
-                    Just { qualification = [], name = "time_utc" }
-
-                "toYear" ->
-                    Just { qualification = [], name = "time_toYear" }
-
-                "toMonth" ->
-                    Just { qualification = [], name = "time_toMonth" }
-
-                "toDay" ->
-                    Just { qualification = [], name = "time_toDay" }
-
-                "toWeekday" ->
-                    Just { qualification = [], name = "time_toWeekday" }
-
-                "toHour" ->
-                    Just { qualification = [], name = "time_toHour" }
-
-                "toMinute" ->
-                    Just { qualification = [], name = "time_toMinute" }
-
-                "toSecond" ->
-                    Just { qualification = [], name = "time_toSecond" }
-
-                "toMillis" ->
-                    Just { qualification = [], name = "time_toMillis" }
-
-                "customZone" ->
-                    Just { qualification = [], name = "time_customZone" }
-
-                _ ->
-                    Nothing
-
-        "Bytes" ->
-            case reference.name of
-                "width" ->
-                    Just { qualification = [], name = "bytes_width" }
-
-                _ ->
-                    Nothing
-
-        "Bytes.Decode" ->
-            case reference.name of
-                "Loop" ->
-                    Just { qualification = [], name = "BytesDecode_Loop" }
-
-                "Done" ->
-                    Just { qualification = [], name = "BytesDecode_Done" }
-
-                "decode" ->
-                    Just { qualification = [], name = "BytesDecode_decode" }
-
-                "signedInt8" ->
-                    Just { qualification = [], name = "BytesDecode_signedInt8" }
-
-                "signedInt16" ->
-                    Just { qualification = [], name = "BytesDecode_signedInt16" }
-
-                "signedInt32" ->
-                    Just { qualification = [], name = "BytesDecode_signedInt32" }
-
-                "unsignedInt8" ->
-                    Just { qualification = [], name = "BytesDecode_unsignedInt8" }
-
-                "unsignedInt16" ->
-                    Just { qualification = [], name = "BytesDecode_unsignedInt16" }
-
-                "unsignedInt32" ->
-                    Just { qualification = [], name = "BytesDecode_unsignedInt32" }
-
-                "float32" ->
-                    Just { qualification = [], name = "BytesDecode_float32" }
-
-                "float64" ->
-                    Just { qualification = [], name = "BytesDecode_float64" }
-
-                "string" ->
-                    Just { qualification = [], name = "BytesDecode_string" }
-
-                "bytes" ->
-                    Just { qualification = [], name = "BytesDecode_bytes" }
-
-                "map" ->
-                    Just { qualification = [], name = "BytesDecode_map" }
-
-                "map2" ->
-                    Just { qualification = [], name = "BytesDecode_map2" }
-
-                "map3" ->
-                    Just { qualification = [], name = "BytesDecode_map3" }
-
-                "map4" ->
-                    Just { qualification = [], name = "BytesDecode_map4" }
-
-                "map5" ->
-                    Just { qualification = [], name = "BytesDecode_map5" }
-
-                "andThen" ->
-                    Just { qualification = [], name = "BytesDecode_andThen" }
-
-                "succeed" ->
-                    Just { qualification = [], name = "BytesDecode_succeed" }
-
-                "fail" ->
-                    Just { qualification = [], name = "BytesDecode_fail" }
-
-                "loop" ->
-                    Just { qualification = [], name = "BytesDecode_loop" }
-
-                _ ->
-                    Nothing
-
-        "Bytes.Encode" ->
-            case reference.name of
-                "encode" ->
-                    Just { qualification = [], name = "BytesEncode_encode" }
-
-                "signedInt8" ->
-                    Just { qualification = [], name = "BytesEncode_signedInt8" }
-
-                "signedInt16" ->
-                    Just { qualification = [], name = "BytesEncode_signedInt16" }
-
-                "signedInt32" ->
-                    Just { qualification = [], name = "BytesEncode_signedInt32" }
-
-                "unsignedInt8" ->
-                    Just { qualification = [], name = "BytesEncode_unsignedInt8" }
-
-                "unsignedInt16" ->
-                    Just { qualification = [], name = "BytesEncode_unsignedInt16" }
-
-                "unsignedInt32" ->
-                    Just { qualification = [], name = "BytesEncode_unsignedInt32" }
-
-                "float32" ->
-                    Just { qualification = [], name = "BytesEncode_float32" }
-
-                "float64" ->
-                    Just { qualification = [], name = "BytesEncode_float64" }
-
-                "bytes" ->
-                    Just { qualification = [], name = "BytesEncode_bytes" }
-
-                "string" ->
-                    Just { qualification = [], name = "BytesEncode_string" }
-
-                "getStringWidth" ->
-                    Just { qualification = [], name = "BytesEncode_getStringWidth" }
-
-                "sequence" ->
-                    Just { qualification = [], name = "BytesEncode_sequence" }
-
-                _ ->
-                    Nothing
-
-        "Elm.Kernel.Parser" ->
-            case reference.name of
-                "isSubString" ->
-                    Just { qualification = [], name = "ElmKernelParser_isSubString" }
-
-                "isSubChar" ->
-                    Just { qualification = [], name = "ElmKernelParser_isSubChar" }
-
-                "isAsciiCode" ->
-                    Just { qualification = [], name = "ElmKernelParser_isAsciiCode" }
-
-                "chompBase10" ->
-                    Just { qualification = [], name = "ElmKernelParser_chompBase10" }
-
-                "consumeBase" ->
-                    Just { qualification = [], name = "ElmKernelParser_consumeBase" }
-
-                "consumeBase16" ->
-                    Just { qualification = [], name = "ElmKernelParser_consumeBase16" }
-
-                "findSubString" ->
-                    Just { qualification = [], name = "ElmKernelParser_findSubString" }
-
-                _ ->
-                    Nothing
-
-        "Elm.Kernel.VirtualDom" ->
-            case reference.name of
-                "property" ->
-                    Just { qualification = [], name = "VirtualDom_property" }
-
-                "attribute" ->
-                    Just { qualification = [], name = "VirtualDom_attribute" }
-
-                "attributeNS" ->
-                    Just { qualification = [], name = "VirtualDom_attributeNS" }
-
-                "node" ->
-                    Just { qualification = [], name = "VirtualDom_node" }
-
-                "nodeNS" ->
-                    Just { qualification = [], name = "VirtualDom_nodeNS" }
-
-                "noJavaScriptOrHtmlUri" ->
-                    Just { qualification = [], name = "VirtualDom_noJavaScriptOrHtmlUri" }
-
-                "noJavaScriptUri" ->
-                    Just { qualification = [], name = "VirtualDom_noJavaScriptUri" }
-
-                _ ->
-                    Nothing
-
-        "VirtualDom" ->
-            case reference.name of
-                "Normal" ->
-                    Just { qualification = [], name = "VirtualDom_Normal" }
-
-                "MayStopPropagation" ->
-                    Just { qualification = [], name = "VirtualDom_MayStopPropagation" }
-
-                "MayPreventDefault" ->
-                    Just { qualification = [], name = "VirtualDom_MayPreventDefault" }
-
-                "Custom" ->
-                    Just { qualification = [], name = "VirtualDom_Custom" }
-
-                "text" ->
-                    Just { qualification = [], name = "VirtualDom_text" }
-
-                "node" ->
-                    Just { qualification = [], name = "VirtualDom_node" }
-
-                "nodeNS" ->
-                    Just { qualification = [], name = "VirtualDom_nodeNS" }
-
-                "style" ->
-                    Just { qualification = [], name = "VirtualDom_style" }
-
-                "property" ->
-                    Just { qualification = [], name = "VirtualDom_property" }
-
-                "attribute" ->
-                    Just { qualification = [], name = "VirtualDom_attribute" }
-
-                "attributeNS" ->
-                    Just { qualification = [], name = "VirtualDom_attributeNS" }
-
-                "on" ->
-                    Just { qualification = [], name = "VirtualDom_on" }
-
-                "map" ->
-                    Just { qualification = [], name = "VirtualDom_map" }
-
-                "mapAttribute" ->
-                    Just { qualification = [], name = "VirtualDom_mapAttribute" }
-
-                "keyedNode" ->
-                    Just { qualification = [], name = "VirtualDom_keyedNode" }
-
-                "keyedNodeNS" ->
-                    Just { qualification = [], name = "VirtualDom_keyedNodeNS" }
-
-                "lazy" ->
-                    Just { qualification = [], name = "VirtualDom_lazy" }
-
-                "lazy2" ->
-                    Just { qualification = [], name = "VirtualDom_lazy2" }
-
-                "lazy3" ->
-                    Just { qualification = [], name = "VirtualDom_lazy3" }
-
-                "lazy4" ->
-                    Just { qualification = [], name = "VirtualDom_lazy4" }
-
-                "lazy5" ->
-                    Just { qualification = [], name = "VirtualDom_lazy5" }
-
-                "lazy6" ->
-                    Just { qualification = [], name = "VirtualDom_lazy6" }
-
-                "lazy7" ->
-                    Just { qualification = [], name = "VirtualDom_lazy7" }
-
-                "lazy8" ->
-                    Just { qualification = [], name = "VirtualDom_lazy8" }
+                    Just
+                        { qualification = []
+                        , name = "array_foldr"
+                        , requiresAllocator = False
+                        }
 
                 _ ->
                     Nothing
@@ -3808,13 +4104,542 @@ referenceToCoreRust reference =
         "Debug" ->
             case reference.name of
                 "log" ->
-                    Just { qualification = [], name = "Debug_log" }
+                    Just { qualification = [], name = "Debug_log", requiresAllocator = False }
 
                 "toString" ->
-                    Just { qualification = [], name = "Debug_toString" }
+                    Just { qualification = [], name = "Debug_to_string", requiresAllocator = True }
 
                 "todo" ->
-                    Just { qualification = [], name = "Debug_todo" }
+                    Just { qualification = [], name = "Debug_todo", requiresAllocator = False }
+
+                _ ->
+                    Nothing
+
+        "Json.Encode" ->
+            case reference.name of
+                "encode" ->
+                    Just { qualification = [], name = "json_encode_encode", requiresAllocator = Debug.todo "" }
+
+                "null" ->
+                    Just { qualification = [], name = "json_encode_null", requiresAllocator = Debug.todo "" }
+
+                "bool" ->
+                    Just { qualification = [], name = "json_encode_bool", requiresAllocator = Debug.todo "" }
+
+                "string" ->
+                    Just { qualification = [], name = "json_encode_string", requiresAllocator = Debug.todo "" }
+
+                "int" ->
+                    Just { qualification = [], name = "json_encode_int", requiresAllocator = Debug.todo "" }
+
+                "float" ->
+                    Just { qualification = [], name = "json_encode_float", requiresAllocator = Debug.todo "" }
+
+                "list" ->
+                    Just { qualification = [], name = "json_encode_list", requiresAllocator = Debug.todo "" }
+
+                "array" ->
+                    Just { qualification = [], name = "json_encode_array", requiresAllocator = Debug.todo "" }
+
+                "set" ->
+                    Just { qualification = [], name = "json_encode_set", requiresAllocator = Debug.todo "" }
+
+                "object" ->
+                    Just { qualification = [], name = "json_encode_object", requiresAllocator = Debug.todo "" }
+
+                "dict" ->
+                    Just { qualification = [], name = "json_encode_dict", requiresAllocator = Debug.todo "" }
+
+                _ ->
+                    Nothing
+
+        "Json.Decode" ->
+            case reference.name of
+                "string" ->
+                    Just { qualification = [], name = "json_decode_string", requiresAllocator = Debug.todo "" }
+
+                "bool" ->
+                    Just { qualification = [], name = "json_decode_bool", requiresAllocator = Debug.todo "" }
+
+                "int" ->
+                    Just { qualification = [], name = "json_decode_int", requiresAllocator = Debug.todo "" }
+
+                "float" ->
+                    Just { qualification = [], name = "json_decode_float", requiresAllocator = Debug.todo "" }
+
+                "nullable" ->
+                    Just { qualification = [], name = "json_decode_nullable", requiresAllocator = Debug.todo "" }
+
+                "list" ->
+                    Just { qualification = [], name = "json_decode_list", requiresAllocator = Debug.todo "" }
+
+                "array" ->
+                    Just { qualification = [], name = "json_decode_array", requiresAllocator = Debug.todo "" }
+
+                "dict" ->
+                    Just { qualification = [], name = "json_decode_dict", requiresAllocator = Debug.todo "" }
+
+                "keyValuePairs" ->
+                    Just { qualification = [], name = "json_decode_keyValuePairs", requiresAllocator = Debug.todo "" }
+
+                "oneOrMore" ->
+                    Just { qualification = [], name = "json_decode_oneOrMore", requiresAllocator = Debug.todo "" }
+
+                "field" ->
+                    Just { qualification = [], name = "json_decode_field", requiresAllocator = Debug.todo "" }
+
+                "at" ->
+                    Just { qualification = [], name = "json_decode_at", requiresAllocator = Debug.todo "" }
+
+                "index" ->
+                    Just { qualification = [], name = "json_decode_index", requiresAllocator = Debug.todo "" }
+
+                "maybe" ->
+                    Just { qualification = [], name = "json_decode_maybe", requiresAllocator = Debug.todo "" }
+
+                "oneOf" ->
+                    Just { qualification = [], name = "json_decode_oneOf", requiresAllocator = Debug.todo "" }
+
+                "decodeString" ->
+                    Just { qualification = [], name = "json_decode_decodeString", requiresAllocator = Debug.todo "" }
+
+                "decodeValue" ->
+                    Just { qualification = [], name = "json_decode_decodeValue", requiresAllocator = Debug.todo "" }
+
+                "errorToString" ->
+                    Just { qualification = [], name = "json_decode_errorToString", requiresAllocator = Debug.todo "" }
+
+                "map" ->
+                    Just { qualification = [], name = "json_decode_map", requiresAllocator = Debug.todo "" }
+
+                "map2" ->
+                    Just { qualification = [], name = "json_decode_map2", requiresAllocator = Debug.todo "" }
+
+                "map3" ->
+                    Just { qualification = [], name = "json_decode_map3", requiresAllocator = Debug.todo "" }
+
+                "map4" ->
+                    Just { qualification = [], name = "json_decode_map4", requiresAllocator = Debug.todo "" }
+
+                "map5" ->
+                    Just { qualification = [], name = "json_decode_map5", requiresAllocator = Debug.todo "" }
+
+                "map6" ->
+                    Just { qualification = [], name = "json_decode_map6", requiresAllocator = Debug.todo "" }
+
+                "map7" ->
+                    Just { qualification = [], name = "json_decode_map7", requiresAllocator = Debug.todo "" }
+
+                "map8" ->
+                    Just { qualification = [], name = "json_decode_map8", requiresAllocator = Debug.todo "" }
+
+                "lazy" ->
+                    Just { qualification = [], name = "json_decode_lazy", requiresAllocator = Debug.todo "" }
+
+                "value" ->
+                    Just { qualification = [], name = "json_decode_value", requiresAllocator = Debug.todo "" }
+
+                "null" ->
+                    Just { qualification = [], name = "json_decode_null", requiresAllocator = Debug.todo "" }
+
+                "succeed" ->
+                    Just { qualification = [], name = "json_decode_succeed", requiresAllocator = Debug.todo "" }
+
+                "fail" ->
+                    Just { qualification = [], name = "json_decode_fail", requiresAllocator = Debug.todo "" }
+
+                "andThen" ->
+                    Just { qualification = [], name = "json_decode_andThen", requiresAllocator = Debug.todo "" }
+
+                _ ->
+                    Nothing
+
+        "Regex" ->
+            case reference.name of
+                "fromString" ->
+                    Just { qualification = [], name = "regex_fromString", requiresAllocator = Debug.todo "" }
+
+                "fromStringWith" ->
+                    Just { qualification = [], name = "regex_fromStringWith", requiresAllocator = Debug.todo "" }
+
+                "never" ->
+                    Just { qualification = [], name = "regex_never", requiresAllocator = Debug.todo "" }
+
+                "contains" ->
+                    Just { qualification = [], name = "regex_contains", requiresAllocator = Debug.todo "" }
+
+                "split" ->
+                    Just { qualification = [], name = "regex_split", requiresAllocator = Debug.todo "" }
+
+                "find" ->
+                    Just { qualification = [], name = "regex_find", requiresAllocator = Debug.todo "" }
+
+                "replace" ->
+                    Just { qualification = [], name = "regex_replace", requiresAllocator = Debug.todo "" }
+
+                "splitAtMost" ->
+                    Just { qualification = [], name = "regex_splitAtMost", requiresAllocator = Debug.todo "" }
+
+                "findAtMost" ->
+                    Just { qualification = [], name = "regex_findAtMost", requiresAllocator = Debug.todo "" }
+
+                "replaceAtMost" ->
+                    Just { qualification = [], name = "regex_replaceAtMost", requiresAllocator = Debug.todo "" }
+
+                _ ->
+                    Nothing
+
+        "Random" ->
+            case reference.name of
+                "int" ->
+                    Just { qualification = [], name = "random_int", requiresAllocator = Debug.todo "" }
+
+                "float" ->
+                    Just { qualification = [], name = "random_float", requiresAllocator = Debug.todo "" }
+
+                "uniform" ->
+                    Just { qualification = [], name = "random_uniform", requiresAllocator = Debug.todo "" }
+
+                "weighted" ->
+                    Just { qualification = [], name = "random_weighted", requiresAllocator = Debug.todo "" }
+
+                "constant" ->
+                    Just { qualification = [], name = "random_constant", requiresAllocator = Debug.todo "" }
+
+                "list" ->
+                    Just { qualification = [], name = "random_list", requiresAllocator = Debug.todo "" }
+
+                "pair" ->
+                    Just { qualification = [], name = "random_pair", requiresAllocator = Debug.todo "" }
+
+                "map" ->
+                    Just { qualification = [], name = "random_map", requiresAllocator = Debug.todo "" }
+
+                "map2" ->
+                    Just { qualification = [], name = "random_map2", requiresAllocator = Debug.todo "" }
+
+                "map3" ->
+                    Just { qualification = [], name = "random_map3", requiresAllocator = Debug.todo "" }
+
+                "map4" ->
+                    Just { qualification = [], name = "random_map4", requiresAllocator = Debug.todo "" }
+
+                "map5" ->
+                    Just { qualification = [], name = "random_map5", requiresAllocator = Debug.todo "" }
+
+                "andThen" ->
+                    Just { qualification = [], name = "random_andThen", requiresAllocator = Debug.todo "" }
+
+                "lazy" ->
+                    Just { qualification = [], name = "random_lazy", requiresAllocator = Debug.todo "" }
+
+                "minInt" ->
+                    Just { qualification = [], name = "random_minInt", requiresAllocator = Debug.todo "" }
+
+                "maxInt" ->
+                    Just { qualification = [], name = "random_maxInt", requiresAllocator = Debug.todo "" }
+
+                "step" ->
+                    Just { qualification = [], name = "random_step", requiresAllocator = Debug.todo "" }
+
+                "initialSeed" ->
+                    Just { qualification = [], name = "random_initialSeed", requiresAllocator = Debug.todo "" }
+
+                "independentSeed" ->
+                    Just { qualification = [], name = "random_independentSeed", requiresAllocator = Debug.todo "" }
+
+                _ ->
+                    Nothing
+
+        "Time" ->
+            case reference.name of
+                "posixToMillis" ->
+                    Just { qualification = [], name = "time_posixToMillis", requiresAllocator = Debug.todo "" }
+
+                "millisToPosix" ->
+                    Just { qualification = [], name = "time_millisToPosix", requiresAllocator = Debug.todo "" }
+
+                "utc" ->
+                    Just { qualification = [], name = "time_utc", requiresAllocator = Debug.todo "" }
+
+                "toYear" ->
+                    Just { qualification = [], name = "time_toYear", requiresAllocator = Debug.todo "" }
+
+                "toMonth" ->
+                    Just { qualification = [], name = "time_toMonth", requiresAllocator = Debug.todo "" }
+
+                "toDay" ->
+                    Just { qualification = [], name = "time_toDay", requiresAllocator = Debug.todo "" }
+
+                "toWeekday" ->
+                    Just { qualification = [], name = "time_toWeekday", requiresAllocator = Debug.todo "" }
+
+                "toHour" ->
+                    Just { qualification = [], name = "time_toHour", requiresAllocator = Debug.todo "" }
+
+                "toMinute" ->
+                    Just { qualification = [], name = "time_toMinute", requiresAllocator = Debug.todo "" }
+
+                "toSecond" ->
+                    Just { qualification = [], name = "time_toSecond", requiresAllocator = Debug.todo "" }
+
+                "toMillis" ->
+                    Just { qualification = [], name = "time_toMillis", requiresAllocator = Debug.todo "" }
+
+                "customZone" ->
+                    Just { qualification = [], name = "time_customZone", requiresAllocator = Debug.todo "" }
+
+                _ ->
+                    Nothing
+
+        "Bytes" ->
+            case reference.name of
+                "width" ->
+                    Just { qualification = [], name = "bytes_width", requiresAllocator = Debug.todo "" }
+
+                _ ->
+                    Nothing
+
+        "Bytes.Decode" ->
+            case reference.name of
+                "Loop" ->
+                    Just { qualification = [], name = "bytes_decode_Loop", requiresAllocator = Debug.todo "" }
+
+                "Done" ->
+                    Just { qualification = [], name = "bytes_decode_Done", requiresAllocator = Debug.todo "" }
+
+                "decode" ->
+                    Just { qualification = [], name = "bytes_decode_decode", requiresAllocator = Debug.todo "" }
+
+                "signedInt8" ->
+                    Just { qualification = [], name = "bytes_decode_signedInt8", requiresAllocator = Debug.todo "" }
+
+                "signedInt16" ->
+                    Just { qualification = [], name = "bytes_decode_signedInt16", requiresAllocator = Debug.todo "" }
+
+                "signedInt32" ->
+                    Just { qualification = [], name = "bytes_decode_signedInt32", requiresAllocator = Debug.todo "" }
+
+                "unsignedInt8" ->
+                    Just { qualification = [], name = "bytes_decode_unsignedInt8", requiresAllocator = Debug.todo "" }
+
+                "unsignedInt16" ->
+                    Just { qualification = [], name = "bytes_decode_unsignedInt16", requiresAllocator = Debug.todo "" }
+
+                "unsignedInt32" ->
+                    Just { qualification = [], name = "bytes_decode_unsignedInt32", requiresAllocator = Debug.todo "" }
+
+                "float32" ->
+                    Just { qualification = [], name = "bytes_decode_float32", requiresAllocator = Debug.todo "" }
+
+                "float64" ->
+                    Just { qualification = [], name = "bytes_decode_float64", requiresAllocator = Debug.todo "" }
+
+                "string" ->
+                    Just { qualification = [], name = "bytes_decode_string", requiresAllocator = Debug.todo "" }
+
+                "bytes" ->
+                    Just { qualification = [], name = "bytes_decode_bytes", requiresAllocator = Debug.todo "" }
+
+                "map" ->
+                    Just { qualification = [], name = "bytes_decode_map", requiresAllocator = Debug.todo "" }
+
+                "map2" ->
+                    Just { qualification = [], name = "bytes_decode_map2", requiresAllocator = Debug.todo "" }
+
+                "map3" ->
+                    Just { qualification = [], name = "bytes_decode_map3", requiresAllocator = Debug.todo "" }
+
+                "map4" ->
+                    Just { qualification = [], name = "bytes_decode_map4", requiresAllocator = Debug.todo "" }
+
+                "map5" ->
+                    Just { qualification = [], name = "bytes_decode_map5", requiresAllocator = Debug.todo "" }
+
+                "andThen" ->
+                    Just { qualification = [], name = "bytes_decode_andThen", requiresAllocator = Debug.todo "" }
+
+                "succeed" ->
+                    Just { qualification = [], name = "bytes_decode_succeed", requiresAllocator = Debug.todo "" }
+
+                "fail" ->
+                    Just { qualification = [], name = "bytes_decode_fail", requiresAllocator = Debug.todo "" }
+
+                "loop" ->
+                    Just { qualification = [], name = "bytes_decode_loop", requiresAllocator = Debug.todo "" }
+
+                _ ->
+                    Nothing
+
+        "Bytes.Encode" ->
+            case reference.name of
+                "encode" ->
+                    Just { qualification = [], name = "bytes_encode_encode", requiresAllocator = Debug.todo "" }
+
+                "signedInt8" ->
+                    Just { qualification = [], name = "bytes_encode_signedInt8", requiresAllocator = Debug.todo "" }
+
+                "signedInt16" ->
+                    Just { qualification = [], name = "bytes_encode_signedInt16", requiresAllocator = Debug.todo "" }
+
+                "signedInt32" ->
+                    Just { qualification = [], name = "bytes_encode_signedInt32", requiresAllocator = Debug.todo "" }
+
+                "unsignedInt8" ->
+                    Just { qualification = [], name = "bytes_encode_unsignedInt8", requiresAllocator = Debug.todo "" }
+
+                "unsignedInt16" ->
+                    Just { qualification = [], name = "bytes_encode_unsignedInt16", requiresAllocator = Debug.todo "" }
+
+                "unsignedInt32" ->
+                    Just { qualification = [], name = "bytes_encode_unsignedInt32", requiresAllocator = Debug.todo "" }
+
+                "float32" ->
+                    Just { qualification = [], name = "bytes_encode_float32", requiresAllocator = Debug.todo "" }
+
+                "float64" ->
+                    Just { qualification = [], name = "bytes_encode_float64", requiresAllocator = Debug.todo "" }
+
+                "bytes" ->
+                    Just { qualification = [], name = "bytes_encode_bytes", requiresAllocator = Debug.todo "" }
+
+                "string" ->
+                    Just { qualification = [], name = "bytes_encode_string", requiresAllocator = Debug.todo "" }
+
+                "getStringWidth" ->
+                    Just { qualification = [], name = "bytes_encode_getStringWidth", requiresAllocator = Debug.todo "" }
+
+                "sequence" ->
+                    Just { qualification = [], name = "bytes_encode_sequence", requiresAllocator = Debug.todo "" }
+
+                _ ->
+                    Nothing
+
+        "Elm.Kernel.Parser" ->
+            case reference.name of
+                "isSubString" ->
+                    Just { qualification = [], name = "ElmKernelParser_isSubString", requiresAllocator = Debug.todo "" }
+
+                "isSubChar" ->
+                    Just { qualification = [], name = "ElmKernelParser_isSubChar", requiresAllocator = Debug.todo "" }
+
+                "isAsciiCode" ->
+                    Just { qualification = [], name = "ElmKernelParser_isAsciiCode", requiresAllocator = Debug.todo "" }
+
+                "chompBase10" ->
+                    Just { qualification = [], name = "ElmKernelParser_chompBase10", requiresAllocator = Debug.todo "" }
+
+                "consumeBase" ->
+                    Just { qualification = [], name = "ElmKernelParser_consumeBase", requiresAllocator = Debug.todo "" }
+
+                "consumeBase16" ->
+                    Just { qualification = [], name = "ElmKernelParser_consumeBase16", requiresAllocator = Debug.todo "" }
+
+                "findSubString" ->
+                    Just { qualification = [], name = "ElmKernelParser_findSubString", requiresAllocator = Debug.todo "" }
+
+                _ ->
+                    Nothing
+
+        "Elm.Kernel.VirtualDom" ->
+            case reference.name of
+                "property" ->
+                    Just { qualification = [], name = "virtual_dom_property", requiresAllocator = Debug.todo "" }
+
+                "attribute" ->
+                    Just { qualification = [], name = "virtual_dom_attribute", requiresAllocator = Debug.todo "" }
+
+                "attributeNS" ->
+                    Just { qualification = [], name = "virtual_dom_attributeNS", requiresAllocator = Debug.todo "" }
+
+                "node" ->
+                    Just { qualification = [], name = "virtual_dom_node", requiresAllocator = Debug.todo "" }
+
+                "nodeNS" ->
+                    Just { qualification = [], name = "virtual_dom_nodeNS", requiresAllocator = Debug.todo "" }
+
+                "noJavaScriptOrHtmlUri" ->
+                    Just { qualification = [], name = "virtual_dom_noJavaScriptOrHtmlUri", requiresAllocator = Debug.todo "" }
+
+                "noJavaScriptUri" ->
+                    Just { qualification = [], name = "virtual_dom_noJavaScriptUri", requiresAllocator = Debug.todo "" }
+
+                _ ->
+                    Nothing
+
+        "VirtualDom" ->
+            case reference.name of
+                "Normal" ->
+                    Just { qualification = [], name = "virtual_dom_Normal", requiresAllocator = Debug.todo "" }
+
+                "MayStopPropagation" ->
+                    Just { qualification = [], name = "virtual_dom_MayStopPropagation", requiresAllocator = Debug.todo "" }
+
+                "MayPreventDefault" ->
+                    Just { qualification = [], name = "virtual_dom_MayPreventDefault", requiresAllocator = Debug.todo "" }
+
+                "Custom" ->
+                    Just { qualification = [], name = "virtual_dom_Custom", requiresAllocator = Debug.todo "" }
+
+                "text" ->
+                    Just { qualification = [], name = "virtual_dom_text", requiresAllocator = Debug.todo "" }
+
+                "node" ->
+                    Just { qualification = [], name = "virtual_dom_node", requiresAllocator = Debug.todo "" }
+
+                "nodeNS" ->
+                    Just { qualification = [], name = "virtual_dom_nodeNS", requiresAllocator = Debug.todo "" }
+
+                "style" ->
+                    Just { qualification = [], name = "virtual_dom_style", requiresAllocator = Debug.todo "" }
+
+                "property" ->
+                    Just { qualification = [], name = "virtual_dom_property", requiresAllocator = Debug.todo "" }
+
+                "attribute" ->
+                    Just { qualification = [], name = "virtual_dom_attribute", requiresAllocator = Debug.todo "" }
+
+                "attributeNS" ->
+                    Just { qualification = [], name = "virtual_dom_attributeNS", requiresAllocator = Debug.todo "" }
+
+                "on" ->
+                    Just { qualification = [], name = "virtual_dom_on", requiresAllocator = Debug.todo "" }
+
+                "map" ->
+                    Just { qualification = [], name = "virtual_dom_map", requiresAllocator = Debug.todo "" }
+
+                "mapAttribute" ->
+                    Just { qualification = [], name = "virtual_dom_mapAttribute", requiresAllocator = Debug.todo "" }
+
+                "keyedNode" ->
+                    Just { qualification = [], name = "virtual_dom_keyedNode", requiresAllocator = Debug.todo "" }
+
+                "keyedNodeNS" ->
+                    Just { qualification = [], name = "virtual_dom_keyedNodeNS", requiresAllocator = Debug.todo "" }
+
+                "lazy" ->
+                    Just { qualification = [], name = "virtual_dom_lazy", requiresAllocator = Debug.todo "" }
+
+                "lazy2" ->
+                    Just { qualification = [], name = "virtual_dom_lazy2", requiresAllocator = Debug.todo "" }
+
+                "lazy3" ->
+                    Just { qualification = [], name = "virtual_dom_lazy3", requiresAllocator = Debug.todo "" }
+
+                "lazy4" ->
+                    Just { qualification = [], name = "virtual_dom_lazy4", requiresAllocator = Debug.todo "" }
+
+                "lazy5" ->
+                    Just { qualification = [], name = "virtual_dom_lazy5", requiresAllocator = Debug.todo "" }
+
+                "lazy6" ->
+                    Just { qualification = [], name = "virtual_dom_lazy6", requiresAllocator = Debug.todo "" }
+
+                "lazy7" ->
+                    Just { qualification = [], name = "virtual_dom_lazy7", requiresAllocator = Debug.todo "" }
+
+                "lazy8" ->
+                    Just { qualification = [], name = "virtual_dom_lazy8", requiresAllocator = Debug.todo "" }
 
                 _ ->
                     Nothing
@@ -3822,58 +4647,58 @@ referenceToCoreRust reference =
         "Math.Vector2" ->
             case reference.name of
                 "add" ->
-                    Just { qualification = [], name = "MathVector2_add" }
+                    Just { qualification = [], name = "math_vector2_add", requiresAllocator = Debug.todo "" }
 
                 "direction" ->
-                    Just { qualification = [], name = "MathVector2_direction" }
+                    Just { qualification = [], name = "math_vector2_direction", requiresAllocator = Debug.todo "" }
 
                 "distance" ->
-                    Just { qualification = [], name = "MathVector2_distance" }
+                    Just { qualification = [], name = "math_vector2_distance", requiresAllocator = Debug.todo "" }
 
                 "distanceSquared" ->
-                    Just { qualification = [], name = "MathVector2_distanceSquared" }
+                    Just { qualification = [], name = "math_vector2_distanceSquared", requiresAllocator = Debug.todo "" }
 
                 "dot" ->
-                    Just { qualification = [], name = "MathVector2_dot" }
+                    Just { qualification = [], name = "math_vector2_dot", requiresAllocator = Debug.todo "" }
 
                 "fromRecord" ->
-                    Just { qualification = [], name = "MathVector2_fromRecord" }
+                    Just { qualification = [], name = "math_vector2_fromRecord", requiresAllocator = Debug.todo "" }
 
                 "getX" ->
-                    Just { qualification = [], name = "MathVector2_getX" }
+                    Just { qualification = [], name = "math_vector2_getX", requiresAllocator = Debug.todo "" }
 
                 "getY" ->
-                    Just { qualification = [], name = "MathVector2_getY" }
+                    Just { qualification = [], name = "math_vector2_getY", requiresAllocator = Debug.todo "" }
 
                 "length" ->
-                    Just { qualification = [], name = "MathVector2_length" }
+                    Just { qualification = [], name = "math_vector2_length", requiresAllocator = Debug.todo "" }
 
                 "lengthSquared" ->
-                    Just { qualification = [], name = "MathVector2_lengthSquared" }
+                    Just { qualification = [], name = "math_vector2_lengthSquared", requiresAllocator = Debug.todo "" }
 
                 "negate" ->
-                    Just { qualification = [], name = "MathVector2_negate" }
+                    Just { qualification = [], name = "math_vector2_negate", requiresAllocator = Debug.todo "" }
 
                 "normalize" ->
-                    Just { qualification = [], name = "MathVector2_normalize" }
+                    Just { qualification = [], name = "math_vector2_normalize", requiresAllocator = Debug.todo "" }
 
                 "scale" ->
-                    Just { qualification = [], name = "MathVector2_scale" }
+                    Just { qualification = [], name = "math_vector2_scale", requiresAllocator = Debug.todo "" }
 
                 "setX" ->
-                    Just { qualification = [], name = "MathVector2_setX" }
+                    Just { qualification = [], name = "math_vector2_setX", requiresAllocator = Debug.todo "" }
 
                 "setY" ->
-                    Just { qualification = [], name = "MathVector2_setY" }
+                    Just { qualification = [], name = "math_vector2_setY", requiresAllocator = Debug.todo "" }
 
                 "sub" ->
-                    Just { qualification = [], name = "MathVector2_sub" }
+                    Just { qualification = [], name = "math_vector2_sub", requiresAllocator = Debug.todo "" }
 
                 "toRecord" ->
-                    Just { qualification = [], name = "MathVector2_toRecord" }
+                    Just { qualification = [], name = "math_vector2_toRecord", requiresAllocator = Debug.todo "" }
 
                 "vec2" ->
-                    Just { qualification = [], name = "MathVector2_vec2" }
+                    Just { qualification = [], name = "math_vector2_vec2", requiresAllocator = Debug.todo "" }
 
                 _ ->
                     Nothing
@@ -3881,76 +4706,76 @@ referenceToCoreRust reference =
         "Math.Vector3" ->
             case reference.name of
                 "add" ->
-                    Just { qualification = [], name = "MathVector3_add" }
+                    Just { qualification = [], name = "math_vector3_add", requiresAllocator = Debug.todo "" }
 
                 "cross" ->
-                    Just { qualification = [], name = "MathVector3_cross" }
+                    Just { qualification = [], name = "math_vector3_cross", requiresAllocator = Debug.todo "" }
 
                 "direction" ->
-                    Just { qualification = [], name = "MathVector3_direction" }
+                    Just { qualification = [], name = "math_vector3_direction", requiresAllocator = Debug.todo "" }
 
                 "distance" ->
-                    Just { qualification = [], name = "MathVector3_distance" }
+                    Just { qualification = [], name = "math_vector3_distance", requiresAllocator = Debug.todo "" }
 
                 "distanceSquared" ->
-                    Just { qualification = [], name = "MathVector3_distanceSquared" }
+                    Just { qualification = [], name = "math_vector3_distanceSquared", requiresAllocator = Debug.todo "" }
 
                 "dot" ->
-                    Just { qualification = [], name = "MathVector3_dot" }
+                    Just { qualification = [], name = "math_vector3_dot", requiresAllocator = Debug.todo "" }
 
                 "fromRecord" ->
-                    Just { qualification = [], name = "MathVector3_fromRecord" }
+                    Just { qualification = [], name = "math_vector3_fromRecord", requiresAllocator = Debug.todo "" }
 
                 "getX" ->
-                    Just { qualification = [], name = "MathVector3_getX" }
+                    Just { qualification = [], name = "math_vector3_getX", requiresAllocator = Debug.todo "" }
 
                 "getY" ->
-                    Just { qualification = [], name = "MathVector3_getY" }
+                    Just { qualification = [], name = "math_vector3_getY", requiresAllocator = Debug.todo "" }
 
                 "getZ" ->
-                    Just { qualification = [], name = "MathVector3_getZ" }
+                    Just { qualification = [], name = "math_vector3_getZ", requiresAllocator = Debug.todo "" }
 
                 "i" ->
-                    Just { qualification = [], name = "MathVector3_i" }
+                    Just { qualification = [], name = "math_vector3_i", requiresAllocator = Debug.todo "" }
 
                 "j" ->
-                    Just { qualification = [], name = "MathVector3_j" }
+                    Just { qualification = [], name = "math_vector3_j", requiresAllocator = Debug.todo "" }
 
                 "k" ->
-                    Just { qualification = [], name = "MathVector3_k" }
+                    Just { qualification = [], name = "math_vector3_k", requiresAllocator = Debug.todo "" }
 
                 "length" ->
-                    Just { qualification = [], name = "MathVector3_length" }
+                    Just { qualification = [], name = "math_vector3_length", requiresAllocator = Debug.todo "" }
 
                 "lengthSquared" ->
-                    Just { qualification = [], name = "MathVector3_lengthSquared" }
+                    Just { qualification = [], name = "math_vector3_lengthSquared", requiresAllocator = Debug.todo "" }
 
                 "negate" ->
-                    Just { qualification = [], name = "MathVector3_negate" }
+                    Just { qualification = [], name = "math_vector3_negate", requiresAllocator = Debug.todo "" }
 
                 "normalize" ->
-                    Just { qualification = [], name = "MathVector3_normalize" }
+                    Just { qualification = [], name = "math_vector3_normalize", requiresAllocator = Debug.todo "" }
 
                 "scale" ->
-                    Just { qualification = [], name = "MathVector3_scale" }
+                    Just { qualification = [], name = "math_vector3_scale", requiresAllocator = Debug.todo "" }
 
                 "setX" ->
-                    Just { qualification = [], name = "MathVector3_setX" }
+                    Just { qualification = [], name = "math_vector3_setX", requiresAllocator = Debug.todo "" }
 
                 "setY" ->
-                    Just { qualification = [], name = "MathVector3_setY" }
+                    Just { qualification = [], name = "math_vector3_setY", requiresAllocator = Debug.todo "" }
 
                 "setZ" ->
-                    Just { qualification = [], name = "MathVector3_setZ" }
+                    Just { qualification = [], name = "math_vector3_setZ", requiresAllocator = Debug.todo "" }
 
                 "sub" ->
-                    Just { qualification = [], name = "MathVector3_sub" }
+                    Just { qualification = [], name = "math_vector3_sub", requiresAllocator = Debug.todo "" }
 
                 "toRecord" ->
-                    Just { qualification = [], name = "MathVector3_toRecord" }
+                    Just { qualification = [], name = "math_vector3_toRecord", requiresAllocator = Debug.todo "" }
 
                 "vec3" ->
-                    Just { qualification = [], name = "MathVector3_vec3" }
+                    Just { qualification = [], name = "math_vector3_vec3", requiresAllocator = Debug.todo "" }
 
                 _ ->
                     Nothing
@@ -3958,70 +4783,70 @@ referenceToCoreRust reference =
         "Math.Vector4" ->
             case reference.name of
                 "add" ->
-                    Just { qualification = [], name = "MathVector4_add" }
+                    Just { qualification = [], name = "math_vector4_add", requiresAllocator = Debug.todo "" }
 
                 "direction" ->
-                    Just { qualification = [], name = "MathVector4_direction" }
+                    Just { qualification = [], name = "math_vector4_direction", requiresAllocator = Debug.todo "" }
 
                 "distance" ->
-                    Just { qualification = [], name = "MathVector4_distance" }
+                    Just { qualification = [], name = "math_vector4_distance", requiresAllocator = Debug.todo "" }
 
                 "distanceSquared" ->
-                    Just { qualification = [], name = "MathVector4_distanceSquared" }
+                    Just { qualification = [], name = "math_vector4_distanceSquared", requiresAllocator = Debug.todo "" }
 
                 "dot" ->
-                    Just { qualification = [], name = "MathVector4_dot" }
+                    Just { qualification = [], name = "math_vector4_dot", requiresAllocator = Debug.todo "" }
 
                 "fromRecord" ->
-                    Just { qualification = [], name = "MathVector4_fromRecord" }
+                    Just { qualification = [], name = "math_vector4_fromRecord", requiresAllocator = Debug.todo "" }
 
                 "getW" ->
-                    Just { qualification = [], name = "MathVector4_getW" }
+                    Just { qualification = [], name = "math_vector4_getW", requiresAllocator = Debug.todo "" }
 
                 "getX" ->
-                    Just { qualification = [], name = "MathVector4_getX" }
+                    Just { qualification = [], name = "math_vector4_getX", requiresAllocator = Debug.todo "" }
 
                 "getY" ->
-                    Just { qualification = [], name = "MathVector4_getY" }
+                    Just { qualification = [], name = "math_vector4_getY", requiresAllocator = Debug.todo "" }
 
                 "getZ" ->
-                    Just { qualification = [], name = "MathVector4_getZ" }
+                    Just { qualification = [], name = "math_vector4_getZ", requiresAllocator = Debug.todo "" }
 
                 "length" ->
-                    Just { qualification = [], name = "MathVector4_length" }
+                    Just { qualification = [], name = "math_vector4_length", requiresAllocator = Debug.todo "" }
 
                 "lengthSquared" ->
-                    Just { qualification = [], name = "MathVector4_lengthSquared" }
+                    Just { qualification = [], name = "math_vector4_lengthSquared", requiresAllocator = Debug.todo "" }
 
                 "negate" ->
-                    Just { qualification = [], name = "MathVector3_negate" }
+                    Just { qualification = [], name = "math_vector3_negate", requiresAllocator = Debug.todo "" }
 
                 "normalize" ->
-                    Just { qualification = [], name = "MathVector3_normalize" }
+                    Just { qualification = [], name = "math_vector3_normalize", requiresAllocator = Debug.todo "" }
 
                 "scale" ->
-                    Just { qualification = [], name = "MathVector4_scale" }
+                    Just { qualification = [], name = "math_vector4_scale", requiresAllocator = Debug.todo "" }
 
                 "setW" ->
-                    Just { qualification = [], name = "MathVector4_setW" }
+                    Just { qualification = [], name = "math_vector4_setW", requiresAllocator = Debug.todo "" }
 
                 "setX" ->
-                    Just { qualification = [], name = "MathVector4_setX" }
+                    Just { qualification = [], name = "math_vector4_setX", requiresAllocator = Debug.todo "" }
 
                 "setY" ->
-                    Just { qualification = [], name = "MathVector4_setY" }
+                    Just { qualification = [], name = "math_vector4_setY", requiresAllocator = Debug.todo "" }
 
                 "setZ" ->
-                    Just { qualification = [], name = "MathVector4_setZ" }
+                    Just { qualification = [], name = "math_vector4_setZ", requiresAllocator = Debug.todo "" }
 
                 "sub" ->
-                    Just { qualification = [], name = "MathVector4_sub" }
+                    Just { qualification = [], name = "math_vector4_sub", requiresAllocator = Debug.todo "" }
 
                 "toRecord" ->
-                    Just { qualification = [], name = "MathVector4_toRecord" }
+                    Just { qualification = [], name = "math_vector4_toRecord", requiresAllocator = Debug.todo "" }
 
                 "vec4" ->
-                    Just { qualification = [], name = "MathVector4_vec4" }
+                    Just { qualification = [], name = "math_vector4_vec4", requiresAllocator = Debug.todo "" }
 
                 _ ->
                     Nothing
@@ -4033,7 +4858,7 @@ referenceToCoreRust reference =
         "Platform" ->
             case reference.name of
                 "worker" ->
-                    Just { qualification = [], name = "Platform_worker" }
+                    Just { qualification = [], name = "platform_worker", requiresAllocator = Debug.todo "" }
 
                 _ ->
                     Nothing
@@ -4041,13 +4866,13 @@ referenceToCoreRust reference =
         "Platform.Cmd" ->
             case reference.name of
                 "none" ->
-                    Just { qualification = [], name = "PlatformCmd_none" }
+                    Just { qualification = [], name = "platform_cmd_none", requiresAllocator = Debug.todo "" }
 
                 "batch" ->
-                    Just { qualification = [], name = "PlatformCmd_batch" }
+                    Just { qualification = [], name = "platform_cmd_batch", requiresAllocator = Debug.todo "" }
 
                 "map" ->
-                    Just { qualification = [], name = "PlatformCmd_map" }
+                    Just { qualification = [], name = "platform_cmd_map", requiresAllocator = Debug.todo "" }
 
                 _ ->
                     Nothing
@@ -4055,13 +4880,13 @@ referenceToCoreRust reference =
         "Platform.Sub" ->
             case reference.name of
                 "none" ->
-                    Just { qualification = [], name = "PlatformSub_none" }
+                    Just { qualification = [], name = "platform_sub_none", requiresAllocator = Debug.todo "" }
 
                 "batch" ->
-                    Just { qualification = [], name = "PlatformSub_batch" }
+                    Just { qualification = [], name = "platform_sub_batch", requiresAllocator = Debug.todo "" }
 
                 "map" ->
-                    Just { qualification = [], name = "PlatformSub_map" }
+                    Just { qualification = [], name = "platform_sub_map", requiresAllocator = Debug.todo "" }
 
                 _ ->
                     Nothing
@@ -4076,7 +4901,7 @@ referenceToRustName :
     }
     -> String
 referenceToRustName reference =
-    case reference.moduleOrigin |> String.replace "." "" of
+    (case reference.moduleOrigin |> String.replace "." "" of
         "" ->
             reference.name
 
@@ -4084,6 +4909,25 @@ referenceToRustName reference =
             moduleOriginNotEmpty
                 ++ "_"
                 ++ reference.name
+    )
+        |> toSnakeCase
+        |> variableNameDisambiguateFromRustKeywords
+
+
+toSnakeCase : String -> String
+toSnakeCase string =
+    string
+        |> stringFirstCharToLower
+        |> String.toList
+        |> List.map
+            (\char ->
+                if char |> Char.isUpper then
+                    "_" ++ (char |> Char.toLower |> String.fromChar)
+
+                else
+                    char |> String.fromChar
+            )
+        |> String.concat
 
 
 printRustPatternNotParenthesized : RustPattern -> Print
@@ -4316,12 +5160,13 @@ modules :
     ->
         { errors : List String
         , declarations :
-            { funcs :
+            { fns :
                 FastDict.Dict
                     String
                     { parameters : List { pattern : RustPattern, type_ : RustType }
                     , result : RustExpression
                     , resultType : RustType
+                    , lifetimeParameters : List String
                     }
             , lets :
                 FastDict.Dict
@@ -4972,7 +5817,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
             { errors = [ error ]
             , declarations =
                 { lets = FastDict.empty
-                , funcs = FastDict.empty
+                , fns = FastDict.empty
                 , typeAliases = FastDict.empty
                 , enumTypes = FastDict.empty
                 }
@@ -5127,12 +5972,13 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                 transpiledRustDeclarations :
                     { errors : List String
                     , declarations :
-                        { funcs :
+                        { fns :
                             FastDict.Dict
                                 String
                                 { parameters : List { pattern : RustPattern, type_ : RustType }
                                 , result : RustExpression
                                 , resultType : RustType
+                                , lifetimeParameters : List String
                                 }
                         , lets :
                             FastDict.Dict
@@ -5260,7 +6106,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                 { errors = soFar.errors
                                                                 , declarations =
                                                                     { lets = soFar.declarations.lets
-                                                                    , funcs = soFar.declarations.funcs
+                                                                    , fns = soFar.declarations.fns
                                                                     , enumTypes = soFar.declarations.enumTypes
                                                                     , typeAliases =
                                                                         soFar.declarations.typeAliases
@@ -5316,7 +6162,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                             { errors = soFar.errors
                                                             , declarations =
                                                                 { lets = soFar.declarations.lets
-                                                                , funcs = soFar.declarations.funcs
+                                                                , fns = soFar.declarations.fns
                                                                 , typeAliases = soFar.declarations.typeAliases
                                                                 , enumTypes =
                                                                     soFar.declarations.enumTypes
@@ -5377,20 +6223,22 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                         { typeAliases = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.typeAliases
                                                                         , enumTypes = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.enumTypes
                                                                         , lets = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.lets
-                                                                        , funcs =
-                                                                            soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.funcs
+                                                                        , fns =
+                                                                            soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.fns
                                                                                 |> FastDict.insert
                                                                                     rustName
                                                                                     { parameters = parameters
                                                                                     , resultType = rustValueOrFunctionDeclaration.resultType
                                                                                     , result = rustValueOrFunctionDeclaration.result
+                                                                                    , lifetimeParameters =
+                                                                                        rustValueOrFunctionDeclaration.lifetimeParameters
                                                                                     }
                                                                         }
 
                                                                     Nothing ->
                                                                         { typeAliases = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.typeAliases
                                                                         , enumTypes = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.enumTypes
-                                                                        , funcs = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.funcs
+                                                                        , fns = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.fns
                                                                         , lets =
                                                                             soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.lets
                                                                                 |> FastDict.insert
@@ -5434,7 +6282,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                             { errors = []
                             , declarations =
                                 { lets = FastDict.empty
-                                , funcs = FastDict.empty
+                                , fns = FastDict.empty
                                 , typeAliases = FastDict.empty
                                 , enumTypes = FastDict.empty
                                 }
@@ -5449,13 +6297,15 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                 , resultType = valueOrFunctionInfo.resultType
                                 }
                             )
-                , funcs =
-                    transpiledRustDeclarations.declarations.funcs
+                , fns =
+                    transpiledRustDeclarations.declarations.fns
                         |> FastDict.map
                             (\_ valueOrFunctionInfo ->
                                 { parameters = valueOrFunctionInfo.parameters
                                 , result = valueOrFunctionInfo.result
                                 , resultType = valueOrFunctionInfo.resultType
+                                , lifetimeParameters =
+                                    valueOrFunctionInfo.lifetimeParameters
                                 }
                             )
                 , enumTypes =
@@ -5850,6 +6700,7 @@ valueOrFunctionDeclaration :
             { parameters : Maybe (List { pattern : RustPattern, type_ : RustType })
             , result : RustExpression
             , resultType : RustType
+            , lifetimeParameters : List String
             }
 valueOrFunctionDeclaration moduleContext syntaxDeclarationValueOrFunction =
     let
@@ -5874,6 +6725,7 @@ valueOrFunctionDeclaration moduleContext syntaxDeclarationValueOrFunction =
     in
     case rustFullTypeAsFunction.inputs of
         [] ->
+            -- add allocator if result requires it
             Result.map
                 (\result ->
                     let
@@ -5882,15 +6734,28 @@ valueOrFunctionDeclaration moduleContext syntaxDeclarationValueOrFunction =
                             syntaxDeclarationValueOrFunction.type_
                                 |> type_ typeAliasesInModule
                     in
-                    { parameters =
-                        if typeWithExpandedAliases |> inferredTypeIsConcreteRustType then
-                            Nothing
+                    if typeWithExpandedAliases |> inferredTypeIsConcreteRustType then
+                        { parameters = Nothing
+                        , resultType = rustResultType
+                        , result = result
+                        , lifetimeParameters = []
+                        }
 
-                        else
-                            Just []
-                    , resultType = rustResultType
-                    , result = result
-                    }
+                    else
+                        { parameters =
+                            Just
+                                [ { pattern = RustPatternVariable generatedAllocatorVariableName
+                                  , type_ =
+                                        RustTypeBorrow
+                                            { lifetimeVariable = Just generatedLifetimeVariableName
+                                            , type_ = rustTypeConstructBumpaloBump
+                                            }
+                                  }
+                                ]
+                        , resultType = rustResultType
+                        , result = result
+                        , lifetimeParameters = [ generatedLifetimeVariableName ]
+                        }
                 )
                 (syntaxDeclarationValueOrFunction.result
                     |> expression
@@ -5943,17 +6808,24 @@ valueOrFunctionDeclaration moduleContext syntaxDeclarationValueOrFunction =
                     in
                     { parameters =
                         Just
-                            ((syntaxDeclarationValueOrFunction.parameters
-                                |> List.map
-                                    (\parameter ->
-                                        { pattern =
-                                            parameter |> pattern |> .pattern
-                                        , type_ =
-                                            parameter.type_
-                                                |> type_ typeAliasesInModule
-                                        }
-                                    )
-                             )
+                            ({ pattern = RustPatternVariable generatedAllocatorVariableName
+                             , type_ =
+                                RustTypeBorrow
+                                    { lifetimeVariable = Just generatedLifetimeVariableName
+                                    , type_ = rustTypeConstructBumpaloBump
+                                    }
+                             }
+                                :: (syntaxDeclarationValueOrFunction.parameters
+                                        |> List.map
+                                            (\parameter ->
+                                                { pattern =
+                                                    parameter |> pattern |> .pattern
+                                                , type_ =
+                                                    parameter.type_
+                                                        |> type_ typeAliasesInModule
+                                                }
+                                            )
+                                   )
                                 ++ (additionalGeneratedParameters
                                         |> List.map
                                             (\additionalParameter ->
@@ -5967,6 +6839,7 @@ valueOrFunctionDeclaration moduleContext syntaxDeclarationValueOrFunction =
                         rustFullTypeAsFunction.output
                             |> type_ typeAliasesInModule
                     , result = fullResult
+                    , lifetimeParameters = [ generatedLifetimeVariableName ]
                     }
                 )
                 (syntaxDeclarationValueOrFunction.result
@@ -5980,6 +6853,22 @@ valueOrFunctionDeclaration moduleContext syntaxDeclarationValueOrFunction =
                         , path = [ "declarationResult" ]
                         }
                 )
+
+
+rustTypeConstructBumpaloBump : RustType
+rustTypeConstructBumpaloBump =
+    RustTypeConstruct
+        { qualification = []
+        , name = "Bump"
+        , isFunction = False
+        , arguments = []
+        , lifetimeArgument = Nothing
+        }
+
+
+generatedAllocatorVariableName : String
+generatedAllocatorVariableName =
+    "generated_allocator"
 
 
 generatedParameterNameForIndex : Int -> String
@@ -6002,74 +6891,69 @@ variableNameDisambiguateFromRustKeywords variableName =
         variableName
 
 
+{-| both weak, reserved and strong.
+see https://doc.rust-lang.org/reference/keywords.html
+-}
 rustKeywords : FastSet.Set String
 rustKeywords =
-    -- https://docs.rust.org/rust-book/documentation/the-rust-programming-language/lexicalstructure/#Keywords-and-Punctuation
     FastSet.fromList
-        [ -- Keywords used in declarations
-          "associatedtype"
-        , "borrowing"
-        , "class"
-        , "consuming"
-        , "deinit"
-        , "enum"
-        , "extension"
-        , "fileprivate"
-        , "func"
-        , "import"
-        , "init"
-        , "inout"
-        , "internal"
-        , "let"
-        , "nonisolated"
-        , "open"
-        , "operator"
-        , "private"
-        , "precedencegroup"
-        , "protocol"
-        , "public"
-        , "rethrows"
-        , "static"
-        , "struct"
-        , "subscript"
-        , "typealias"
-        , "var"
-        , -- Keywords used in statements
-          "break"
-        , "case"
-        , "catch"
+        [ "as"
+        , "break"
+        , "const"
         , "continue"
-        , "default"
-        , "defer"
-        , "do"
+        , "crate"
         , "else"
-        , "fallthrough"
-        , "for"
-        , "guard"
-        , "if"
-        , "in"
-        , "repeat"
-        , "return"
-        , "throw"
-        , "match"
-        , "where"
-        , "while"
-        , -- Keywords used in expressions and types
-          "Any"
-        , "as"
-        , "await"
-        , "catch"
+        , "enum"
+        , "extern"
         , "false"
-        , "is"
-        , "nil"
-        , "rethrows"
+        , "fn"
+        , "for"
+        , "if"
+        , "impl"
+        , "in"
+        , "let"
+        , "loop"
+        , "match"
+        , "mod"
+        , "move"
+        , "mut"
+        , "pub"
+        , "ref"
+        , "return"
         , "self"
         , "Self"
+        , "static"
+        , "struct"
         , "super"
-        , "throw"
-        , "throws"
+        , "trait"
         , "true"
+        , "type"
+        , "unsafe"
+        , "use"
+        , "where"
+        , "while"
+        , "async"
+        , "await"
+        , "dyn"
+        , "abstract"
+        , "become"
+        , "box"
+        , "do"
+        , "final"
+        , "macro"
+        , "override"
+        , "priv"
+        , "typeof"
+        , "unsized"
+        , "virtual"
+        , "yield"
         , "try"
+        , "gen"
+        , "static"
+        , "macro_rules"
+        , "raw"
+        , "safe"
+        , "union"
         ]
 
 
@@ -6193,13 +7077,27 @@ expression context expressionTypedNode =
                                             ]
                                         , result =
                                             RustExpressionCall
-                                                { called = RustExpressionReference reference
+                                                { called =
+                                                    RustExpressionReference
+                                                        { qualification = reference.qualification
+                                                        , name = reference.name
+                                                        }
                                                 , arguments =
-                                                    [ RustExpressionReference
-                                                        { qualification = [], name = "generated_left" }
-                                                    , RustExpressionReference
-                                                        { qualification = [], name = "generated_right" }
-                                                    ]
+                                                    (if reference.requiresAllocator then
+                                                        [ RustExpressionReference
+                                                            { qualification = []
+                                                            , name = generatedAllocatorVariableName
+                                                            }
+                                                        ]
+
+                                                     else
+                                                        []
+                                                    )
+                                                        ++ [ RustExpressionReference
+                                                                { qualification = [], name = "generated_left" }
+                                                           , RustExpressionReference
+                                                                { qualification = [], name = "generated_right" }
+                                                           ]
                                                 }
                                         }
                                 }
@@ -6343,18 +7241,34 @@ expression context expressionTypedNode =
 
                                 else
                                     RustExpressionCall
-                                        { called = rustExpressionReferenceStringAppend
+                                        { called =
+                                            RustExpressionReference
+                                                { qualification = []
+                                                , name = "string_append"
+                                                }
                                         , arguments =
-                                            [ left
+                                            [ RustExpressionReference
+                                                { qualification = []
+                                                , name = generatedAllocatorVariableName
+                                                }
+                                            , left
                                             , right
                                             ]
                                         }
 
                             else
                                 RustExpressionCall
-                                    { called = rustExpressionReferenceListAppend
+                                    { called =
+                                        RustExpressionReference
+                                            { qualification = []
+                                            , name = "list_append"
+                                            }
                                     , arguments =
-                                        [ left
+                                        [ RustExpressionReference
+                                            { qualification = []
+                                            , name = generatedAllocatorVariableName
+                                            }
+                                        , left
                                         , right
                                         ]
                                     }
@@ -6384,11 +7298,25 @@ expression context expressionTypedNode =
                     Result.map3
                         (\operationFunctionReference left right ->
                             RustExpressionCall
-                                { called = RustExpressionReference operationFunctionReference
+                                { called =
+                                    RustExpressionReference
+                                        { qualification = operationFunctionReference.qualification
+                                        , name = operationFunctionReference.name
+                                        }
                                 , arguments =
-                                    [ left
-                                    , right
-                                    ]
+                                    (if operationFunctionReference.requiresAllocator then
+                                        [ RustExpressionReference
+                                            { qualification = []
+                                            , name = generatedAllocatorVariableName
+                                            }
+                                        ]
+
+                                     else
+                                        []
+                                    )
+                                        ++ [ left
+                                           , right
+                                           ]
                                 }
                         )
                         (expressionOperatorToRustFunctionReference
@@ -6450,31 +7378,40 @@ expression context expressionTypedNode =
 
                 Nothing ->
                     let
-                        rustVariantName : String
-                        rustVariantName =
+                        asRustVariant : { originTypeName : List String, name : String, isReference : Bool }
+                        asRustVariant =
                             case
                                 { moduleOrigin = reference.moduleOrigin
                                 , name = reference.name
                                 , type_ = expressionTypedNode.type_
                                 }
-                                    |> referenceToCoreRust
+                                    |> variantToCoreRust
                             of
                                 Just rustCoreReference ->
-                                    rustCoreReference.name
+                                    rustCoreReference
 
                                 Nothing ->
-                                    referenceToRustName
-                                        { moduleOrigin = reference.moduleOrigin
-                                        , name = reference.name
-                                        }
+                                    { name =
+                                        referenceToRustName
+                                            { moduleOrigin = reference.moduleOrigin
+                                            , name = reference.name
+                                            }
+                                    , originTypeName =
+                                        [ (reference.moduleOrigin |> String.replace "." "")
+                                            ++ "_"
+                                            ++ reference.choiceTypeName
+                                            ++ "Guts"
+                                            |> normalizeToRustPascalCase
+                                        ]
+                                    , isReference = True
+                                    }
 
-                        rustOriginTypeName : String
-                        rustOriginTypeName =
-                            (reference.moduleOrigin |> String.replace "." "")
-                                ++ "_"
-                                ++ reference.choiceTypeName
-                                ++ "Guts"
-                                |> normalizeToRustPascalCase
+                        rustExpressionVariantValue : RustExpression
+                        rustExpressionVariantValue =
+                            RustExpressionVariant
+                                { originTypeName = asRustVariant.originTypeName
+                                , name = asRustVariant.name
+                                }
                     in
                     Ok
                         (case
@@ -6493,10 +7430,12 @@ expression context expressionTypedNode =
                                     )
                          of
                             [] ->
-                                RustExpressionVariant
-                                    { originTypeName = [ rustOriginTypeName ]
-                                    , name = rustVariantName
-                                    }
+                                if asRustVariant.isReference then
+                                    RustExpressionBorrow
+                                        rustExpressionVariantValue
+
+                                else
+                                    rustExpressionVariantValue
 
                             valueType0 :: valueType1Up ->
                                 let
@@ -6525,10 +7464,23 @@ expression context expressionTypedNode =
                                         )
                                         (RustExpressionCall
                                             { called =
-                                                RustExpressionVariant
-                                                    { originTypeName = [ rustOriginTypeName ]
-                                                    , name = rustVariantName
-                                                    }
+                                                if asRustVariant.isReference then
+                                                    RustExpressionCall
+                                                        { called =
+                                                            RustExpressionRecordAccess
+                                                                { record =
+                                                                    RustExpressionReference
+                                                                        { qualification = []
+                                                                        , name = generatedAllocatorVariableName
+                                                                        }
+                                                                , field = "alloc"
+                                                                }
+                                                        , arguments =
+                                                            [ rustExpressionVariantValue ]
+                                                        }
+
+                                                else
+                                                    rustExpressionVariantValue
                                             , arguments =
                                                 (valueType0 :: valueType1Up)
                                                     |> List.indexedMap
@@ -6656,6 +7608,7 @@ expression context expressionTypedNode =
                                 rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary context
                                     { qualification = []
                                     , name = variableFromWithinDeclaration
+                                    , requiresAllocator = False
                                     , inferredType = expressionTypedNode.type_
                                     , originDeclarationTypeWithExpandedAliases =
                                         letDeclaredValueOrFunctionType
@@ -6685,7 +7638,14 @@ expression context expressionTypedNode =
                                     RustExpressionLambda
                                         { parameters =
                                             [ { pattern = RustPatternVariable "generated_value"
-                                              , type_ = rustTypeJsonEncodeValue
+                                              , type_ =
+                                                    RustTypeConstruct
+                                                        { qualification = []
+                                                        , isFunction = False
+                                                        , name = "JsonEncodeValue"
+                                                        , arguments = []
+                                                        , lifetimeArgument = Just generatedLifetimeVariableName
+                                                        }
                                               }
                                             ]
                                         , result =
@@ -6725,7 +7685,15 @@ expression context expressionTypedNode =
                                                         _ ->
                                                             -- error?
                                                             RustTypeFunction
-                                                                { input = [ rustTypeJsonEncodeValue ]
+                                                                { input =
+                                                                    [ RustTypeConstruct
+                                                                        { qualification = []
+                                                                        , isFunction = False
+                                                                        , name = "JsonEncodeValue"
+                                                                        , arguments = []
+                                                                        , lifetimeArgument = Just generatedLifetimeVariableName
+                                                                        }
+                                                                    ]
                                                                 , output = RustTypeVariable "event"
                                                                 }
                                               }
@@ -6778,7 +7746,11 @@ expression context expressionTypedNode =
                                                         |> inferredTypeExpandInnerAliases
                                                             typeAliasesInModule
 
-                                                rustReference : { qualification : List String, name : String }
+                                                rustReference :
+                                                    { qualification : List String
+                                                    , name : String
+                                                    , requiresAllocator : Bool
+                                                    }
                                                 rustReference =
                                                     case
                                                         { moduleOrigin = reference.moduleOrigin
@@ -6805,11 +7777,13 @@ expression context expressionTypedNode =
                                                                                     typeAliasesInModule
                                                                             )
                                                                         )
+                                                            , requiresAllocator = True
                                                             }
                                             in
                                             rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary context
                                                 { qualification = rustReference.qualification
                                                 , name = rustReference.name
+                                                , requiresAllocator = rustReference.requiresAllocator
                                                 , inferredType = expressionTypedNode.type_
                                                 , originDeclarationTypeWithExpandedAliases =
                                                     originDeclarationTypeWithExpandedAliases
@@ -7324,16 +8298,6 @@ rustExpressionListEmpty =
         }
 
 
-rustTypeJsonEncodeValue : RustType
-rustTypeJsonEncodeValue =
-    RustTypeConstruct
-        { moduleOrigin = Nothing
-        , isFunction = False
-        , name = "json_encode_Value"
-        , arguments = []
-        }
-
-
 rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary :
     { variablesFromWithinDeclarationInScope : FastSet.Set String
     , letDeclaredValueAndFunctionTypes : FastDict.Dict String ElmSyntaxTypeInfer.Type
@@ -7359,6 +8323,7 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
     ->
         { qualification : List String
         , name : String
+        , requiresAllocator : Bool
         , inferredType : ElmSyntaxTypeInfer.Type
         , originDeclarationTypeWithExpandedAliases : ElmSyntaxTypeInfer.Type
         }
@@ -7371,8 +8336,16 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
                 |> inferredTypeExpandFunction
                 |> .inputs
                 |> List.length
+
+        parameterCountIncludingPotentialAllocator : Int
+        parameterCountIncludingPotentialAllocator =
+            if rustReference.requiresAllocator then
+                parameterCount + 1
+
+            else
+                parameterCount
     in
-    case parameterCount of
+    case parameterCountIncludingPotentialAllocator of
         1 ->
             RustExpressionReference
                 { qualification = rustReference.qualification
@@ -7399,7 +8372,7 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
                     , arguments = []
                     }
 
-        parameterCountAtLeast2 ->
+        _ ->
             let
                 typeAliasesInModule : String -> Maybe (FastDict.Dict String { parameters : List String, recordFieldOrder : Maybe (List String), type_ : ElmSyntaxTypeInfer.Type })
                 typeAliasesInModule moduleNameToAccess =
@@ -7411,7 +8384,7 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
                 |> inferredTypeExpandInnerAliases typeAliasesInModule
                 |> inferredTypeExpandFunction
                 |> .inputs
-                |> List.take parameterCountAtLeast2
+                |> List.take parameterCount
                 |> List.indexedMap Tuple.pair
                 |> List.foldr
                     (\( parameterIndex, parameterInferredType ) resultSoFar ->
@@ -7438,17 +8411,28 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
                                 , name = rustReference.name
                                 }
                         , arguments =
-                            List.range 0 (parameterCountAtLeast2 - 1)
-                                |> List.map
-                                    (\parameterIndex ->
-                                        RustExpressionReference
-                                            { qualification = []
-                                            , name =
-                                                generatedParameterNameForIndexAtPath
-                                                    parameterIndex
-                                                    context.path
-                                            }
-                                    )
+                            (if rustReference.requiresAllocator then
+                                [ RustExpressionReference
+                                    { qualification = []
+                                    , name = generatedAllocatorVariableName
+                                    }
+                                ]
+
+                             else
+                                []
+                            )
+                                ++ (List.range 0 (parameterCount - 1)
+                                        |> List.map
+                                            (\parameterIndex ->
+                                                RustExpressionReference
+                                                    { qualification = []
+                                                    , name =
+                                                        generatedParameterNameForIndexAtPath
+                                                            parameterIndex
+                                                            context.path
+                                                    }
+                                            )
+                                   )
                         }
                     )
 
@@ -8353,22 +9337,6 @@ generatedAccessedRecordVariableName =
 generatedFieldValueParameterName : String -> String
 generatedFieldValueParameterName fieldName =
     "generated_" ++ fieldName
-
-
-rustExpressionReferenceListAppend : RustExpression
-rustExpressionReferenceListAppend =
-    RustExpressionReference
-        { qualification = []
-        , name = "list_append"
-        }
-
-
-rustExpressionReferenceStringAppend : RustExpression
-rustExpressionReferenceStringAppend =
-    RustExpressionReference
-        { qualification = []
-        , name = "string_append"
-        }
 
 
 inferredReferenceToInfoString :
@@ -9937,8 +10905,7 @@ expressionOperatorToRustFunctionReference :
             String
             { qualification : List String
             , name : String
-
-            -- TODO , requiresAllocator : Bool
+            , requiresAllocator : Bool
             }
 expressionOperatorToRustFunctionReference operator =
     case operator.symbol of
@@ -10029,129 +10996,379 @@ expressionOperatorToRustFunctionReference operator =
             Err ("unknown/unsupported operator " ++ unknownOrUnsupportedOperator)
 
 
-okReferencePow : Result error_ { qualification : List String, name : String }
+okReferencePow :
+    Result
+        error_
+        { qualification : List String
+        , name : String
+        , requiresAllocator : Bool
+        }
 okReferencePow =
-    Ok { qualification = [], name = "basics_pow" }
+    Ok
+        { qualification = []
+        , name = "basics_pow"
+        , requiresAllocator = False
+        }
 
 
-okReferenceNeq : Result error_ { qualification : List String, name : String }
+okReferenceNeq :
+    Result
+        error_
+        { qualification : List String
+        , name : String
+        , requiresAllocator : Bool
+        }
 okReferenceNeq =
-    Ok { qualification = [], name = "basics_neq" }
+    Ok
+        { qualification = []
+        , name = "basics_neq"
+        , requiresAllocator = False
+        }
 
 
-okReferenceEq : Result error_ { qualification : List String, name : String }
+okReferenceEq :
+    Result
+        error_
+        { qualification : List String
+        , name : String
+        , requiresAllocator : Bool
+        }
 okReferenceEq =
-    Ok { qualification = [], name = "basics_eq" }
+    Ok
+        { qualification = []
+        , name = "basics_eq"
+        , requiresAllocator = False
+        }
 
 
-okReferenceOr : Result error_ { qualification : List String, name : String }
+okReferenceOr :
+    Result
+        error_
+        { qualification : List String
+        , name : String
+        , requiresAllocator : Bool
+        }
 okReferenceOr =
-    Ok { qualification = [], name = "basics_or" }
+    Ok
+        { qualification = []
+        , name = "basics_or"
+        , requiresAllocator = False
+        }
 
 
-okReferenceAnd : Result error_ { qualification : List String, name : String }
+okReferenceAnd :
+    Result
+        error_
+        { qualification : List String
+        , name : String
+        , requiresAllocator : Bool
+        }
 okReferenceAnd =
-    Ok { qualification = [], name = "basics_and" }
+    Ok
+        { qualification = []
+        , name = "basics_and"
+        , requiresAllocator = False
+        }
 
 
-okReferenceLt : Result error_ { qualification : List String, name : String }
+okReferenceLt :
+    Result
+        error_
+        { qualification : List String
+        , name : String
+        , requiresAllocator : Bool
+        }
 okReferenceLt =
-    Ok { qualification = [], name = "basics_lt" }
+    Ok
+        { qualification = []
+        , name = "basics_lt"
+        , requiresAllocator = False
+        }
 
 
-okReferenceGt : Result error_ { qualification : List String, name : String }
+okReferenceGt :
+    Result
+        error_
+        { qualification : List String
+        , name : String
+        , requiresAllocator : Bool
+        }
 okReferenceGt =
-    Ok { qualification = [], name = "basics_gt" }
+    Ok
+        { qualification = []
+        , name = "basics_gt"
+        , requiresAllocator = False
+        }
 
 
-okReferenceLe : Result error_ { qualification : List String, name : String }
+okReferenceLe :
+    Result
+        error_
+        { qualification : List String
+        , name : String
+        , requiresAllocator : Bool
+        }
 okReferenceLe =
-    Ok { qualification = [], name = "basics_le" }
+    Ok
+        { qualification = []
+        , name = "basics_le"
+        , requiresAllocator = False
+        }
 
 
-okReferenceGe : Result error_ { qualification : List String, name : String }
+okReferenceGe :
+    Result
+        error_
+        { qualification : List String
+        , name : String
+        , requiresAllocator : Bool
+        }
 okReferenceGe =
-    Ok { qualification = [], name = "basics_ge" }
+    Ok
+        { qualification = []
+        , name = "basics_ge"
+        , requiresAllocator = False
+        }
 
 
-okReferenceMul : Result error_ { qualification : List String, name : String }
+okReferenceMul :
+    Result
+        error_
+        { qualification : List String
+        , name : String
+        , requiresAllocator : Bool
+        }
 okReferenceMul =
-    Ok { qualification = [], name = "basics_mul" }
+    Ok
+        { qualification = []
+        , name = "basics_mul"
+        , requiresAllocator = False
+        }
 
 
-okReferenceIdiv : Result error_ { qualification : List String, name : String }
+okReferenceIdiv :
+    Result
+        error_
+        { qualification : List String
+        , name : String
+        , requiresAllocator : Bool
+        }
 okReferenceIdiv =
-    Ok { qualification = [], name = "basics_idiv" }
+    Ok
+        { qualification = []
+        , name = "basics_idiv"
+        , requiresAllocator = False
+        }
 
 
-okReferenceFdiv : Result error_ { qualification : List String, name : String }
+okReferenceFdiv :
+    Result
+        error_
+        { qualification : List String
+        , name : String
+        , requiresAllocator : Bool
+        }
 okReferenceFdiv =
-    Ok { qualification = [], name = "basics_fdiv" }
+    Ok
+        { qualification = []
+        , name = "basics_fdiv"
+        , requiresAllocator = False
+        }
 
 
-okReferenceSub : Result error_ { qualification : List String, name : String }
+okReferenceSub :
+    Result
+        error_
+        { qualification : List String
+        , name : String
+        , requiresAllocator : Bool
+        }
 okReferenceSub =
-    Ok { qualification = [], name = "basics_sub" }
+    Ok
+        { qualification = []
+        , name = "basics_sub"
+        , requiresAllocator = False
+        }
 
 
-okReferenceAdd : Result error_ { qualification : List String, name : String }
+okReferenceAdd :
+    Result
+        error_
+        { qualification : List String
+        , name : String
+        , requiresAllocator : Bool
+        }
 okReferenceAdd =
-    Ok { qualification = [], name = "basics_add" }
+    Ok
+        { qualification = []
+        , name = "basics_add"
+        , requiresAllocator = False
+        }
 
 
-okReferenceApR : Result error_ { qualification : List String, name : String }
+okReferenceApR :
+    Result
+        error_
+        { qualification : List String
+        , name : String
+        , requiresAllocator : Bool
+        }
 okReferenceApR =
-    Ok { qualification = [], name = "basics_apr" }
+    Ok
+        { qualification = []
+        , name = "basics_apr"
+        , requiresAllocator = False
+        }
 
 
-okReferenceApL : Result error_ { qualification : List String, name : String }
+okReferenceApL :
+    Result
+        error_
+        { qualification : List String
+        , name : String
+        , requiresAllocator : Bool
+        }
 okReferenceApL =
-    Ok { qualification = [], name = "basics_apl" }
+    Ok
+        { qualification = []
+        , name = "basics_apl"
+        , requiresAllocator = False
+        }
 
 
-okReferenceComposeR : Result error_ { qualification : List String, name : String }
+okReferenceComposeR :
+    Result
+        error_
+        { qualification : List String
+        , name : String
+        , requiresAllocator : Bool
+        }
 okReferenceComposeR =
-    Ok { qualification = [], name = "basics_composer" }
+    Ok
+        { qualification = []
+        , name = "basics_composer"
+        , requiresAllocator = False
+        }
 
 
-okReferenceComposeL : Result error_ { qualification : List String, name : String }
+okReferenceComposeL :
+    Result
+        error_
+        { qualification : List String
+        , name : String
+        , requiresAllocator : Bool
+        }
 okReferenceComposeL =
-    Ok { qualification = [], name = "basics_composel" }
+    Ok
+        { qualification = []
+        , name = "basics_composel"
+        , requiresAllocator = False
+        }
 
 
-okReferenceParserAdvancedKeeper : Result error_ { qualification : List String, name : String }
+okReferenceParserAdvancedKeeper :
+    Result
+        error_
+        { qualification : List String
+        , name : String
+        , requiresAllocator : Bool
+        }
 okReferenceParserAdvancedKeeper =
-    Ok { qualification = [], name = "parser_advanced_keeper" }
+    Ok
+        { qualification = []
+        , name = "parser_advanced_keeper"
+        , requiresAllocator = True
+        }
 
 
-okReferenceParserAdvancedIgnorer : Result error_ { qualification : List String, name : String }
+okReferenceParserAdvancedIgnorer :
+    Result
+        error_
+        { qualification : List String
+        , name : String
+        , requiresAllocator : Bool
+        }
 okReferenceParserAdvancedIgnorer =
-    Ok { qualification = [], name = "parser_advanced_ignorer" }
+    Ok
+        { qualification = []
+        , name = "parser_advanced_ignorer"
+        , requiresAllocator = True
+        }
 
 
-okReferenceUrlParserSlash : Result error_ { qualification : List String, name : String }
+okReferenceUrlParserSlash :
+    Result
+        error_
+        { qualification : List String
+        , name : String
+        , requiresAllocator : Bool
+        }
 okReferenceUrlParserSlash =
-    Ok { qualification = [], name = "url_parser_slash" }
+    Ok
+        { qualification = []
+        , name = "url_parser_slash"
+        , requiresAllocator = True
+        }
 
 
-okReferenceUrlParserQuestionMark : Result error_ { qualification : List String, name : String }
+okReferenceUrlParserQuestionMark :
+    Result
+        error_
+        { qualification : List String
+        , name : String
+        , requiresAllocator : Bool
+        }
 okReferenceUrlParserQuestionMark =
-    Ok { qualification = [], name = "url_parser_question_mark" }
+    Ok
+        { qualification = []
+        , name = "url_parser_question_mark"
+        , requiresAllocator = True
+        }
 
 
-okReferenceListCons : Result error_ { qualification : List String, name : String }
+okReferenceListCons :
+    Result
+        error_
+        { qualification : List String
+        , name : String
+        , requiresAllocator : Bool
+        }
 okReferenceListCons =
-    Ok { qualification = [], name = "list_cons" }
+    Ok
+        { qualification = []
+        , name = "list_cons"
+        , requiresAllocator = True
+        }
 
 
-okReferenceStringAppend : Result error_ { qualification : List String, name : String }
+okReferenceStringAppend :
+    Result
+        error_
+        { qualification : List String
+        , name : String
+        , requiresAllocator : Bool
+        }
 okReferenceStringAppend =
-    Ok { qualification = [], name = "string_append" }
+    Ok
+        { qualification = []
+        , name = "string_append"
+        , requiresAllocator = True
+        }
 
 
-okReferenceListAppend : Result error_ { qualification : List String, name : String }
+okReferenceListAppend :
+    Result
+        error_
+        { qualification : List String
+        , name : String
+        , requiresAllocator : Bool
+        }
 okReferenceListAppend =
-    Ok { qualification = [], name = "list_append" }
+    Ok
+        { qualification = []
+        , name = "list_append"
+        , requiresAllocator = True
+        }
 
 
 inferredTypeString : ElmSyntaxTypeInfer.Type
@@ -10176,10 +11393,10 @@ rustFuncGenericsToString typeVariablesToDeclare =
                 ++ listFilledMapAndStringJoinWith ", "
                     (\typeParameter ->
                         if typeParameter |> String.startsWith "comparable" then
-                            typeParameter ++ ": Comparable & Sendable"
+                            typeParameter ++ ": Copy + PartialOrd"
 
                         else
-                            typeParameter ++ ": Sendable"
+                            typeParameter ++ ": Copy"
                     )
                     typeParameter0
                     typeParameter1Up
@@ -10190,6 +11407,7 @@ printRustFuncDeclaration :
     { name : String
     , parameters : List { pattern : RustPattern, type_ : RustType }
     , result : RustExpression
+    , lifetimeParameters : List String
     , resultType : RustType
     }
     -> Print
@@ -10252,7 +11470,32 @@ printRustFuncDeclaration rustValueOrFunctionDeclaration =
     Print.exactly
         ("pub fn "
             ++ rustValueOrFunctionDeclaration.name
-            ++ (typeVariablesToDeclare |> rustFuncGenericsToString)
+            ++ (case
+                    (rustValueOrFunctionDeclaration.lifetimeParameters
+                        |> List.map (\variable -> "'" ++ variable)
+                    )
+                        ++ (typeVariablesToDeclare
+                                |> List.map
+                                    (\typeParameter ->
+                                        if typeParameter |> String.startsWith "comparable" then
+                                            typeParameter ++ ": Copy + PartialOrd"
+
+                                        else
+                                            typeParameter ++ ": Copy"
+                                    )
+                           )
+                of
+                    [] ->
+                        ""
+
+                    typeParameter0 :: typeParameter1Up ->
+                        "<"
+                            ++ listFilledMapAndStringJoinWith ", "
+                                (\typeParameter -> typeParameter)
+                                typeParameter0
+                                typeParameter1Up
+                            ++ ">"
+               )
         )
         |> Print.followedBy
             (Print.withIndentIncreasedBy 4
@@ -10503,7 +11746,7 @@ printRustLocalFuncDeclaration rustValueOrFunctionDeclaration =
                     (\() -> resultTypePrint |> Print.lineSpread)
     in
     Print.exactly
-        ("@Sendable func "
+        ("fn "
             ++ rustValueOrFunctionDeclaration.name
             ++ (rustValueOrFunctionDeclaration.introducedTypeParameters
                     |> rustFuncGenericsToString
@@ -10692,11 +11935,11 @@ rustTypeContainedReferences rustType =
 
         RustTypeConstruct typeConstruct ->
             FastSet.union
-                (case typeConstruct.moduleOrigin of
-                    Nothing ->
+                (case typeConstruct.qualification of
+                    [] ->
                         FastSet.singleton typeConstruct.name
 
-                    Just _ ->
+                    _ :: _ ->
                         FastSet.empty
                 )
                 (typeConstruct.arguments
@@ -12456,7 +13699,6 @@ rustExpressionIsSpaceSeparated rustExpression =
             False
 
         RustExpressionLambda _ ->
-            -- maybe not?
             True
 
         RustExpressionAfterStatement _ ->
@@ -12825,7 +14067,7 @@ printRustExpressionLambda lambda =
             statementsAndResultPrintLineSpread
                 |> Print.lineSpreadMergeWith (\() -> parametersLineSpread)
     in
-    Print.exactly "|"
+    Print.exactly "move |"
         |> Print.followedBy
             (Print.withIndentIncreasedBy 1
                 (parameterPrints
@@ -13338,11 +14580,12 @@ an rust module called `Elm` in the global namespace that exposes all members.
 Will also add some internal wrapper declarations.
 -}
 rustDeclarationsToModuleString :
-    { funcs :
+    { fns :
         FastDict.Dict
             String
             { parameters : List { pattern : RustPattern, type_ : RustType }
             , result : RustExpression
+            , lifetimeParameters : List String
             , resultType : RustType
             }
     , lets :
@@ -13490,13 +14733,14 @@ use bumpalo::Bump;
                     )
                 |> List.map printRustLetDeclaration
             )
-                ++ (rustDeclarations.funcs
+                ++ (rustDeclarations.fns
                         |> fastDictMapAndToList
                             (\name valueOrFunctionInfo ->
                                 { name = name
                                 , parameters = valueOrFunctionInfo.parameters
                                 , result = valueOrFunctionInfo.result
                                 , resultType = valueOrFunctionInfo.resultType
+                                , lifetimeParameters = valueOrFunctionInfo.lifetimeParameters
                                 }
                             )
                         |> List.map printRustFuncDeclaration
@@ -13567,7 +14811,7 @@ elmKernelParserTypes =
             FastDict.fromList
                 [ ( "isSubString"
                   , inferredTypeFunctionCreate
-                        [ typeString, inferredTypeBasicsInt, inferredTypeBasicsInt, inferredTypeBasicsInt, typeString ]
+                        [ inferredTypeString, inferredTypeBasicsInt, inferredTypeBasicsInt, inferredTypeBasicsInt, inferredTypeString ]
                         (ElmSyntaxTypeInfer.TypeNotVariable
                             (ElmSyntaxTypeInfer.TypeTriple
                                 { part0 = inferredTypeBasicsInt
@@ -13579,21 +14823,21 @@ elmKernelParserTypes =
                   )
                 , ( "isSubChar"
                   , inferredTypeFunctionCreate
-                        [ inferredTypeFunctionCreate [ typeChar ] typeBool, inferredTypeBasicsInt, typeString ]
+                        [ inferredTypeFunctionCreate [ typeChar ] typeBool, inferredTypeBasicsInt, inferredTypeString ]
                         inferredTypeBasicsInt
                   )
                 , ( "isAsciiCode"
                   , inferredTypeFunctionCreate
-                        [ inferredTypeBasicsInt, inferredTypeBasicsInt, typeString ]
+                        [ inferredTypeBasicsInt, inferredTypeBasicsInt, inferredTypeString ]
                         typeBool
                   )
                 , ( "chompBase10"
                   , inferredTypeFunctionCreate
-                        [ inferredTypeBasicsInt, typeString ]
+                        [ inferredTypeBasicsInt, inferredTypeString ]
                         inferredTypeBasicsInt
                   )
                 , ( "consumeBase"
-                  , inferredTypeFunctionCreate [ inferredTypeBasicsInt, inferredTypeBasicsInt, typeString ]
+                  , inferredTypeFunctionCreate [ inferredTypeBasicsInt, inferredTypeBasicsInt, inferredTypeString ]
                         (ElmSyntaxTypeInfer.TypeNotVariable
                             (ElmSyntaxTypeInfer.TypeTuple
                                 { part0 = inferredTypeBasicsInt
@@ -13604,7 +14848,7 @@ elmKernelParserTypes =
                   )
                 , ( "consumeBase16"
                   , inferredTypeFunctionCreate
-                        [ inferredTypeBasicsInt, typeString ]
+                        [ inferredTypeBasicsInt, inferredTypeString ]
                         (ElmSyntaxTypeInfer.TypeNotVariable
                             (ElmSyntaxTypeInfer.TypeTuple
                                 { part0 = inferredTypeBasicsInt
@@ -13615,7 +14859,7 @@ elmKernelParserTypes =
                   )
                 , ( "findSubString"
                   , inferredTypeFunctionCreate
-                        [ typeString, inferredTypeBasicsInt, inferredTypeBasicsInt, inferredTypeBasicsInt, typeString ]
+                        [ inferredTypeString, inferredTypeBasicsInt, inferredTypeBasicsInt, inferredTypeBasicsInt, inferredTypeString ]
                         (ElmSyntaxTypeInfer.TypeNotVariable
                             (ElmSyntaxTypeInfer.TypeTriple
                                 { part0 = inferredTypeBasicsInt
@@ -13638,24 +14882,24 @@ elmKernelUrlTypes =
             FastDict.fromList
                 [ ( "percentEncode"
                   , inferredTypeFunctionCreate
-                        [ typeString ]
-                        typeString
+                        [ inferredTypeString ]
+                        inferredTypeString
                   )
                 , ( "percentDecode"
                   , inferredTypeFunctionCreate
-                        [ typeString ]
+                        [ inferredTypeString ]
                         (ElmSyntaxTypeInfer.TypeNotVariable
                             (ElmSyntaxTypeInfer.TypeConstruct
                                 { moduleOrigin = "Maybe"
                                 , name = "Maybe"
-                                , arguments = [ typeString ]
+                                , arguments = [ inferredTypeString ]
                                 }
                             )
                         )
                   )
                 , ( "findSubString"
                   , inferredTypeFunctionCreate
-                        [ typeString, inferredTypeBasicsInt, inferredTypeBasicsInt, inferredTypeBasicsInt, typeString ]
+                        [ inferredTypeString, inferredTypeBasicsInt, inferredTypeBasicsInt, inferredTypeBasicsInt, inferredTypeString ]
                         (ElmSyntaxTypeInfer.TypeNotVariable
                             (ElmSyntaxTypeInfer.TypeTriple
                                 { part0 = inferredTypeBasicsInt
@@ -13714,17 +14958,6 @@ typeNotVariableBasicsInt =
         , name = "Int"
         , arguments = []
         }
-
-
-typeString : ElmSyntaxTypeInfer.Type
-typeString =
-    ElmSyntaxTypeInfer.TypeNotVariable
-        (ElmSyntaxTypeInfer.TypeConstruct
-            { moduleOrigin = "String"
-            , name = "String"
-            , arguments = []
-            }
-        )
 
 
 typeChar : ElmSyntaxTypeInfer.Type
@@ -19702,27 +20935,27 @@ elmKernelVirtualDomTypes =
                     [ ( "noJavaScriptOrHtmlUri"
                       , ElmSyntaxTypeInfer.TypeNotVariable
                             (ElmSyntaxTypeInfer.TypeFunction
-                                { input = typeString
-                                , output = typeString
+                                { input = inferredTypeString
+                                , output = inferredTypeString
                                 }
                             )
                       )
                     , ( "noJavaScriptUri"
                       , ElmSyntaxTypeInfer.TypeNotVariable
                             (ElmSyntaxTypeInfer.TypeFunction
-                                { input = typeString
-                                , output = typeString
+                                { input = inferredTypeString
+                                , output = inferredTypeString
                                 }
                             )
                       )
                     , ( "attribute"
                       , ElmSyntaxTypeInfer.TypeNotVariable
                             (ElmSyntaxTypeInfer.TypeFunction
-                                { input = typeString
+                                { input = inferredTypeString
                                 , output =
                                     ElmSyntaxTypeInfer.TypeNotVariable
                                         (ElmSyntaxTypeInfer.TypeFunction
-                                            { input = typeString
+                                            { input = inferredTypeString
                                             , output =
                                                 ElmSyntaxTypeInfer.TypeNotVariable
                                                     (ElmSyntaxTypeInfer.TypeConstruct
@@ -19747,15 +20980,15 @@ elmKernelVirtualDomTypes =
                     , ( "attributeNS"
                       , ElmSyntaxTypeInfer.TypeNotVariable
                             (ElmSyntaxTypeInfer.TypeFunction
-                                { input = typeString
+                                { input = inferredTypeString
                                 , output =
                                     ElmSyntaxTypeInfer.TypeNotVariable
                                         (ElmSyntaxTypeInfer.TypeFunction
-                                            { input = typeString
+                                            { input = inferredTypeString
                                             , output =
                                                 ElmSyntaxTypeInfer.TypeNotVariable
                                                     (ElmSyntaxTypeInfer.TypeFunction
-                                                        { input = typeString
+                                                        { input = inferredTypeString
                                                         , output =
                                                             ElmSyntaxTypeInfer.TypeNotVariable
                                                                 (ElmSyntaxTypeInfer.TypeConstruct
@@ -19783,7 +21016,7 @@ elmKernelVirtualDomTypes =
                     , ( "property"
                       , ElmSyntaxTypeInfer.TypeNotVariable
                             (ElmSyntaxTypeInfer.TypeFunction
-                                { input = typeString
+                                { input = inferredTypeString
                                 , output =
                                     ElmSyntaxTypeInfer.TypeNotVariable
                                         (ElmSyntaxTypeInfer.TypeFunction
@@ -19820,7 +21053,7 @@ elmKernelVirtualDomTypes =
                     , ( "node"
                       , ElmSyntaxTypeInfer.TypeNotVariable
                             (ElmSyntaxTypeInfer.TypeFunction
-                                { input = typeString
+                                { input = inferredTypeString
                                 , output =
                                     ElmSyntaxTypeInfer.TypeNotVariable
                                         (ElmSyntaxTypeInfer.TypeFunction
@@ -19892,11 +21125,11 @@ elmKernelVirtualDomTypes =
                     , ( "nodeNS"
                       , ElmSyntaxTypeInfer.TypeNotVariable
                             (ElmSyntaxTypeInfer.TypeFunction
-                                { input = typeString
+                                { input = inferredTypeString
                                 , output =
                                     ElmSyntaxTypeInfer.TypeNotVariable
                                         (ElmSyntaxTypeInfer.TypeFunction
-                                            { input = typeString
+                                            { input = inferredTypeString
                                             , output =
                                                 ElmSyntaxTypeInfer.TypeNotVariable
                                                     (ElmSyntaxTypeInfer.TypeFunction
@@ -27018,8 +28251,8 @@ pub type StringString<'a> = &'a str;
 
 #[derive(Copy, Clone /*, Debug is implemented below */, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub enum ListListGuts<'a, A> {
-    ListEmpty,
-    ListCons(A, ListList<'a, A>),
+    Empty,
+    Cons(A, ListList<'a, A>),
 }
 pub type ListList<'a, A> = &'a ListListGuts<'a, A>;
 
@@ -27031,8 +28264,8 @@ impl<'a, A: Copy> Iterator for ListIterator<'a, A> {
     type Item = A; // it might be better to return &A
     fn next(&mut self) -> Option<Self::Item> {
         match self.remaining_list {
-            &ListListGuts::ListEmpty => Option::None,
-            &ListListGuts::ListCons(head, tail) => {
+            &ListListGuts::Empty => Option::None,
+            &ListListGuts::Cons(head, tail) => {
                 self.remaining_list = tail;
                 Option::Some(head)
             }
@@ -27196,27 +28429,27 @@ pub fn basics_never<A>(never: Never) -> A {
 
 pub fn list_is_empty<A: Copy>(list: ListList<A>) -> bool {
     match list {
-        &ListListGuts::ListEmpty => true,
-        &ListListGuts::ListCons(_, _) => false,
+        &ListListGuts::Empty => true,
+        &ListListGuts::Cons(_, _) => false,
     }
 }
 pub fn list_head<A: Copy>(list: ListList<A>) -> Option<A> {
     match list {
-        &ListListGuts::ListEmpty => Option::None,
-        &ListListGuts::ListCons(head, _) => Option::Some(head),
+        &ListListGuts::Empty => Option::None,
+        &ListListGuts::Cons(head, _) => Option::Some(head),
     }
 }
 pub fn list_tail<A: Copy>(list: ListList<A>) -> Option<ListList<A>> {
     match list {
-        &ListListGuts::ListEmpty => Option::None,
-        &ListListGuts::ListCons(_, tail) => Option::Some(tail),
+        &ListListGuts::Empty => Option::None,
+        &ListListGuts::Cons(_, tail) => Option::Some(tail),
     }
 }
 pub fn list_cons<'a, A>(allocator: &'a Bump, head: A, tail: ListList<'a, A>) -> ListList<'a, A> {
-    allocator.alloc(ListListGuts::ListCons(head, tail))
+    allocator.alloc(ListListGuts::Cons(head, tail))
 }
 pub fn list_singleton<'a, A>(allocator: &'a Bump, only_element: A) -> ListList<'a, A> {
-    list_cons(allocator, only_element, &ListListGuts::ListEmpty)
+    list_cons(allocator, only_element, &ListListGuts::Empty)
 }
 pub fn list_repeat<'a, A: Copy>(allocator: &'a Bump, count: f64, element: A) -> ListList<'a, A> {
     double_ended_iterator_to_list(allocator, std::iter::repeat_n(element, count as usize))
@@ -27228,7 +28461,7 @@ pub fn double_ended_iterator_to_list<'a, A: Copy, AIterator: DoubleEndedIterator
     allocator: &'a Bump,
     iterator: AIterator,
 ) -> ListList<'a, A> {
-    let mut list_so_far: ListList<A> = &ListListGuts::ListEmpty;
+    let mut list_so_far: ListList<A> = &ListListGuts::Empty;
     for element in iterator.rev() {
         list_so_far = list_cons(allocator, element, list_so_far)
     }
@@ -27280,7 +28513,7 @@ pub fn list_drop<'a, A: Copy>(skip_count: f64, list: ListList<'a, A>) -> ListLis
     let mut iterator = list.iter();
     for () in std::iter::repeat_n((), skip_count as usize) {
         match iterator.next() {
-            None => return &ListListGuts::ListEmpty,
+            None => return &ListListGuts::Empty,
             Some(_) => {}
         }
     }
@@ -27292,8 +28525,8 @@ pub fn list_intersperse<'a, A: Copy>(
     list: ListList<A>,
 ) -> ListList<'a, A> {
     match list {
-        &ListListGuts::ListEmpty => &ListListGuts::ListEmpty,
-        &ListListGuts::ListCons(head, tail) => list_cons(
+        &ListListGuts::Empty => &ListListGuts::Empty,
+        &ListListGuts::Cons(head, tail) => list_cons(
             allocator,
             head,
             iterator_to_list(
@@ -27342,7 +28575,7 @@ pub fn list_foldr<A: Copy, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) -
 }
 
 pub fn list_reverse<'a, A: Copy>(allocator: &'a Bump, list: ListList<A>) -> ListList<'a, A> {
-    let mut reverse_list: ListList<A> = &ListListGuts::ListEmpty;
+    let mut reverse_list: ListList<A> = &ListListGuts::Empty;
     for new_head in list.iter() {
         reverse_list = list_cons(allocator, new_head, reverse_list)
     }
@@ -27436,8 +28669,8 @@ pub fn list_unzip<'a, A: Copy, B: Copy>(
     allocator: &'a Bump,
     list: ListList<(A, B)>,
 ) -> (ListList<'a, A>, ListList<'a, B>) {
-    let mut a_list: ListList<A> = &ListListGuts::ListEmpty;
-    let mut b_list: ListList<B> = &ListListGuts::ListEmpty;
+    let mut a_list: ListList<A> = &ListListGuts::Empty;
+    let mut b_list: ListList<B> = &ListListGuts::Empty;
     for (next_last_a, next_last_b) in list.iter().collect::<Vec<(A, B)>>().into_iter().rev() {
         a_list = list_cons(allocator, next_last_a, a_list);
         b_list = list_cons(allocator, next_last_b, b_list)
@@ -28059,8 +29292,8 @@ pub fn string_join<'a>(
     segments: ListList<StringString>,
 ) -> StringString<'a> {
     match segments {
-        &ListListGuts::ListEmpty => &"",
-        &ListListGuts::ListCons(head_segment, tail_segments) => {
+        &ListListGuts::Empty => &"",
+        &ListListGuts::Cons(head_segment, tail_segments) => {
             let mut string_builder = head_segment.to_owned();
             for segment in tail_segments.iter() {
                 string_builder.push_str(in_between);

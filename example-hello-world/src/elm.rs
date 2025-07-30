@@ -1,5 +1,8 @@
 #![allow(dead_code)]
+#![allow(non_shorthand_field_patterns)]
+
 use bumpalo::Bump;
+
 
 pub type ResultResult<X, A> = Result<A, X>;
 
@@ -53,7 +56,7 @@ impl<'a, A: Copy + std::fmt::Debug> std::fmt::Debug for ListListGuts<'a, A> {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum BasicsNever {}
+pub enum Never {}
 
 pub fn basics_identity<A>(a: A) -> A {
     a
@@ -179,7 +182,7 @@ pub fn basics_from_polar((radius, theta): (f64, f64)) -> (f64, f64) {
     (radius * (f64::cos(theta)), radius * (f64::sin(theta)))
 }
 
-pub fn basics_never<A>(never: BasicsNever) -> A {
+pub fn basics_never<A>(never: Never) -> A {
     match never {}
 }
 
@@ -1378,3 +1381,37 @@ pub fn result_map5<
         e_result?,
     ))
 }
+
+
+
+
+
+pub fn hello_greet<'a>(generated_allocator: &'a Bump, name: StringString<'a>) ->  StringString<'a> {
+    string_append(generated_allocator, "Hello, ", string_append(generated_allocator, name, "!"))
+}
+
+pub fn tuple_first<'a, A: Copy, B: Copy>(generated_allocator: &'a Bump, (x, _): (A, B)) ->  A {
+    x
+}
+
+pub fn tuple_map_both<'a, A: Copy, B: Copy, X: Copy, Y: Copy>(generated_allocator: &'a Bump, funcA: Fn(A) -> X, funcB: Fn(B) -> Y, (x, y): (A, B)) ->  (X, Y) {
+    ( funcA(x), funcB(y) )
+}
+
+pub fn tuple_map_first<'a, A: Copy, B: Copy, X: Copy>(generated_allocator: &'a Bump, func: Fn(A) -> X, (x, y): (A, B)) ->  (X, B) {
+    ( func(x), y )
+}
+
+pub fn tuple_map_second<'a, A: Copy, B: Copy, Y: Copy>(generated_allocator: &'a Bump, func: Fn(B) -> Y, (x, y): (A, B)) ->  (A, Y) {
+    ( x, func(y) )
+}
+
+pub fn tuple_pair<'a, A: Copy, B: Copy>(generated_allocator: &'a Bump, a: A, b: B) ->  (A, B) {
+    ( a, b )
+}
+
+pub fn tuple_second<'a, A: Copy, B: Copy>(generated_allocator: &'a Bump, (_, y): (A, B)) ->  B {
+    y
+}
+
+
