@@ -15,7 +15,3 @@ Result.Result → ResultResult
 (a, b, c) → (a, b, c)
 {a: a} → {a: a}
 Basics.Order → std::cmp::Ordering (Less, Equal, Greater)
-
-use
-#![allow(non_shorthand_field_patterns)]
-#![allow(dead_code)]

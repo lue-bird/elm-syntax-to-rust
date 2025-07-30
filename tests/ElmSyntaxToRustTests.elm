@@ -95,7 +95,11 @@ elmModuleSourceTranspileToRust source =
                         { funcs :
                             FastDict.Dict
                                 String
-                                { parameters : List { name : String, type_ : ElmSyntaxToRust.RustType }
+                                { parameters :
+                                    List
+                                        { pattern : ElmSyntaxToRust.RustPattern
+                                        , type_ : ElmSyntaxToRust.RustType
+                                        }
                                 , statements : List ElmSyntaxToRust.RustStatement
                                 , result : ElmSyntaxToRust.RustExpression
                                 , resultType : ElmSyntaxToRust.RustType
@@ -116,20 +120,10 @@ elmModuleSourceTranspileToRust source =
                             FastDict.Dict
                                 String
                                 { parameters : List String
-                                , cases :
+                                , variants :
                                     FastDict.Dict
                                         String
-                                        (List
-                                            { label : Maybe String
-                                            , value : ElmSyntaxToRust.RustType
-                                            }
-                                        )
-                                , computedProperties :
-                                    FastDict.Dict
-                                        String
-                                        { type_ : ElmSyntaxToRust.RustType
-                                        , value : ElmSyntaxToRust.RustExpression
-                                        }
+                                        (List ElmSyntaxToRust.RustType)
                                 }
                         }
                     }

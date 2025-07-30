@@ -4,5 +4,7 @@ elm-stuff
 node_modules
 .build
 
+zombie
+
 # for experimentation
 /src/main.rs

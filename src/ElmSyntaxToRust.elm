@@ -39,6 +39,7 @@ type RustType
         , name : String
         , arguments : List RustType
         , -- TODO also encode if Equatable or not
+          -- TODO , lifetimeVariable : String
           isFunction : Bool
         }
     | RustTypeTuple
@@ -70,8 +71,9 @@ type RustPattern
     | RustPatternVariant
         { originTypeName : List String
         , name : String
-        , isReference : Bool
-        , values : List { label : Maybe String, value : RustPattern }
+        , -- &
+          isReference : Bool
+        , values : List RustPattern
         }
     | RustPatternTuple
         { part0 : RustPattern
@@ -98,6 +100,8 @@ type RustExpression
         , name : String
         }
     | RustExpressionNegateOperation RustExpression
+    | -- &
+      RustExpressionBorrow RustExpression
     | RustExpressionRecordAccess
         { record : RustExpression
         , field : String
@@ -111,16 +115,12 @@ type RustExpression
     | RustExpressionRecord (FastDict.Dict String RustExpression)
     | RustExpressionCall
         { called : RustExpression
-        , arguments :
-            List
-                { label : {- TODO remove -} Maybe String
-                , value : RustExpression
-                }
+        , arguments : List RustExpression
         }
     | RustExpressionLambda
         { parameters :
             List
-                { {- TODO RustPattern -} name : String
+                { pattern : RustPattern
                 , type_ : RustType
                 }
         , statements : List RustStatement
@@ -131,7 +131,7 @@ type RustExpression
         , onTrue : RustExpression
         , onFalse : RustExpression
         }
-    | -- TODO add RustExpressionWithLocalDeclarations, RustExpressionReference (&)
+    | -- TODO add RustExpressionWithLocalDeclarations
       RustExpressionSwitch
         { matched : RustExpression
         , case0 :
@@ -555,32 +555,21 @@ rustTypeParametersToString rustTypeParameters =
 
 
 printRustEnumDeclaration :
-    { indirect : Bool
+    { -- TODO remove indirect
+      indirect : Bool
     , name : String
     , parameters : List String
-    , cases :
-        FastDict.Dict
-            String
-            (List
-                { label : Maybe String
-                , value : RustType
-                }
-            )
-    , computedProperties :
-        FastDict.Dict
-            String
-            { type_ : RustType
-            , value : RustExpression
-            }
+    , variants :
+        FastDict.Dict String (List RustType)
     }
     -> Print
 printRustEnumDeclaration rustEnumType =
     Print.exactly
         ((if rustEnumType.indirect then
-            "public indirect enum "
+            "pub enum "
 
           else
-            "public enum "
+            "pub enum "
          )
             ++ rustEnumType.name
             ++ (case rustEnumType.parameters of
@@ -590,47 +579,26 @@ printRustEnumDeclaration rustEnumType =
                     parameter0 :: parameter1Up ->
                         "<"
                             ++ ((parameter0 :: parameter1Up)
-                                    |> List.map (\parameter -> parameter ++ ": Sendable")
                                     |> String.join ", "
                                )
                             ++ ">"
                )
-            ++ ": Sendable {"
+            ++ " {"
         )
         |> Print.followedBy
             (Print.withIndentAtNextMultipleOf4
                 (Print.linebreakIndented
                     |> Print.followedBy
-                        (rustEnumType.cases
+                        (rustEnumType.variants
                             |> FastDict.toList
                             |> Print.listMapAndIntersperseAndFlatten
                                 (\( name, values ) ->
-                                    printRustEnumCaseDeclaration
+                                    printRustEnumVariantDeclaration
                                         { name = name
                                         , values = values
                                         }
                                 )
                                 Print.linebreakIndented
-                        )
-                    |> Print.followedBy
-                        (if rustEnumType.computedProperties |> FastDict.isEmpty then
-                            Print.empty
-
-                         else
-                            Print.linebreakIndented
-                                |> Print.followedBy
-                                    (rustEnumType.computedProperties
-                                        |> FastDict.toList
-                                        |> Print.listMapAndIntersperseAndFlatten
-                                            (\( name, computedProperty ) ->
-                                                printRustComputedProperty
-                                                    { name = name
-                                                    , value = computedProperty.value
-                                                    , type_ = computedProperty.type_
-                                                    }
-                                            )
-                                            Print.linebreakIndented
-                                    )
                         )
                 )
             )
@@ -638,59 +606,12 @@ printRustEnumDeclaration rustEnumType =
         |> Print.followedBy printExactlyCurlyClosing
 
 
-printRustComputedProperty :
+printRustEnumVariantDeclaration :
     { name : String
-    , value : RustExpression
-    , type_ : RustType
+    , values : List RustType
     }
     -> Print
-printRustComputedProperty computedProperty =
-    let
-        assignedValuePrint : Print
-        assignedValuePrint =
-            printRustExpressionNotParenthesized
-                computedProperty.value
-
-        resultTypePrint : Print
-        resultTypePrint =
-            printRustTypeNotParenthesized
-                Nothing
-                computedProperty.type_
-    in
-    Print.exactly ("var " ++ computedProperty.name ++ ":")
-        |> Print.followedBy
-            (Print.withIndentAtNextMultipleOf4
-                (Print.spaceOrLinebreakIndented
-                    (resultTypePrint |> Print.lineSpread)
-                    |> Print.followedBy resultTypePrint
-                    |> Print.followedBy
-                        printExactlySpaceCurlyOpening
-                    |> Print.followedBy
-                        (Print.spaceOrLinebreakIndented
-                            (assignedValuePrint |> Print.lineSpread)
-                        )
-                    |> Print.followedBy
-                        assignedValuePrint
-                )
-            )
-        |> Print.followedBy
-            (Print.spaceOrLinebreakIndented
-                (assignedValuePrint |> Print.lineSpread)
-            )
-        |> Print.followedBy
-            printExactlyCurlyClosing
-
-
-printRustEnumCaseDeclaration :
-    { name : String
-    , values :
-        List
-            { label : Maybe String
-            , value : RustType
-            }
-    }
-    -> Print
-printRustEnumCaseDeclaration rustVariant =
+printRustEnumVariantDeclaration rustVariant =
     case rustVariant.values of
         [] ->
             Print.exactly ("case " ++ rustVariant.name)
@@ -702,26 +623,8 @@ printRustEnumCaseDeclaration rustVariant =
                     (value0 :: value1Up)
                         |> List.map
                             (\value ->
-                                let
-                                    valuePrint : Print
-                                    valuePrint =
-                                        value.value
-                                            |> printRustTypeNotParenthesized Nothing
-                                in
-                                case value.label of
-                                    Nothing ->
-                                        valuePrint
-
-                                    Just label ->
-                                        Print.exactly (label ++ ":")
-                                            |> Print.followedBy
-                                                (Print.withIndentAtNextMultipleOf4
-                                                    (Print.spaceOrLinebreakIndented
-                                                        (valuePrint |> Print.lineSpread)
-                                                        |> Print.followedBy
-                                                            valuePrint
-                                                    )
-                                                )
+                                value
+                                    |> printRustTypeNotParenthesized Nothing
                             )
 
                 fullLineSpread : Print.LineSpread
@@ -1244,56 +1147,6 @@ rustTypeExpandFunctionIntoReverse soFarReverse rustType =
             { inputs = soFarReverse |> List.reverse
             , output = RustTypeVariable variable
             }
-
-
-rustTypeIsEquatable : RustType -> Bool
-rustTypeIsEquatable rustType =
-    -- IGNORE TCO
-    case rustType of
-        RustTypeUnit ->
-            True
-
-        RustTypeFunction _ ->
-            False
-
-        RustTypeConstruct construct ->
-            construct.isFunction
-                || (case construct.moduleOrigin of
-                        Just _ ->
-                            True
-
-                        Nothing ->
-                            case construct.name of
-                                "Platform_Program" ->
-                                    False
-
-                                "BytesDecode_Decoder" ->
-                                    False
-
-                                "json_decode_Decoder" ->
-                                    False
-
-                                _ ->
-                                    True
-                   )
-                && (construct.arguments
-                        |> List.all rustTypeIsEquatable
-                   )
-
-        RustTypeTuple parts ->
-            (parts.part0 |> rustTypeIsEquatable)
-                && (parts.part1 |> rustTypeIsEquatable)
-                && (parts.part2Up |> List.all rustTypeIsEquatable)
-
-        RustTypeRecord fields ->
-            fields
-                |> fastDictAll
-                    (\_ fieldValue ->
-                        fieldValue |> rustTypeIsEquatable
-                    )
-
-        RustTypeVariable _ ->
-            True
 
 
 inferredTypeToFunction :
@@ -1987,7 +1840,7 @@ destructuringToRustStatements context toDestructure =
                     }
             )
     )
-        ++ destructuringToRustAssignmentStatements context
+        ++ destructuringToRustAssignmentStatements
             { pattern = toDestructure.pattern
             , expression = toDestructure.expression
             }
@@ -2317,10 +2170,7 @@ inferredPatternUntilAsPatterns patternTypedNode =
                             , isReference = reference.isReference
                             , values =
                                 values
-                                    |> List.map
-                                        (\value ->
-                                            { label = Nothing, value = value.pattern }
-                                        )
+                                    |> List.map (\value -> value.pattern)
                             }
                     , patternAliases =
                         values
@@ -2378,8 +2228,8 @@ rustPatternListCons head tail =
         , name = "Cons"
         , isReference = True
         , values =
-            [ { label = Nothing, value = head }
-            , { label = Nothing, value = tail }
+            [ head
+            , tail
             ]
         }
 
@@ -2454,28 +2304,16 @@ generatedDestructuringVariableNameFor variableName =
     "generated_destructured_" ++ variableName
 
 
+{-| TODO remove
+-}
 destructuringToRustAssignmentStatements :
-    { path : List String
-    , typeAliasesInModule :
-        String
-        ->
-            Maybe
-                (FastDict.Dict
-                    String
-                    { parameters : List String
-                    , recordFieldOrder : Maybe (List String)
-                    , type_ : ElmSyntaxTypeInfer.Type
-                    }
-                )
+    { pattern :
+        ElmSyntaxTypeInfer.TypedNode
+            ElmSyntaxTypeInfer.Pattern
+    , expression : RustExpression
     }
-    ->
-        { pattern :
-            ElmSyntaxTypeInfer.TypedNode
-                ElmSyntaxTypeInfer.Pattern
-        , expression : RustExpression
-        }
     -> List RustStatement
-destructuringToRustAssignmentStatements context toDestructure =
+destructuringToRustAssignmentStatements toDestructure =
     let
         patternUntilAsPatterns :
             { pattern : RustPattern
@@ -2499,7 +2337,7 @@ destructuringToRustAssignmentStatements context toDestructure =
             patternUntilAsPatterns.patternAliases
                 |> List.concatMap
                     (\variableAsPatternAlias ->
-                        destructuringToRustAssignmentStatements context
+                        destructuringToRustAssignmentStatements
                             { expression =
                                 RustExpressionReference
                                     { qualification = []
@@ -2527,38 +2365,12 @@ destructuringToRustAssignmentStatements context toDestructure =
                             }
                     )
     in
-    if patternUntilAsPatternsWithGeneratedVariableNames |> rustPatternCanBeUsedInRustDestructuring then
-        RustStatementLetDestructuring
-            { pattern = patternUntilAsPatternsWithGeneratedVariableNames
-            , expression = toDestructure.expression
-            }
-            :: patternUntilAsPatternsIntroducedVariableAssignments
-            ++ asPatternAliasDestructuringStatements
-
-    else
-        let
-            matchedWrappedInLetIfIfOrSwitch : { statements : List RustStatement, result : RustExpression }
-            matchedWrappedInLetIfIfOrSwitch =
-                rustExpressionWrapInLetIfOrSwitchResult context.path
-                    { expression = toDestructure.expression
-                    , type_ =
-                        \() ->
-                            toDestructure.pattern.type_
-                                |> type_ context.typeAliasesInModule
-                    }
-        in
-        matchedWrappedInLetIfIfOrSwitch.statements
-            ++ [ RustStatementSwitch
-                    { matched = matchedWrappedInLetIfIfOrSwitch.result
-                    , case0 =
-                        { pattern = patternUntilAsPatternsWithGeneratedVariableNames
-                        , statements =
-                            asPatternAliasDestructuringStatements
-                                ++ patternUntilAsPatternsIntroducedVariableAssignments
-                        }
-                    , case1Up = []
-                    }
-               ]
+    RustStatementLetDestructuring
+        { pattern = patternUntilAsPatternsWithGeneratedVariableNames
+        , expression = toDestructure.expression
+        }
+        :: patternUntilAsPatternsIntroducedVariableAssignments
+        ++ asPatternAliasDestructuringStatements
 
 
 rustPatternIntroducedVariables : RustPattern -> List String
@@ -2597,9 +2409,7 @@ rustPatternIntroducedVariables rustPattern =
         RustPatternVariant patternVariant ->
             patternVariant.values
                 |> List.concatMap
-                    (\value ->
-                        value.value |> rustPatternIntroducedVariables
-                    )
+                    rustPatternIntroducedVariables
 
         RustPatternRecord recordPatternInexhaustiveFieldNames ->
             recordPatternInexhaustiveFieldNames
@@ -2657,11 +2467,8 @@ rustPatternAlterVariables variableNameChange rustPattern =
                     variant.values
                         |> List.map
                             (\value ->
-                                { label = value.label
-                                , value =
-                                    value.value
-                                        |> rustPatternAlterVariables variableNameChange
-                                }
+                                value
+                                    |> rustPatternAlterVariables variableNameChange
                             )
                 }
 
@@ -2678,72 +2485,35 @@ rustPatternAlterVariables variableNameChange rustPattern =
                 }
 
 
-{-| TODO replace by True
--}
-rustPatternCanBeUsedInRustDestructuring : RustPattern -> Bool
-rustPatternCanBeUsedInRustDestructuring rustPattern =
-    True
-
-
-casePattern :
+pattern :
     ElmSyntaxTypeInfer.TypedNode
         ElmSyntaxTypeInfer.Pattern
     ->
         { pattern : RustPattern
         , introducedVariables : FastSet.Set String
-        , variableAsPatternAliases :
-            FastDict.Dict
-                String
-                { pattern : RustPattern
-                , type_ : ElmSyntaxTypeInfer.Type
-                }
         }
-casePattern patternInferred =
-    casePatternInPath [] patternInferred
-
-
-casePatternInPath :
-    {- TODO unnecessary -}
-    List String
-    ->
-        ElmSyntaxTypeInfer.TypedNode
-            ElmSyntaxTypeInfer.Pattern
-    ->
-        { pattern : RustPattern
-        , introducedVariables : FastSet.Set String
-        , -- TODO remove
-          variableAsPatternAliases :
-            FastDict.Dict
-                String
-                { pattern : RustPattern
-                , type_ : ElmSyntaxTypeInfer.Type
-                }
-        }
-casePatternInPath path patternInferred =
+pattern patternInferred =
     -- IGNORE TCO
     case patternInferred.value of
         ElmSyntaxTypeInfer.PatternIgnored ->
-            rustPatternIgnoreIntroducedVariablesSetEmptyVariableAsPatternAliasesDictEmpty
+            rustPatternIgnoreIntroducedVariablesSetEmpty
 
         ElmSyntaxTypeInfer.PatternUnit ->
-            rustPatternIgnoreIntroducedVariablesSetEmptyVariableAsPatternAliasesDictEmpty
+            rustPatternIgnoreIntroducedVariablesSetEmpty
 
         ElmSyntaxTypeInfer.PatternChar charValue ->
             { pattern = RustPatternUnicodeScalar charValue
             , introducedVariables = FastSet.empty
-            , variableAsPatternAliases = FastDict.empty
             }
 
         ElmSyntaxTypeInfer.PatternString stringValue ->
             { pattern = RustPatternStringLiteral stringValue
             , introducedVariables = FastSet.empty
-            , variableAsPatternAliases = FastDict.empty
             }
 
         ElmSyntaxTypeInfer.PatternInt intValue ->
             { pattern = RustPatternInteger intValue.value
             , introducedVariables = FastSet.empty
-            , variableAsPatternAliases = FastDict.empty
             }
 
         ElmSyntaxTypeInfer.PatternVariable variableName ->
@@ -2752,39 +2522,26 @@ casePatternInPath path patternInferred =
                     (variableName |> variableNameDisambiguateFromRustKeywords)
             , introducedVariables =
                 FastSet.singleton variableName
-            , variableAsPatternAliases = FastDict.empty
             }
 
         ElmSyntaxTypeInfer.PatternParenthesized inParens ->
-            casePatternInPath path inParens
+            pattern inParens
 
         ElmSyntaxTypeInfer.PatternTuple parts ->
             let
                 part0 :
                     { pattern : RustPattern
                     , introducedVariables : FastSet.Set String
-                    , variableAsPatternAliases :
-                        FastDict.Dict
-                            String
-                            { pattern : RustPattern
-                            , type_ : ElmSyntaxTypeInfer.Type
-                            }
                     }
                 part0 =
-                    parts.part0 |> casePatternInPath ("0" :: path)
+                    parts.part0 |> pattern
 
                 part1 :
                     { pattern : RustPattern
                     , introducedVariables : FastSet.Set String
-                    , variableAsPatternAliases :
-                        FastDict.Dict
-                            String
-                            { pattern : RustPattern
-                            , type_ : ElmSyntaxTypeInfer.Type
-                            }
                     }
                 part1 =
-                    parts.part1 |> casePatternInPath ("1" :: path)
+                    parts.part1 |> pattern
             in
             { pattern =
                 rustPatternVariantTuple part0.pattern part1.pattern
@@ -2792,9 +2549,6 @@ casePatternInPath path patternInferred =
                 FastSet.union
                     part0.introducedVariables
                     part1.introducedVariables
-            , variableAsPatternAliases =
-                part0.variableAsPatternAliases
-                    |> FastDict.union part1.variableAsPatternAliases
             }
 
         ElmSyntaxTypeInfer.PatternTriple parts ->
@@ -2802,41 +2556,23 @@ casePatternInPath path patternInferred =
                 part0 :
                     { pattern : RustPattern
                     , introducedVariables : FastSet.Set String
-                    , variableAsPatternAliases :
-                        FastDict.Dict
-                            String
-                            { pattern : RustPattern
-                            , type_ : ElmSyntaxTypeInfer.Type
-                            }
                     }
                 part0 =
-                    parts.part0 |> casePatternInPath ("0" :: path)
+                    parts.part0 |> pattern
 
                 part1 :
                     { pattern : RustPattern
                     , introducedVariables : FastSet.Set String
-                    , variableAsPatternAliases :
-                        FastDict.Dict
-                            String
-                            { pattern : RustPattern
-                            , type_ : ElmSyntaxTypeInfer.Type
-                            }
                     }
                 part1 =
-                    parts.part1 |> casePatternInPath ("1" :: path)
+                    parts.part1 |> pattern
 
                 part2 :
                     { pattern : RustPattern
                     , introducedVariables : FastSet.Set String
-                    , variableAsPatternAliases :
-                        FastDict.Dict
-                            String
-                            { pattern : RustPattern
-                            , type_ : ElmSyntaxTypeInfer.Type
-                            }
                     }
                 part2 =
-                    parts.part2 |> casePatternInPath ("2" :: path)
+                    parts.part2 |> pattern
             in
             { pattern =
                 rustPatternVariantTriple part0.pattern part1.pattern part2.pattern
@@ -2844,10 +2580,6 @@ casePatternInPath path patternInferred =
                 part0.introducedVariables
                     |> FastSet.union part1.introducedVariables
                     |> FastSet.union part2.introducedVariables
-            , variableAsPatternAliases =
-                part0.variableAsPatternAliases
-                    |> FastDict.union part1.variableAsPatternAliases
-                    |> FastDict.union part2.variableAsPatternAliases
             }
 
         ElmSyntaxTypeInfer.PatternRecord patternFields ->
@@ -2947,7 +2679,6 @@ casePatternInPath path patternInferred =
                 RustPatternRecord
                     combinedFieldNames.fields
             , introducedVariables = combinedFieldNames.introducedVariables
-            , variableAsPatternAliases = FastDict.empty
             }
 
         ElmSyntaxTypeInfer.PatternListCons listCons ->
@@ -2955,28 +2686,16 @@ casePatternInPath path patternInferred =
                 head :
                     { pattern : RustPattern
                     , introducedVariables : FastSet.Set String
-                    , variableAsPatternAliases :
-                        FastDict.Dict
-                            String
-                            { pattern : RustPattern
-                            , type_ : ElmSyntaxTypeInfer.Type
-                            }
                     }
                 head =
-                    listCons.head |> casePatternInPath ("head" :: path)
+                    listCons.head |> pattern
 
                 tail :
                     { pattern : RustPattern
                     , introducedVariables : FastSet.Set String
-                    , variableAsPatternAliases :
-                        FastDict.Dict
-                            String
-                            { pattern : RustPattern
-                            , type_ : ElmSyntaxTypeInfer.Type
-                            }
                     }
                 tail =
-                    listCons.tail |> casePatternInPath ("tail" :: path)
+                    listCons.tail |> pattern
             in
             { pattern =
                 rustPatternListCons head.pattern tail.pattern
@@ -2984,9 +2703,6 @@ casePatternInPath path patternInferred =
                 FastSet.union
                     head.introducedVariables
                     tail.introducedVariables
-            , variableAsPatternAliases =
-                head.variableAsPatternAliases
-                    |> FastDict.union tail.variableAsPatternAliases
             }
 
         ElmSyntaxTypeInfer.PatternListExact elementPatterns ->
@@ -2995,19 +2711,10 @@ casePatternInPath path patternInferred =
                     List
                         { pattern : RustPattern
                         , introducedVariables : FastSet.Set String
-                        , variableAsPatternAliases :
-                            FastDict.Dict
-                                String
-                                { pattern : RustPattern
-                                , type_ : ElmSyntaxTypeInfer.Type
-                                }
                         }
                 elements =
                     elementPatterns
-                        |> List.indexedMap
-                            (\elementIndex element ->
-                                element |> casePatternInPath ((elementIndex |> String.fromInt) :: path)
-                            )
+                        |> List.map pattern
             in
             { pattern =
                 elements
@@ -3019,10 +2726,6 @@ casePatternInPath path patternInferred =
             , introducedVariables =
                 elements
                     |> listMapToFastSetsAndUnify .introducedVariables
-            , variableAsPatternAliases =
-                elements
-                    |> listMapToFastDictsAndUnify
-                        .variableAsPatternAliases
             }
 
         ElmSyntaxTypeInfer.PatternVariant variant ->
@@ -3048,7 +2751,6 @@ casePatternInPath path patternInferred =
                 Just bool ->
                     { pattern = RustPatternBool bool
                     , introducedVariables = FastSet.empty
-                    , variableAsPatternAliases = FastDict.empty
                     }
 
                 Nothing ->
@@ -3081,19 +2783,10 @@ casePatternInPath path patternInferred =
                             List
                                 { pattern : RustPattern
                                 , introducedVariables : FastSet.Set String
-                                , variableAsPatternAliases :
-                                    FastDict.Dict
-                                        String
-                                        { pattern : RustPattern
-                                        , type_ : ElmSyntaxTypeInfer.Type
-                                        }
                                 }
                         values =
                             variant.values
-                                |> List.indexedMap
-                                    (\valueIndex value ->
-                                        value |> casePatternInPath ((valueIndex |> String.fromInt) :: path)
-                                    )
+                                |> List.map pattern
                     in
                     { pattern =
                         RustPatternVariant
@@ -3102,17 +2795,11 @@ casePatternInPath path patternInferred =
                             , isReference = reference.isReference
                             , values =
                                 values
-                                    |> List.map
-                                        (\value ->
-                                            { label = Nothing, value = value.pattern }
-                                        )
+                                    |> List.map (\value -> value.pattern)
                             }
                     , introducedVariables =
                         values
                             |> listMapToFastSetsAndUnify .introducedVariables
-                    , variableAsPatternAliases =
-                        values
-                            |> listMapToFastDictsAndUnify .variableAsPatternAliases
                     }
 
         ElmSyntaxTypeInfer.PatternAs patternAs ->
@@ -3120,15 +2807,9 @@ casePatternInPath path patternInferred =
                 aliasedPattern :
                     { pattern : RustPattern
                     , introducedVariables : FastSet.Set String
-                    , variableAsPatternAliases :
-                        FastDict.Dict
-                            String
-                            { pattern : RustPattern
-                            , type_ : ElmSyntaxTypeInfer.Type
-                            }
                     }
                 aliasedPattern =
-                    patternAs.pattern |> casePatternInPath path
+                    patternAs.pattern |> pattern
             in
             { pattern =
                 RustPatternAlias
@@ -3138,13 +2819,6 @@ casePatternInPath path patternInferred =
             , introducedVariables =
                 aliasedPattern.introducedVariables
                     |> FastSet.insert patternAs.variable.value
-            , variableAsPatternAliases =
-                aliasedPattern.variableAsPatternAliases
-                    |> FastDict.insert
-                        (patternAs.variable.value |> variableNameDisambiguateFromRustKeywords)
-                        { pattern = aliasedPattern.pattern
-                        , type_ = patternAs.pattern.type_
-                        }
             }
 
 
@@ -3196,20 +2870,13 @@ fieldsDictEmptyIntroducedVariablesDictEmpty =
     }
 
 
-rustPatternIgnoreIntroducedVariablesSetEmptyVariableAsPatternAliasesDictEmpty :
+rustPatternIgnoreIntroducedVariablesSetEmpty :
     { pattern : RustPattern
     , introducedVariables : FastSet.Set String
-    , variableAsPatternAliases :
-        FastDict.Dict
-            String
-            { pattern : RustPattern
-            , type_ : ElmSyntaxTypeInfer.Type
-            }
     }
-rustPatternIgnoreIntroducedVariablesSetEmptyVariableAsPatternAliasesDictEmpty =
+rustPatternIgnoreIntroducedVariablesSetEmpty =
     { pattern = RustPatternIgnore
     , introducedVariables = FastSet.empty
-    , variableAsPatternAliases = FastDict.empty
     }
 
 
@@ -4980,27 +4647,7 @@ printRustPatternNotParenthesized rustPattern =
                                 |> Print.followedBy
                                     ((variantValue0 :: variantValue1Up)
                                         |> Print.listMapAndIntersperseAndFlatten
-                                            (\value ->
-                                                let
-                                                    valuePrint : Print
-                                                    valuePrint =
-                                                        value.value |> printRustPatternNotParenthesized
-                                                in
-                                                case value.label of
-                                                    Nothing ->
-                                                        valuePrint
-
-                                                    Just label ->
-                                                        Print.exactly (label ++ ":")
-                                                            |> Print.followedBy
-                                                                (Print.withIndentAtNextMultipleOf4
-                                                                    (Print.spaceOrLinebreakIndented
-                                                                        (valuePrint |> Print.lineSpread)
-                                                                        |> Print.followedBy
-                                                                            valuePrint
-                                                                    )
-                                                                )
-                                            )
+                                            printRustPatternNotParenthesized
                                             printExactlyCommaSpace
                                     )
                                 |> Print.followedBy printExactlyParenClosing
@@ -5029,7 +4676,11 @@ printRustPatternFalse =
 
 printRustPatternRecord : FastDict.Dict String RustPattern -> Print
 printRustPatternRecord recordFields =
-    printExactlyParenOpening
+    Print.exactly
+        (generatedRecordTypeName
+            (recordFields |> FastDict.keys)
+        )
+        |> Print.followedBy printExactlyCurlyOpening
         |> Print.followedBy
             (recordFields
                 |> FastDict.toList
@@ -5044,7 +4695,7 @@ printRustPatternRecord recordFields =
                     )
                     printExactlyComma
             )
-        |> Print.followedBy printExactlyParenClosing
+        |> Print.followedBy printExactlyCurlyClosing
 
 
 printExactlyCommaSpace : Print
@@ -5159,7 +4810,7 @@ modules :
             { funcs :
                 FastDict.Dict
                     String
-                    { parameters : List { name : String, type_ : RustType }
+                    { parameters : List { pattern : RustPattern, type_ : RustType }
                     , statements : List RustStatement
                     , result : RustExpression
                     , resultType : RustType
@@ -5180,20 +4831,8 @@ modules :
                 FastDict.Dict
                     String
                     { parameters : List String
-                    , cases :
-                        FastDict.Dict
-                            String
-                            (List
-                                { label : Maybe String
-                                , value : RustType
-                                }
-                            )
-                    , computedProperties :
-                        FastDict.Dict
-                            String
-                            { type_ : RustType
-                            , value : RustExpression
-                            }
+                    , variants :
+                        FastDict.Dict String (List RustType)
                     }
             }
         }
@@ -5983,7 +5622,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                         { funcs :
                             FastDict.Dict
                                 String
-                                { parameters : List { name : String, type_ : RustType }
+                                { parameters : List { pattern : RustPattern, type_ : RustType }
                                 , statements : List RustStatement
                                 , result : RustExpression
                                 , resultType : RustType
@@ -6319,17 +5958,8 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                         |> FastDict.map
                             (\_ enumDeclarationInfo ->
                                 { parameters = enumDeclarationInfo.parameters
-                                , cases =
+                                , variants =
                                     enumDeclarationInfo.cases
-                                        |> FastDict.map
-                                            (\_ enumCase ->
-                                                enumCase
-                                                    |> List.map
-                                                        (\enumCaseValue ->
-                                                            { label = Nothing, value = enumCaseValue }
-                                                        )
-                                            )
-                                , computedProperties = FastDict.empty
                                 }
                             )
                         |> FastDict.union
@@ -6377,56 +6007,56 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                         generatedRecordTypeName rustRecordFields
                                                 in
                                                 soFar
-                                                    |> FastDict.insert rustTypeName
-                                                        { parameters = rustRecordFields
-                                                        , cases =
-                                                            FastDict.singleton "Record"
-                                                                (rustRecordFields
-                                                                    |> List.map
-                                                                        (\rustRecordField ->
-                                                                            { label = Just rustRecordField
-                                                                            , value = RustTypeVariable rustRecordField
+                                     -- TODO instead introduce structs field for the record declarations
+                                     {- parameters = rustRecordFields
+                                        , cases =
+                                            FastDict.singleton "Record"
+                                                (rustRecordFields
+                                                    |> List.map
+                                                        (\rustRecordField ->
+                                                            { label = Just rustRecordField
+                                                            , value = RustTypeVariable rustRecordField
+                                                            }
+                                                        )
+                                                )
+                                        , computedProperties =
+                                            rustRecordFields
+                                                |> List.foldl
+                                                    (\rustRecordField computedPropertiesSoFar ->
+                                                        computedPropertiesSoFar
+                                                            |> FastDict.insert rustRecordField
+                                                                { type_ = RustTypeVariable rustRecordField
+                                                                , value =
+                                                                    RustExpressionSwitch
+                                                                        { matched = RustExpressionSelf
+                                                                        , case0 =
+                                                                            { pattern =
+                                                                                RustPatternRecord
+                                                                                    (rustRecordFields
+                                                                                        |> List.map
+                                                                                            (\valueName ->
+                                                                                                ( valueName
+                                                                                                , if valueName == rustRecordField then
+                                                                                                    RustPatternVariable "result"
+                                     
+                                                                                                  else
+                                                                                                    RustPatternIgnore
+                                                                                                )
+                                                                                            )
+                                                                                        |> FastDict.fromList
+                                                                                    )
+                                                                            , result =
+                                                                                RustExpressionReference
+                                                                                    { qualification = []
+                                                                                    , name = "result"
+                                                                                    }
                                                                             }
-                                                                        )
-                                                                )
-                                                        , computedProperties =
-                                                            rustRecordFields
-                                                                |> List.foldl
-                                                                    (\rustRecordField computedPropertiesSoFar ->
-                                                                        computedPropertiesSoFar
-                                                                            |> FastDict.insert rustRecordField
-                                                                                { type_ = RustTypeVariable rustRecordField
-                                                                                , value =
-                                                                                    RustExpressionSwitch
-                                                                                        { matched = RustExpressionSelf
-                                                                                        , case0 =
-                                                                                            { pattern =
-                                                                                                RustPatternRecord
-                                                                                                    (rustRecordFields
-                                                                                                        |> List.map
-                                                                                                            (\valueName ->
-                                                                                                                ( valueName
-                                                                                                                , if valueName == rustRecordField then
-                                                                                                                    RustPatternVariable "result"
-
-                                                                                                                  else
-                                                                                                                    RustPatternIgnore
-                                                                                                                )
-                                                                                                            )
-                                                                                                        |> FastDict.fromList
-                                                                                                    )
-                                                                                            , result =
-                                                                                                RustExpressionReference
-                                                                                                    { qualification = []
-                                                                                                    , name = "result"
-                                                                                                    }
-                                                                                            }
-                                                                                        , case1Up = []
-                                                                                        }
-                                                                                }
-                                                                    )
-                                                                    FastDict.empty
-                                                        }
+                                                                        , case1Up = []
+                                                                        }
+                                                                }
+                                                    )
+                                                    FastDict.empty
+                                     -}
                                     )
                                     FastDict.empty
                             )
@@ -6712,7 +6342,7 @@ valueOrFunctionDeclaration :
     ->
         Result
             String
-            { parameters : Maybe (List { name : String, type_ : RustType })
+            { parameters : Maybe (List { pattern : RustPattern, type_ : RustType })
             , statements : List RustStatement
             , result : RustExpression
             , resultType : RustType
@@ -6821,52 +6451,31 @@ valueOrFunctionDeclaration moduleContext syntaxDeclarationValueOrFunction =
                                         , result = condensedWithAdditionalGeneratedParameter.result
                                         }
                                     )
-                                    { statements =
-                                        (syntaxDeclarationValueOrFunction.parameters
-                                            |> List.indexedMap
-                                                (\parameterIndex parameter ->
-                                                    case parameter.value of
-                                                        ElmSyntaxTypeInfer.PatternVariable _ ->
-                                                            []
-
-                                                        _ ->
-                                                            destructuringToRustStatements
-                                                                { path = [ "parameter" ++ (parameterIndex |> String.fromInt) ]
-                                                                , typeAliasesInModule = typeAliasesInModule
-                                                                }
-                                                                { pattern = parameter
-                                                                , expression =
-                                                                    RustExpressionReference
-                                                                        { qualification = []
-                                                                        , name = generatedParameterNameForIndex parameterIndex
-                                                                        }
-                                                                }
-                                                )
-                                            |> List.concat
-                                        )
-                                            ++ result.statements
+                                    { statements = result.statements
                                     , result = result.result
                                     }
                     in
                     { parameters =
                         Just
                             ((syntaxDeclarationValueOrFunction.parameters
-                                |> List.indexedMap
-                                    (\parameterIndex parameter ->
-                                        { name =
-                                            case parameter.value of
-                                                ElmSyntaxTypeInfer.PatternVariable patternVariable ->
-                                                    variableNameDisambiguateFromRustKeywords patternVariable
-
-                                                _ ->
-                                                    generatedParameterNameForIndex parameterIndex
+                                |> List.map
+                                    (\parameter ->
+                                        { pattern =
+                                            parameter |> pattern |> .pattern
                                         , type_ =
                                             parameter.type_
                                                 |> type_ typeAliasesInModule
                                         }
                                     )
                              )
-                                ++ additionalGeneratedParameters
+                                ++ (additionalGeneratedParameters
+                                        |> List.map
+                                            (\additionalParameter ->
+                                                { pattern = RustPatternVariable additionalParameter.name
+                                                , type_ = additionalParameter.type_
+                                                }
+                                            )
+                                   )
                             )
                     , statements = resultAndStatements.statements
                     , resultType =
@@ -7057,7 +6666,8 @@ expression context expressionTypedNode =
                         , result =
                             RustExpressionLambda
                                 { parameters =
-                                    [ { name = generatedAccessedRecordVariableName
+                                    [ { pattern =
+                                            RustPatternVariable generatedAccessedRecordVariableName
                                       , type_ =
                                             typeFunction.input
                                                 |> type_
@@ -7103,7 +6713,7 @@ expression context expressionTypedNode =
                             , result =
                                 RustExpressionLambda
                                     { parameters =
-                                        [ { name = "generated_left"
+                                        [ { pattern = RustPatternVariable "generated_left"
                                           , type_ =
                                                 leftInferredType
                                                     |> type_ typeAliasesInModule
@@ -7113,7 +6723,7 @@ expression context expressionTypedNode =
                                     , result =
                                         RustExpressionLambda
                                             { parameters =
-                                                [ { name = "generated_right"
+                                                [ { pattern = RustPatternVariable "generated_right"
                                                   , type_ =
                                                         rightInferredType
                                                             |> type_ typeAliasesInModule
@@ -7124,16 +6734,10 @@ expression context expressionTypedNode =
                                                 RustExpressionCall
                                                     { called = RustExpressionReference reference
                                                     , arguments =
-                                                        [ { label = Nothing
-                                                          , value =
-                                                                RustExpressionReference
-                                                                    { qualification = [], name = "generated_left" }
-                                                          }
-                                                        , { label = Nothing
-                                                          , value =
-                                                                RustExpressionReference
-                                                                    { qualification = [], name = "generated_right" }
-                                                          }
+                                                        [ RustExpressionReference
+                                                            { qualification = [], name = "generated_left" }
+                                                        , RustExpressionReference
+                                                            { qualification = [], name = "generated_right" }
                                                         ]
                                                     }
                                             }
@@ -7315,8 +6919,8 @@ expression context expressionTypedNode =
                                         RustExpressionCall
                                             { called = rustExpressionReferenceStringAppend
                                             , arguments =
-                                                [ { label = Nothing, value = left.result }
-                                                , { label = Nothing, value = right.result }
+                                                [ left.result
+                                                , right.result
                                                 ]
                                             }
 
@@ -7324,8 +6928,8 @@ expression context expressionTypedNode =
                                     RustExpressionCall
                                         { called = rustExpressionReferenceListAppend
                                         , arguments =
-                                            [ { label = Nothing, value = left.result }
-                                            , { label = Nothing, value = right.result }
+                                            [ left.result
+                                            , right.result
                                             ]
                                         }
                             }
@@ -7361,8 +6965,8 @@ expression context expressionTypedNode =
                                 RustExpressionCall
                                     { called = RustExpressionReference operationFunctionReference
                                     , arguments =
-                                        [ { label = Nothing, value = left.result }
-                                        , { label = Nothing, value = right.result }
+                                        [ left.result
+                                        , right.result
                                         ]
                                     }
                             }
@@ -7497,7 +7101,7 @@ expression context expressionTypedNode =
                                             (\parameter resultSoFar ->
                                                 RustExpressionLambda
                                                     { parameters =
-                                                        [ { name = parameter.pattern
+                                                        [ { pattern = RustPatternVariable parameter.pattern
                                                           , type_ = parameter.type_
                                                           }
                                                         ]
@@ -7515,13 +7119,10 @@ expression context expressionTypedNode =
                                                     (valueType0 :: valueType1Up)
                                                         |> List.indexedMap
                                                             (\valueIndex _ ->
-                                                                { label = Nothing
-                                                                , value =
-                                                                    RustExpressionReference
-                                                                        { qualification = []
-                                                                        , name = generatedValueParameterName valueIndex
-                                                                        }
-                                                                }
+                                                                RustExpressionReference
+                                                                    { qualification = []
+                                                                    , name = generatedValueParameterName valueIndex
+                                                                    }
                                                             )
                                                 }
                                             )
@@ -7582,7 +7183,7 @@ expression context expressionTypedNode =
                                             (\parameter resultSoFar ->
                                                 RustExpressionLambda
                                                     { parameters =
-                                                        [ { name = parameter.name
+                                                        [ { pattern = RustPatternVariable parameter.name
                                                           , type_ =
                                                                 parameter.type_
                                                                     |> type_
@@ -7674,7 +7275,7 @@ expression context expressionTypedNode =
                                     if referenceOriginModuleInfo.portsOutgoing |> FastSet.member reference.name then
                                         RustExpressionLambda
                                             { parameters =
-                                                [ { name = "generated_value"
+                                                [ { pattern = RustPatternVariable "generated_value"
                                                   , type_ = rustTypeJsonEncodeValue
                                                   }
                                                 ]
@@ -7688,17 +7289,11 @@ expression context expressionTypedNode =
                                                                 , name = "PortOutgoing"
                                                                 }
                                                         , arguments =
-                                                            [ { label = Just "name"
-                                                              , value =
-                                                                    RustExpressionStringLiteral reference.name
-                                                              }
-                                                            , { label = Just "value"
-                                                              , value =
-                                                                    RustExpressionReference
-                                                                        { qualification = []
-                                                                        , name = "generated_value"
-                                                                        }
-                                                              }
+                                                            [ RustExpressionStringLiteral reference.name
+                                                            , RustExpressionReference
+                                                                { qualification = []
+                                                                , name = "generated_value"
+                                                                }
                                                             ]
                                                         }
                                                     ]
@@ -7707,7 +7302,7 @@ expression context expressionTypedNode =
                                     else if referenceOriginModuleInfo.portsIncoming |> FastSet.member reference.name then
                                         RustExpressionLambda
                                             { parameters =
-                                                [ { name = "generated_onValue"
+                                                [ { pattern = RustPatternVariable "generated_onValue"
                                                   , type_ =
                                                         case expressionTypedNode.type_ of
                                                             ElmSyntaxTypeInfer.TypeNotVariable (ElmSyntaxTypeInfer.TypeFunction expressionTypeFunction) ->
@@ -7737,17 +7332,11 @@ expression context expressionTypedNode =
                                                                 , name = "PortIncoming"
                                                                 }
                                                         , arguments =
-                                                            [ { label = Just "name"
-                                                              , value =
-                                                                    RustExpressionStringLiteral reference.name
-                                                              }
-                                                            , { label = Just "onValue"
-                                                              , value =
-                                                                    RustExpressionReference
-                                                                        { qualification = []
-                                                                        , name = "generated_onValue"
-                                                                        }
-                                                              }
+                                                            [ RustExpressionStringLiteral reference.name
+                                                            , RustExpressionReference
+                                                                { qualification = []
+                                                                , name = "generated_onValue"
+                                                                }
                                                             ]
                                                         }
                                                     ]
@@ -8032,9 +7621,7 @@ expression context expressionTypedNode =
                                         RustExpressionReference
                                             { qualification = [], name = "list_singleton" }
                                     , arguments =
-                                        [ { label = Nothing
-                                          , value = onlyElement.result
-                                          }
+                                        [ onlyElement.result
                                         ]
                                     }
 
@@ -8045,13 +7632,10 @@ expression context expressionTypedNode =
                                         RustExpressionReference
                                             { qualification = [], name = "array_toList" }
                                     , arguments =
-                                        [ { label = Nothing
-                                          , value =
-                                                RustExpressionArrayLiteral
-                                                    ((element0 :: element1 :: element2Up)
-                                                        |> List.map .result
-                                                    )
-                                          }
+                                        [ RustExpressionArrayLiteral
+                                            ((element0 :: element1 :: element2Up)
+                                                |> List.map .result
+                                            )
                                         ]
                                     }
                     }
@@ -8221,10 +7805,9 @@ expression context expressionTypedNode =
                             }
                         parameter1UpResultAndStatements =
                             lambda.parameter1Up
-                                |> List.indexedMap
-                                    (\parameter1UpIndex parameter ->
-                                        { index = parameter1UpIndex + 1
-                                        , pattern = parameter.value
+                                |> List.map
+                                    (\parameter ->
+                                        { pattern = parameter |> pattern |> .pattern
                                         , type_ = parameter.type_
                                         }
                                     )
@@ -8233,15 +7816,7 @@ expression context expressionTypedNode =
                                         { result =
                                             RustExpressionLambda
                                                 { parameters =
-                                                    [ { name =
-                                                            case parameter.pattern of
-                                                                ElmSyntaxTypeInfer.PatternVariable patternVariable ->
-                                                                    variableNameDisambiguateFromRustKeywords patternVariable
-
-                                                                _ ->
-                                                                    generatedParameterNameForIndexAtPath
-                                                                        parameter.index
-                                                                        context.path
+                                                    [ { pattern = parameter.pattern
                                                       , type_ =
                                                             parameter.type_
                                                                 |> type_ typeAliasesInModule
@@ -8254,48 +7829,17 @@ expression context expressionTypedNode =
                                         }
                                     )
                                     { result = result.result
-                                    , statements =
-                                        ((lambda.parameter0 :: lambda.parameter1Up)
-                                            |> List.indexedMap
-                                                (\parameterIndex parameter ->
-                                                    case parameter.value of
-                                                        ElmSyntaxTypeInfer.PatternVariable _ ->
-                                                            []
-
-                                                        _ ->
-                                                            destructuringToRustStatements
-                                                                { typeAliasesInModule = typeAliasesInModule
-                                                                , path =
-                                                                    ("parameter" ++ (parameterIndex |> String.fromInt))
-                                                                        :: context.path
-                                                                }
-                                                                { pattern = parameter
-                                                                , expression =
-                                                                    RustExpressionReference
-                                                                        { qualification = []
-                                                                        , name =
-                                                                            generatedParameterNameForIndexAtPath
-                                                                                parameterIndex
-                                                                                context.path
-                                                                        }
-                                                                }
-                                                )
-                                            |> List.concat
-                                        )
-                                            ++ result.statements
+                                    , statements = result.statements
                                     }
                     in
                     { statements = []
                     , result =
                         RustExpressionLambda
                             { parameters =
-                                [ { name =
-                                        case lambda.parameter0.value of
-                                            ElmSyntaxTypeInfer.PatternVariable patternVariable ->
-                                                variableNameDisambiguateFromRustKeywords patternVariable
-
-                                            _ ->
-                                                generatedParameterNameForIndexAtPath 0 context.path
+                                [ { pattern =
+                                        lambda.parameter0
+                                            |> pattern
+                                            |> .pattern
                                   , type_ =
                                         lambda.parameter0.type_
                                             |> type_ typeAliasesInModule
@@ -8658,6 +8202,9 @@ rustExpressionWrapInLetIfOrSwitchResult path rustExpressionTyped =
                 RustExpressionIfElse _ ->
                     True
 
+                RustExpressionBorrow _ ->
+                    False
+
                 RustExpressionUnit ->
                     False
 
@@ -8820,10 +8367,12 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
                     (\( parameterIndex, parameterInferredType ) resultSoFar ->
                         RustExpressionLambda
                             { parameters =
-                                [ { name =
-                                        generatedParameterNameForIndexAtPath
-                                            parameterIndex
-                                            context.path
+                                [ { pattern =
+                                        RustPatternVariable
+                                            (generatedParameterNameForIndexAtPath
+                                                parameterIndex
+                                                context.path
+                                            )
                                   , type_ =
                                         parameterInferredType
                                             |> type_ typeAliasesInModule
@@ -8843,16 +8392,13 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
                             List.range 0 (parameterCountAtLeast2 - 1)
                                 |> List.map
                                     (\parameterIndex ->
-                                        { label = Nothing
-                                        , value =
-                                            RustExpressionReference
-                                                { qualification = []
-                                                , name =
-                                                    generatedParameterNameForIndexAtPath
-                                                        parameterIndex
-                                                        context.path
-                                                }
-                                        }
+                                        RustExpressionReference
+                                            { qualification = []
+                                            , name =
+                                                generatedParameterNameForIndexAtPath
+                                                    parameterIndex
+                                                    context.path
+                                            }
                                     )
                         }
                     )
@@ -8881,6 +8427,9 @@ locationToInfoString location =
 
 
 {-| Rename declared and destructured variables including their uses and assignments
+
+TODO remove
+
 -}
 rustExpressionAlterBindingNames :
     (String -> String)
@@ -8924,6 +8473,12 @@ rustExpressionAlterBindingNames variableNameChange rustExpression =
                     |> rustExpressionAlterBindingNames variableNameChange
                 )
 
+        RustExpressionBorrow borrowed ->
+            RustExpressionBorrow
+                (borrowed
+                    |> rustExpressionAlterBindingNames variableNameChange
+                )
+
         RustExpressionRecordAccess recordAccess ->
             RustExpressionRecordAccess
                 { record =
@@ -8939,7 +8494,9 @@ rustExpressionAlterBindingNames variableNameChange rustExpression =
                         |> List.map
                             (\parameter ->
                                 { type_ = parameter.type_
-                                , name = parameter.name |> variableNameChange
+                                , pattern =
+                                    parameter.pattern
+                                        |> rustPatternAlterBindingNames variableNameChange
                                 }
                             )
                 , statements =
@@ -9006,11 +8563,8 @@ rustExpressionAlterBindingNames variableNameChange rustExpression =
                     call.arguments
                         |> List.map
                             (\argument ->
-                                { label = argument.label
-                                , value =
-                                    argument.value
-                                        |> rustExpressionAlterBindingNames variableNameChange
-                                }
+                                argument
+                                    |> rustExpressionAlterBindingNames variableNameChange
                             )
                 }
 
@@ -9248,11 +8802,8 @@ rustPatternAlterBindingNames variableNameChange inferredPattern =
                     variant.values
                         |> List.map
                             (\value ->
-                                { label = value.label
-                                , value =
-                                    value.value
-                                        |> rustPatternAlterBindingNames variableNameChange
-                                }
+                                value
+                                    |> rustPatternAlterBindingNames variableNameChange
                             )
                 }
 
@@ -9956,13 +9507,13 @@ rustExpressionCallCondense :
 rustExpressionCallCondense call =
     case call.called of
         RustExpressionLambda calledLambda ->
-            case calledLambda.parameters of
-                [ parameter ] ->
+            case calledLambda.parameters |> List.map .pattern of
+                [ RustPatternVariable parameter ] ->
                     if
                         (call.argument |> rustExpressionIsConstant)
                             || (((call.called
                                     |> rustExpressionCountUsesOfReference
-                                        { qualification = [], name = parameter.name }
+                                        { qualification = [], name = parameter }
                                  )
                                     == 1
                                 )
@@ -9977,14 +9528,14 @@ rustExpressionCallCondense call =
                                          in
                                          (calledLambdaResultInnermostLambdaResult.result
                                             |> rustExpressionUsesReferenceInLambdaOrFuncDeclaration
-                                                { qualification = [], name = parameter.name }
+                                                { qualification = [], name = parameter }
                                          )
                                             || (calledLambdaResultInnermostLambdaResult.statements
                                                     |> List.any
                                                         (\statement ->
                                                             statement
                                                                 |> rustStatementUsesReferenceInLambdaOrFuncDeclaration
-                                                                    { qualification = [], name = parameter.name }
+                                                                    { qualification = [], name = parameter }
                                                         )
                                                )
                                         )
@@ -9999,7 +9550,7 @@ rustExpressionCallCondense call =
                                             False
 
                                         [] ->
-                                            existingReference.name == parameter.name
+                                            existingReference.name == parameter
                                 then
                                     call.argument
 
@@ -10023,7 +9574,7 @@ rustExpressionCallCondense call =
                         , result =
                             RustExpressionCall
                                 { called = call.called
-                                , arguments = [ { label = Nothing, value = call.argument } ]
+                                , arguments = [ call.argument ]
                                 }
                         }
 
@@ -10032,7 +9583,7 @@ rustExpressionCallCondense call =
                     , result =
                         RustExpressionCall
                             { called = call.called
-                            , arguments = [ { label = Nothing, value = call.argument } ]
+                            , arguments = [ call.argument ]
                             }
                     }
 
@@ -10046,7 +9597,7 @@ rustExpressionCallCondense call =
                                     RustExpressionReference argumentReference ->
                                         case argumentReference.name of
                                             "array_toList" ->
-                                                case argumentCall.arguments |> List.map .value of
+                                                case argumentCall.arguments of
                                                     [ RustExpressionArrayLiteral elements ] ->
                                                         Just elements
 
@@ -10075,7 +9626,7 @@ rustExpressionCallCondense call =
                     , result =
                         RustExpressionCall
                             { called = call.called
-                            , arguments = [ { label = Nothing, value = call.argument } ]
+                            , arguments = [ call.argument ]
                             }
                     }
 
@@ -10084,7 +9635,7 @@ rustExpressionCallCondense call =
             , result =
                 RustExpressionCall
                     { called = call.called
-                    , arguments = [ { label = Nothing, value = call.argument } ]
+                    , arguments = [ call.argument ]
                     }
             }
 
@@ -10093,7 +9644,7 @@ rustExpressionCallCondense call =
             , result =
                 RustExpressionCall
                     { called = call.called
-                    , arguments = [ { label = Nothing, value = call.argument } ]
+                    , arguments = [ call.argument ]
                     }
             }
 
@@ -10102,7 +9653,7 @@ rustExpressionCallCondense call =
             , result =
                 RustExpressionCall
                     { called = call.called
-                    , arguments = [ { label = Nothing, value = call.argument } ]
+                    , arguments = [ call.argument ]
                     }
             }
 
@@ -10111,7 +9662,7 @@ rustExpressionCallCondense call =
             , result =
                 RustExpressionCall
                     { called = call.called
-                    , arguments = [ { label = Nothing, value = call.argument } ]
+                    , arguments = [ call.argument ]
                     }
             }
 
@@ -10120,7 +9671,7 @@ rustExpressionCallCondense call =
             , result =
                 RustExpressionCall
                     { called = call.called
-                    , arguments = [ { label = Nothing, value = call.argument } ]
+                    , arguments = [ call.argument ]
                     }
             }
 
@@ -10129,7 +9680,7 @@ rustExpressionCallCondense call =
             , result =
                 RustExpressionCall
                     { called = call.called
-                    , arguments = [ { label = Nothing, value = call.argument } ]
+                    , arguments = [ call.argument ]
                     }
             }
 
@@ -10138,7 +9689,7 @@ rustExpressionCallCondense call =
             , result =
                 RustExpressionCall
                     { called = call.called
-                    , arguments = [ { label = Nothing, value = call.argument } ]
+                    , arguments = [ call.argument ]
                     }
             }
 
@@ -10147,7 +9698,16 @@ rustExpressionCallCondense call =
             , result =
                 RustExpressionCall
                     { called = call.called
-                    , arguments = [ { label = Nothing, value = call.argument } ]
+                    , arguments = [ call.argument ]
+                    }
+            }
+
+        RustExpressionBorrow _ ->
+            { statements = []
+            , result =
+                RustExpressionCall
+                    { called = call.called
+                    , arguments = [ call.argument ]
                     }
             }
 
@@ -10156,7 +9716,7 @@ rustExpressionCallCondense call =
             , result =
                 RustExpressionCall
                     { called = call.called
-                    , arguments = [ { label = Nothing, value = call.argument } ]
+                    , arguments = [ call.argument ]
                     }
             }
 
@@ -10165,7 +9725,7 @@ rustExpressionCallCondense call =
             , result =
                 RustExpressionCall
                     { called = call.called
-                    , arguments = [ { label = Nothing, value = call.argument } ]
+                    , arguments = [ call.argument ]
                     }
             }
 
@@ -10174,7 +9734,7 @@ rustExpressionCallCondense call =
             , result =
                 RustExpressionCall
                     { called = call.called
-                    , arguments = [ { label = Nothing, value = call.argument } ]
+                    , arguments = [ call.argument ]
                     }
             }
 
@@ -10183,7 +9743,7 @@ rustExpressionCallCondense call =
             , result =
                 RustExpressionCall
                     { called = call.called
-                    , arguments = [ { label = Nothing, value = call.argument } ]
+                    , arguments = [ call.argument ]
                     }
             }
 
@@ -10192,7 +9752,7 @@ rustExpressionCallCondense call =
             , result =
                 RustExpressionCall
                     { called = call.called
-                    , arguments = [ { label = Nothing, value = call.argument } ]
+                    , arguments = [ call.argument ]
                     }
             }
 
@@ -10201,7 +9761,7 @@ rustExpressionCallCondense call =
             , result =
                 RustExpressionCall
                     { called = call.called
-                    , arguments = [ { label = Nothing, value = call.argument } ]
+                    , arguments = [ call.argument ]
                     }
             }
 
@@ -10237,6 +9797,10 @@ rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck rustExpres
         RustExpressionNegateOperation inNegation ->
             rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck
                 inNegation
+
+        RustExpressionBorrow borrowed ->
+            rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck
+                borrowed
 
         RustExpressionRecordAccess recordAccess ->
             rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck
@@ -10275,7 +9839,7 @@ rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck rustExpres
                 || (call.arguments
                         |> List.any
                             (\argument ->
-                                argument.value
+                                argument
                                     |> rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck
                             )
                    )
@@ -10353,6 +9917,9 @@ rustExpressionInnermostLambdaResult rustExpression =
             { statements = [], result = rustExpression }
 
         RustExpressionNegateOperation _ ->
+            { statements = [], result = rustExpression }
+
+        RustExpressionBorrow _ ->
             { statements = [], result = rustExpression }
 
         RustExpressionRecordAccess _ ->
@@ -10483,6 +10050,11 @@ rustExpressionIsConstant rustExpression =
             True
 
         RustExpressionNegateOperation _ ->
+            -- maybe?
+            False
+
+        RustExpressionBorrow _ ->
+            -- maybe?
             False
 
         RustExpressionRecordAccess _ ->
@@ -10548,6 +10120,9 @@ rustExpressionCountUsesOfReference referenceToCountUsesOf rustExpression =
         RustExpressionNegateOperation inNegation ->
             rustExpressionCountUsesOfReference referenceToCountUsesOf inNegation
 
+        RustExpressionBorrow borrowed ->
+            rustExpressionCountUsesOfReference referenceToCountUsesOf borrowed
+
         RustExpressionRecordAccess recordAccess ->
             rustExpressionCountUsesOfReference referenceToCountUsesOf recordAccess.record
 
@@ -10567,7 +10142,7 @@ rustExpressionCountUsesOfReference referenceToCountUsesOf rustExpression =
                 + (call.arguments
                     |> listMapAndSum
                         (\argument ->
-                            argument.value
+                            argument
                                 |> rustExpressionCountUsesOfReference referenceToCountUsesOf
                         )
                   )
@@ -10754,6 +10329,10 @@ rustExpressionSubstituteReferences referenceToExpression rustExpression =
             RustExpressionNegateOperation
                 (rustExpressionSubstituteReferences referenceToExpression inNegation)
 
+        RustExpressionBorrow borrowed ->
+            RustExpressionBorrow
+                (rustExpressionSubstituteReferences referenceToExpression borrowed)
+
         RustExpressionRecordAccess recordAccess ->
             RustExpressionRecordAccess
                 { record =
@@ -10818,11 +10397,8 @@ rustExpressionSubstituteReferences referenceToExpression rustExpression =
                     call.arguments
                         |> List.map
                             (\argument ->
-                                { label = argument.label
-                                , value =
-                                    argument.value
-                                        |> rustExpressionSubstituteReferences referenceToExpression
-                                }
+                                argument
+                                    |> rustExpressionSubstituteReferences referenceToExpression
                             )
                 }
 
@@ -11025,39 +10601,14 @@ case_ context syntaxCase =
         casePatternAsRust :
             { pattern : RustPattern
             , introducedVariables : FastSet.Set String
-            , variableAsPatternAliases :
-                FastDict.Dict
-                    String
-                    { pattern : RustPattern
-                    , type_ : ElmSyntaxTypeInfer.Type
-                    }
             }
         casePatternAsRust =
-            syntaxCase.pattern |> casePattern
+            syntaxCase.pattern |> pattern
     in
     Result.map
         (\result ->
             { pattern = casePatternAsRust.pattern
-            , statements =
-                casePatternAsRust.variableAsPatternAliases
-                    |> FastDict.foldl
-                        (\variable aliasedPattern resultSoFar ->
-                            RustStatementLetDeclaration
-                                { name = variable
-                                , resultType =
-                                    aliasedPattern.type_
-                                        |> type_
-                                            (\moduleNameToAccess ->
-                                                context.moduleInfo
-                                                    |> FastDict.get moduleNameToAccess
-                                                    |> Maybe.map .typeAliases
-                                            )
-                                , result =
-                                    aliasedPattern.pattern |> rustPatternAsExpression
-                                }
-                                :: resultSoFar
-                        )
-                        result.statements
+            , statements = result.statements
             , result = result.result
             }
         )
@@ -11735,7 +11286,7 @@ rustFuncGenericsToString typeVariablesToDeclare =
 
 printRustFuncDeclaration :
     { name : String
-    , parameters : List { name : String, type_ : RustType }
+    , parameters : List { pattern : RustPattern, type_ : RustType }
     , statements : List RustStatement
     , result : RustExpression
     , resultType : RustType
@@ -11759,7 +11310,9 @@ printRustFuncDeclaration rustValueOrFunctionDeclaration =
                                 printRustTypeNotParenthesized (Just TypeIncoming)
                                     parameter.type_
                         in
-                        Print.exactly ("_ " ++ parameter.name ++ ":")
+                        parameter.pattern
+                            |> printRustPatternNotParenthesized
+                            |> Print.followedBy printExactlyColon
                             |> Print.followedBy
                                 (Print.withIndentAtNextMultipleOf4
                                     (Print.spaceOrLinebreakIndented
@@ -12157,20 +11710,8 @@ type RustEnumTypeOrTypeAliasDeclaration
     = RustEnumTypeDeclaration
         { name : String
         , parameters : List String
-        , cases :
-            FastDict.Dict
-                String
-                (List
-                    { label : Maybe String
-                    , value : RustType
-                    }
-                )
-        , computedProperties :
-            FastDict.Dict
-                String
-                { type_ : RustType
-                , value : RustExpression
-                }
+        , variants :
+            FastDict.Dict String (List RustType)
         }
     | RustTypeAliasDeclaration
         { name : String
@@ -12190,20 +11731,8 @@ rustTypeDeclarationsGroupByDependencies :
         List
             { name : String
             , parameters : List String
-            , cases :
-                FastDict.Dict
-                    String
-                    (List
-                        { label : Maybe String
-                        , value : RustType
-                        }
-                    )
-            , computedProperties :
-                FastDict.Dict
-                    String
-                    { type_ : RustType
-                    , value : RustExpression
-                    }
+            , variants :
+                FastDict.Dict String (List RustType)
             }
     }
     ->
@@ -12231,14 +11760,14 @@ rustTypeDeclarationsGroupByDependencies rustTypeDeclarations =
                         (\enumDeclaration ->
                             ( RustEnumTypeDeclaration enumDeclaration
                             , enumDeclaration.name
-                            , enumDeclaration.cases
+                            , enumDeclaration.variants
                                 |> FastDict.foldl
                                     (\_ variantValues soFar ->
                                         FastSet.union soFar
                                             (variantValues
                                                 |> listMapToFastSetsAndUnify
                                                     (\variantValue ->
-                                                        variantValue.value
+                                                        variantValue
                                                             |> rustTypeContainedReferences
                                                     )
                                             )
@@ -14022,6 +13551,9 @@ rustExpressionIsSpaceSeparated rustExpression =
         RustExpressionNegateOperation _ ->
             False
 
+        RustExpressionBorrow _ ->
+            False
+
         RustExpressionRecordAccess _ ->
             False
 
@@ -14104,6 +13636,15 @@ printRustExpressionNotParenthesized rustExpression =
                     (Print.withIndentIncreasedBy 1
                         (printRustExpressionParenthesizedIfSpaceSeparated
                             inNegation
+                        )
+                    )
+
+        RustExpressionBorrow borrowed ->
+            Print.exactly "&"
+                |> Print.followedBy
+                    (Print.withIndentIncreasedBy 1
+                        (printRustExpressionParenthesizedIfSpaceSeparated
+                            borrowed
                         )
                     )
 
@@ -14190,11 +13731,7 @@ printExactlyParenOpeningParenClosing =
 
 printRustExpressionCall :
     { called : RustExpression
-    , arguments :
-        List
-            { label : Maybe String
-            , value : RustExpression
-            }
+    , arguments : List RustExpression
     }
     -> Print
 printRustExpressionCall call =
@@ -14215,29 +13752,7 @@ printRustExpressionCall call =
                 argumentPrints : List Print
                 argumentPrints =
                     (argument0 :: argument1Up)
-                        |> List.map
-                            (\argument ->
-                                let
-                                    valuePrint : Print
-                                    valuePrint =
-                                        argument.value
-                                            |> printRustExpressionNotParenthesized
-                                in
-                                case argument.label of
-                                    Nothing ->
-                                        valuePrint
-
-                                    Just label ->
-                                        Print.exactly (label ++ ":")
-                                            |> Print.followedBy
-                                                (Print.withIndentAtNextMultipleOf4
-                                                    (Print.spaceOrLinebreakIndented
-                                                        (valuePrint |> Print.lineSpread)
-                                                        |> Print.followedBy
-                                                            valuePrint
-                                                    )
-                                                )
-                            )
+                        |> List.map printRustExpressionNotParenthesized
 
                 argumentsLineSpread : Print.LineSpread
                 argumentsLineSpread =
@@ -14380,7 +13895,7 @@ generatedLocalReturnResult path =
 printRustExpressionLambda :
     { parameters :
         List
-            { name : String
+            { pattern : RustPattern
             , type_ : RustType
             }
     , statements : List RustStatement
@@ -14441,7 +13956,8 @@ printRustExpressionLambda lambda =
                                             lambdaParameter.type_
                                 in
                                 printParenthesized
-                                    (Print.exactly lambdaParameter.name
+                                    (lambdaParameter.pattern
+                                        |> printRustPatternNotParenthesized
                                         |> Print.followedBy printExactlyColon
                                         |> Print.followedBy
                                             (Print.withIndentAtNextMultipleOf4
@@ -14803,10 +14319,7 @@ rustPatternContainsBindings rustPattern =
 
         RustPatternVariant patternVariant ->
             patternVariant.values
-                |> List.any
-                    (\value ->
-                        value.value |> rustPatternContainsBindings
-                    )
+                |> List.any rustPatternContainsBindings
 
         RustPatternRecord recordPatternInexhaustiveFieldNames ->
             recordPatternInexhaustiveFieldNames
@@ -14920,101 +14433,6 @@ printRustStatementLetDeclarationUninitialized letDeclarationUnassigned =
             )
 
 
-rustExpressionReferenceTrue : RustExpression
-rustExpressionReferenceTrue =
-    RustExpressionReference
-        { qualification = []
-        , name = "true"
-        }
-
-
-rustExpressionReferenceFalse : RustExpression
-rustExpressionReferenceFalse =
-    RustExpressionReference
-        { qualification = []
-        , name = "false"
-        }
-
-
-{-| TODO remove
--}
-rustPatternAsExpression : RustPattern -> RustExpression
-rustPatternAsExpression rustPattern =
-    -- IGNORE TCO
-    case rustPattern of
-        RustPatternIgnore ->
-            RustExpressionUnit
-
-        RustPatternBool bool ->
-            if bool then
-                rustExpressionReferenceTrue
-
-            else
-                rustExpressionReferenceFalse
-
-        RustPatternInteger int ->
-            -- NUMBER currently represented as Double
-            RustExpressionDouble (int |> Basics.toFloat)
-
-        RustPatternUnicodeScalar char ->
-            RustExpressionUnicodeScalar char
-
-        RustPatternStringLiteral string ->
-            RustExpressionStringLiteral string
-
-        RustPatternVariable name ->
-            RustExpressionReference
-                { qualification = []
-                , name = name
-                }
-
-        RustPatternAlias rustPatternAlias ->
-            rustPatternAlias.pattern |> rustPatternAsExpression
-
-        RustPatternTuple parts ->
-            RustExpressionTuple
-                { part0 = parts.part0 |> rustPatternAsExpression
-                , part1 = parts.part1 |> rustPatternAsExpression
-                , part2Up =
-                    parts.part2Up
-                        |> List.map rustPatternAsExpression
-                }
-
-        RustPatternVariant variant ->
-            case variant.values of
-                [] ->
-                    RustExpressionVariant
-                        { originTypeName = variant.originTypeName
-                        , name = variant.name
-                        }
-
-                value0 :: value1Up ->
-                    RustExpressionCall
-                        { called =
-                            RustExpressionVariant
-                                { originTypeName = variant.originTypeName
-                                , name = variant.name
-                                }
-                        , arguments =
-                            (value0 :: value1Up)
-                                |> List.map
-                                    (\value ->
-                                        { label = value.label
-                                        , value = value.value |> rustPatternAsExpression
-                                        }
-                                    )
-                        }
-
-        RustPatternRecord fields ->
-            RustExpressionRecord
-                (fields
-                    |> FastDict.map
-                        (\_ value ->
-                            value |> rustPatternAsExpression
-                        )
-                )
-
-
 printRustLetDestructuring :
     { pattern : RustPattern
     , expression : RustExpression
@@ -15060,32 +14478,6 @@ printExactlySpaceCurlyOpening =
     Print.exactly " {"
 
 
-{-| TODO remove
--}
-deriveProtocolConformanceToString :
-    String
-    -> { name : String, parameters : List String }
-    -> String
-deriveProtocolConformanceToString protocol targetType =
-    "extension "
-        ++ targetType.name
-        ++ ": "
-        ++ protocol
-        ++ ""
-        ++ (case targetType.parameters of
-                [] ->
-                    ""
-
-                parameter0 :: parameter1Up ->
-                    " where "
-                        ++ listFilledMapAndStringJoinWith ", "
-                            (\parameter -> parameter ++ ": " ++ protocol)
-                            parameter0
-                            parameter1Up
-           )
-        ++ " {}"
-
-
 {-| Print value/function declarations into
 an rust module called `Elm` in the global namespace that exposes all members.
 Will also add some internal wrapper declarations.
@@ -15094,7 +14486,7 @@ rustDeclarationsToModuleString :
     { funcs :
         FastDict.Dict
             String
-            { parameters : List { name : String, type_ : RustType }
+            { parameters : List { pattern : RustPattern, type_ : RustType }
             , statements : List RustStatement
             , result : RustExpression
             , resultType : RustType
@@ -15115,20 +14507,8 @@ rustDeclarationsToModuleString :
         FastDict.Dict
             String
             { parameters : List String
-            , cases :
-                FastDict.Dict
-                    String
-                    (List
-                        { label : Maybe String
-                        , value : RustType
-                        }
-                    )
-            , computedProperties :
-                FastDict.Dict
-                    String
-                    { type_ : RustType
-                    , value : RustExpression
-                    }
+            , variants :
+                FastDict.Dict String (List RustType)
             }
     }
     -> String
@@ -15138,20 +14518,8 @@ rustDeclarationsToModuleString rustDeclarations =
             List
                 { name : String
                 , parameters : List String
-                , cases :
-                    FastDict.Dict
-                        String
-                        (List
-                            { label : Maybe String
-                            , value : RustType
-                            }
-                        )
-                , computedProperties :
-                    FastDict.Dict
-                        String
-                        { type_ : RustType
-                        , value : RustExpression
-                        }
+                , variants :
+                    FastDict.Dict String (List RustType)
                 }
         rustEnumDeclarationList =
             rustDeclarations.enumTypes
@@ -15159,9 +14527,7 @@ rustDeclarationsToModuleString rustDeclarations =
                     (\name info ->
                         { name = name
                         , parameters = info.parameters
-                        , cases = info.cases
-                        , computedProperties =
-                            info.computedProperties
+                        , variants = info.variants
                         }
                     )
 
@@ -15185,65 +14551,12 @@ rustDeclarationsToModuleString rustDeclarations =
                             )
                 , enums = rustEnumDeclarationList
                 }
-
-        deriveProtocolConformances : List String
-        deriveProtocolConformances =
-            rustEnumDeclarationList
-                |> List.filterMap
-                    (\rustEnumDeclaration ->
-                        if
-                            rustEnumDeclaration.cases
-                                |> fastDictAll
-                                    (\_ enumCaseValues ->
-                                        enumCaseValues
-                                            |> List.all
-                                                (\value ->
-                                                    value.value |> rustTypeIsEquatable
-                                                )
-                                    )
-                        then
-                            Just
-                                (deriveProtocolConformanceToString "Equatable"
-                                    { name = "Elm." ++ rustEnumDeclaration.name
-                                    , parameters = rustEnumDeclaration.parameters
-                                    }
-                                )
-
-                        else
-                            Nothing
-                    )
     in
-    """import CoreFoundation
-import Foundation
+    """#![allow(dead_code)]
+#![allow(non_shorthand_field_patterns)]
 
-extension Elm.Maybe_Maybe: Equatable where a: Equatable {}
-extension Elm.Result_Result: Equatable where error: Equatable, success: Equatable {}
-extension Elm.list_List: Equatable where a: Equatable {}
-extension Elm.list_List: Hashable where a: Hashable {}
-extension Elm.list_List: Comparable where a: Comparable {}
-extension Elm.Tuple: Equatable where first: Equatable, second: Equatable {}
-extension Elm.Tuple: Hashable where first: Hashable, second: Hashable {}
-extension Elm.Tuple: Comparable where first: Comparable, second: Comparable {}
-extension Elm.Triple: Equatable where first: Equatable, second: Equatable, third: Equatable {}
-extension Elm.Triple: Hashable where first: Hashable, second: Hashable, third: Hashable {}
-extension Elm.Triple: Comparable where first: Comparable, second: Comparable, third: Comparable {}
-extension Elm.Generated_caseInsensitive_multiline: Equatable
-where caseInsensitive: Equatable, multiline: Equatable {}
-extension Elm.Generated_index_match_number_submatches
-where index: Equatable, match: Equatable, number: Equatable, submatches: Equatable {}
-extension Elm.Generated_offset_start: Equatable where offset: Equatable, start: Equatable {}
-extension Elm.Generated_x_y: Equatable where x: Equatable, y: Equatable {}
-extension Elm.Generated_x_y_z: Equatable where x: Equatable, y: Equatable, z: Equatable {}
-extension Elm.Generated_w_x_y_z: Equatable
-where x: Equatable, y: Equatable, z: Equatable, w: Equatable {}
-extension Elm.Generated_init__subscriptions_update: Equatable
-where init_: Equatable, update: Equatable, subscriptions: Equatable {}
-"""
-        ++ (deriveProtocolConformances |> String.join "\n")
-        ++ """
+use bumpalo::Bump;
 
-// using enum to create a namespace can't be instantiated
-public enum Elm {
 """
         ++ defaultDeclarations
         ++ """
@@ -15260,8 +14573,7 @@ public enum Elm {
                                             { indirect = False
                                             , name = rustEnumTypeDeclaration.name
                                             , parameters = rustEnumTypeDeclaration.parameters
-                                            , cases = rustEnumTypeDeclaration.cases
-                                            , computedProperties = rustEnumTypeDeclaration.computedProperties
+                                            , variants = rustEnumTypeDeclaration.variants
                                             }
 
                                     RustTypeAliasDeclaration aliasDeclaration ->
@@ -15279,9 +14591,7 @@ public enum Elm {
                                                     { indirect = True
                                                     , name = rustEnumTypeDeclaration.name
                                                     , parameters = rustEnumTypeDeclaration.parameters
-                                                    , cases = rustEnumTypeDeclaration.cases
-                                                    , computedProperties =
-                                                        rustEnumTypeDeclaration.computedProperties
+                                                    , variants = rustEnumTypeDeclaration.variants
                                                     }
 
                                             RustTypeAliasDeclaration aliasDeclaration ->
@@ -15299,9 +14609,7 @@ public enum Elm {
                                                                                 { indirect = True
                                                                                 , name = rustEnumTypeDeclaration.name
                                                                                 , parameters = rustEnumTypeDeclaration.parameters
-                                                                                , cases = rustEnumTypeDeclaration.cases
-                                                                                , computedProperties =
-                                                                                    rustEnumTypeDeclaration.computedProperties
+                                                                                , variants = rustEnumTypeDeclaration.variants
                                                                                 }
 
                                                                         RustTypeAliasDeclaration aliasDeclaration ->
@@ -15348,9 +14656,7 @@ public enum Elm {
                     Print.empty
                 |> Print.toString
            )
-        ++ """
-}
-"""
+        ++ "\n"
 
 
 fastDictMapAndToList :
