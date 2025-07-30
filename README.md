@@ -87,15 +87,18 @@ Run with
 cargo run
 ```
 
+If something unexpected happened,
+please [report an issue](https://github.com/lue-bird/elm-syntax-to-rust/issues/new).
+
+
 In the transpiled code, you will find these types:
-  - elm `Bool` (`True` or `False`) → rust `bool` (`true` or `false`), `Char` (`'a'`) → `char` (`'a'`), `String` → `StringString<'a>`, `( Bool, Char )` → `( bool, char )`, `Array Char` → `ArrayArray<'a, char>`
+  - elm `Bool` (`True` or `False`) → rust `bool` (`true` or `false`), `Char` (`'a'`) → `char` (`'a'`), `String` (`"a"`) → `StringString<'a>` (`"a"`), `( Bool, Char )` → `( bool, char )`, `Array Char` (`Array.fromList [ 'a' ]`) → `ArrayArray<'a, char>` (`&['a']`)
   - elm `Float`s, `Int`s and `number-` variable typed values will be of type `f64`. Create and match by appending `_f64` to any number literal or using `as f64`.
   - elm records like `{ y : Float, x : Float }` will be of type `elm::GeneratedXY<f64, f64>` with the fields sorted and can be constructed and matched with `elm::GeneratedXY { x: _, y: _ }`. `record.x` access also works
   - a transpiled elm app does not run itself.
     An elm main `Platform.worker` program type will literally just consist of fields `init`, `update` and `subscriptions` where
     subscriptions/commands are returned as a list of `elm::PlatformSubSingle`/`elm::PlatformCmdSingle` with possible elm subscriptions/commands in a choice type.
     It's then your responsibility as "the platform" to perform effects, create events and manage the state. For an example see [example-worker-blocking/](https://github.com/lue-bird/elm-syntax-to-rust/tree/main/example-worker-blocking) & [example-worker-async/](https://github.com/lue-bird/elm-syntax-to-rust/tree/main/example-worker-async) TODO
-
 
 ### how does the transpiled code handle memory?
 Most transpiled functions require a reference to an allocator to be passed as the first argument.
@@ -105,7 +108,3 @@ Also note that since standard rust functions do not take allocators, yet, regula
 
 So overall, if you intend to let the transpiled code handle a memory-hungry long-running computation, it might run out of memory.
 Use it for classic arena-friendly loop steps like state → interface, request → response etc.
-
-
-If something unexpected happened,
-please [report an issue](https://github.com/lue-bird/elm-syntax-to-rust/issues/new).
