@@ -7984,10 +7984,12 @@ expression context expressionTypedNode =
                             RustExpressionCall
                                 { called =
                                     RustExpressionReference
-                                        { qualification = [], name = "array_toList" }
+                                        { qualification = [], name = "array_to_list" }
                                 , arguments =
-                                    [ RustExpressionArrayLiteral
-                                        (element0 :: element1 :: element2Up)
+                                    [ RustExpressionBorrow
+                                        (RustExpressionArrayLiteral
+                                            (element0 :: element1 :: element2Up)
+                                        )
                                     ]
                                 }
                 )
@@ -9602,13 +9604,13 @@ rustExpressionCallCondense call =
         RustExpressionReference reference ->
             case
                 case reference.name of
-                    "array_fromList" ->
+                    "array_from_list" ->
                         case call.argument of
                             RustExpressionCall argumentCall ->
                                 case argumentCall.called of
                                     RustExpressionReference argumentReference ->
                                         case argumentReference.name of
-                                            "array_toList" ->
+                                            "array_to_list" ->
                                                 case argumentCall.arguments of
                                                     [ RustExpressionArrayLiteral elements ] ->
                                                         Just elements
