@@ -1,0 +1,8 @@
+/target
+Cargo.lock
+elm-stuff
+node_modules
+.build
+
+# for experimentation
+/src/main.rs
