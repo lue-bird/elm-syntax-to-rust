@@ -72,7 +72,7 @@ An example can be found in [`example-hello-world/`](https://github.com/lue-bird/
 In your elm project, add `cargo.toml`
 ```toml
 [package]
-name = "default-declarations"
+name = "your-project-name"
 edition = "2024"              # not lower
 [dependencies]
 bumpalo = "3.19.0"
