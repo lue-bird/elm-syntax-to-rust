@@ -120,6 +120,7 @@ elmModuleSourceTranspileToRust source =
                             FastDict.Dict
                                 String
                                 { parameters : List String
+                                , lifetimeParameters : List String
                                 , variants :
                                     FastDict.Dict
                                         String

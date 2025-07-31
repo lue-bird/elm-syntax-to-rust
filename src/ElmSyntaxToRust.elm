@@ -38,8 +38,9 @@ type RustType
         { qualification : List String
         , name : String
         , arguments : List RustType
-        , lifetimeArgument : Maybe String
-        , -- TODO also encode if Equatable or not
+        , lifetimeArguments : List String
+        , -- TODO isEq
+          -- TODO remove
           isFunction : Bool
         }
     | RustTypeTuple
@@ -78,7 +79,8 @@ type RustPattern
     | RustPatternVariant
         { originTypeName : List String
         , name : String
-        , -- &
+        , -- &, potentially remove in favor of separate
+          -- RustPatternBorrow
           isReference : Bool
         , values : List RustPattern
         }
@@ -526,25 +528,99 @@ choiceTypeDeclaration :
         }
     ->
         { name : String
+        , lifetimeParameters : List String
         , parameters : List String
         , variants : FastDict.Dict String (List RustType)
         }
 choiceTypeDeclaration typeAliasesInModule syntaxChoiceType =
-    { name = syntaxChoiceType.name
+    -- TODO also return associated type alias
+    -- type ActualName<'a, other_params> = &'a ActualNameGuts<['a], other_params>
+    let
+        rustVariants : FastDict.Dict String (List RustType)
+        rustVariants =
+            syntaxChoiceType.variants
+                |> FastDict.foldl
+                    (\elmVariantName variantValues soFar ->
+                        soFar
+                            |> FastDict.insert
+                                (elmVariantName |> toRustPascalCaseName)
+                                (variantValues
+                                    |> List.map
+                                        (\value ->
+                                            value |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                        )
+                                )
+                    )
+                    FastDict.empty
+    in
+    { name =
+        (syntaxChoiceType.name ++ "Guts")
+            |> toRustPascalCaseName
     , parameters =
         syntaxChoiceType.parameters
             |> List.map toRustPascalCaseName
-    , variants =
-        syntaxChoiceType.variants
-            |> FastDict.map
-                (\_ variantValues ->
-                    variantValues
-                        |> List.map
-                            (\value ->
-                                value |> type_ { typeAliasesInModule = typeAliasesInModule }
-                            )
+    , lifetimeParameters =
+        rustVariants
+            |> FastDict.foldl
+                (\_ rustVariantValues soFar ->
+                    FastSet.union soFar
+                        (rustVariantValues
+                            |> listMapToFastSetsAndUnify
+                                rustTypeUsedLifetimeVariables
+                        )
                 )
+                FastSet.empty
+            |> FastSet.toList
+    , variants = rustVariants
     }
+
+
+rustTypeUsedLifetimeVariables : RustType -> FastSet.Set String
+rustTypeUsedLifetimeVariables rustType =
+    --  IGNORE TCO
+    case rustType of
+        RustTypeUnit ->
+            FastSet.empty
+
+        RustTypeConstruct typeConstruct ->
+            (typeConstruct.lifetimeArguments |> FastSet.fromList)
+                |> FastSet.union
+                    (typeConstruct.arguments
+                        |> listMapToFastSetsAndUnify rustTypeUsedLifetimeVariables
+                    )
+
+        RustTypeTuple parts ->
+            (parts.part0 |> rustTypeUsedLifetimeVariables)
+                |> FastSet.union
+                    (parts.part1 |> rustTypeUsedLifetimeVariables)
+                |> FastSet.union
+                    (parts.part2Up
+                        |> listMapToFastSetsAndUnify rustTypeUsedLifetimeVariables
+                    )
+
+        RustTypeRecord fields ->
+            fields
+                |> FastDict.values
+                |> listMapToFastSetsAndUnify rustTypeUsedLifetimeVariables
+
+        RustTypeVariable _ ->
+            FastSet.empty
+
+        RustTypeFunction function ->
+            function.input
+                |> listMapToFastSetsAndUnify rustTypeUsedLifetimeVariables
+                |> FastSet.union (function.output |> rustTypeUsedLifetimeVariables)
+
+        RustTypeBorrow borrowed ->
+            (case borrowed.lifetimeVariable of
+                Nothing ->
+                    FastSet.empty
+
+                Just lifetimeVariable ->
+                    FastSet.singleton lifetimeVariable
+            )
+                |> FastSet.union
+                    (rustTypeUsedLifetimeVariables borrowed.type_)
 
 
 rustTypeParametersToString : List String -> String
@@ -566,28 +642,39 @@ printRustEnumDeclaration :
     { -- TODO remove indirect
       indirect : Bool
     , name : String
+    , lifetimeParameters : List String
     , parameters : List String
     , variants :
         FastDict.Dict String (List RustType)
     }
     -> Print
 printRustEnumDeclaration rustEnumType =
-    Print.exactly
-        ("pub enum "
-            ++ rustEnumType.name
-            ++ (case rustEnumType.parameters of
-                    [] ->
-                        ""
+    -- TODO skip Eq if any type is known to be not equatable like a function
+    Print.exactly "#[derive(Copy, Clone, Debug, Eq, PartialEq)]"
+        |> Print.followedBy Print.linebreakIndented
+        |> Print.followedBy
+            (Print.exactly
+                ("pub enum "
+                    ++ rustEnumType.name
+                    ++ (case
+                            (rustEnumType.lifetimeParameters
+                                |> List.map (\lifetimeParameter -> "'" ++ lifetimeParameter)
+                            )
+                                ++ rustEnumType.parameters
+                        of
+                            [] ->
+                                ""
 
-                    parameter0 :: parameter1Up ->
-                        "<"
-                            ++ ((parameter0 :: parameter1Up)
-                                    |> String.join ", "
-                               )
-                            ++ ">"
-               )
-            ++ " {"
-        )
+                            parameter0 :: parameter1Up ->
+                                "<"
+                                    ++ ((parameter0 :: parameter1Up)
+                                            |> String.join ", "
+                                       )
+                                    ++ ">"
+                       )
+                    ++ " {"
+                )
+            )
         |> Print.followedBy
             (Print.withIndentAtNextMultipleOf4
                 (Print.linebreakIndented
@@ -616,22 +703,26 @@ printRustStructDeclaration :
     }
     -> Print
 printRustStructDeclaration rustEnumType =
-    Print.exactly
-        ("pub struct "
-            ++ rustEnumType.name
-            ++ (case rustEnumType.parameters of
-                    [] ->
-                        ""
+    Print.exactly "#[derive(Copy, Clone, Debug, Eq, PartialEq)]"
+        |> Print.followedBy Print.linebreakIndented
+        |> Print.followedBy
+            (Print.exactly
+                ("pub struct "
+                    ++ rustEnumType.name
+                    ++ (case rustEnumType.parameters of
+                            [] ->
+                                ""
 
-                    parameter0 :: parameter1Up ->
-                        "<"
-                            ++ ((parameter0 :: parameter1Up)
-                                    |> String.join ", "
-                               )
-                            ++ ">"
-               )
-            ++ " {"
-        )
+                            parameter0 :: parameter1Up ->
+                                "<"
+                                    ++ ((parameter0 :: parameter1Up)
+                                            |> String.join ", "
+                                       )
+                                    ++ ">"
+                       )
+                    ++ " {"
+                )
+            )
         |> Print.followedBy
             (Print.withIndentAtNextMultipleOf4
                 (Print.linebreakIndented
@@ -813,7 +904,7 @@ rustTypeF64 =
         { qualification = []
         , name = "f64"
         , arguments = []
-        , lifetimeArgument = Nothing
+        , lifetimeArguments = []
         , isFunction = False
         }
 
@@ -869,12 +960,12 @@ typeNotVariable context inferredTypeNotVariable =
                         { arguments = rustArguments
                         , name = coreRust.name
                         , qualification = coreRust.qualification
-                        , lifetimeArgument =
+                        , lifetimeArguments =
                             if coreRust.hasLifetimeParameter then
-                                Just generatedLifetimeVariableName
+                                [ generatedLifetimeVariableName ]
 
                             else
-                                Nothing
+                                []
                         , isFunction =
                             -- core elm declarations don't have a function type alias
                             False
@@ -883,7 +974,7 @@ typeNotVariable context inferredTypeNotVariable =
                 Nothing ->
                     RustTypeConstruct
                         { arguments = rustArguments
-                        , lifetimeArgument = Just generatedLifetimeVariableName
+                        , lifetimeArguments = [ generatedLifetimeVariableName ]
                         , qualification = []
                         , name =
                             { moduleOrigin = typeConstruct.moduleOrigin
@@ -938,7 +1029,7 @@ typeNotVariable context inferredTypeNotVariable =
                 , isFunction = False
                 , arguments =
                     rustFields |> FastDict.values
-                , lifetimeArgument = Nothing
+                , lifetimeArguments = []
                 }
 
         ElmSyntaxTypeInfer.TypeFunction typeFunction ->
@@ -973,7 +1064,7 @@ typeNotVariable context inferredTypeNotVariable =
                 , isFunction = False
                 , arguments =
                     rustFields |> FastDict.values
-                , lifetimeArgument = Nothing
+                , lifetimeArguments = []
                 }
 
 
@@ -1461,7 +1552,7 @@ printRustTypeConstruct :
         , name : String
         , arguments : List RustType
         , isFunction : Bool
-        , lifetimeArgument : Maybe String
+        , lifetimeArguments : List String
         }
     -> Print
 printRustTypeConstruct positionOrNothing typeConstruct =
@@ -1469,19 +1560,18 @@ printRustTypeConstruct positionOrNothing typeConstruct =
         referencePrint : Print
         referencePrint =
             Print.exactly
-                (qualifiedReferenceToRustName
+                (qualifiedRustReferenceToString
                     { qualification = typeConstruct.qualification
                     , name = typeConstruct.name
                     }
                 )
     in
     case
-        (case typeConstruct.lifetimeArgument of
-            Nothing ->
-                []
-
-            Just lifetimeArgument ->
-                [ Print.exactly ("'" ++ lifetimeArgument) ]
+        (typeConstruct.lifetimeArguments
+            |> List.map
+                (\lifetimeArgument ->
+                    Print.exactly ("'" ++ lifetimeArgument)
+                )
         )
             ++ (typeConstruct.arguments
                     |> List.map
@@ -1983,10 +2073,7 @@ rustPatternListCons head tail =
         { originTypeName = [ "ListListGuts" ]
         , name = "Cons"
         , isReference = True
-        , values =
-            [ head
-            , tail
-            ]
+        , values = [ head, tail ]
         }
 
 
@@ -2342,10 +2429,11 @@ pattern patternInferred =
 
                                 Nothing ->
                                     { originTypeName =
-                                        [ (variant.moduleOrigin |> String.replace "." "")
-                                            ++ "_"
+                                        [ ((variant.moduleOrigin |> String.replace "." "")
                                             ++ variant.choiceTypeName
                                             ++ "Guts"
+                                          )
+                                            |> toRustPascalCaseName
                                         ]
                                     , name =
                                         toRustPascalCaseName variant.name
@@ -5025,10 +5113,16 @@ printRustPatternNotParenthesized rustPattern =
 
         RustPatternVariant patternVariant ->
             Print.exactly
-                (qualifiedReferenceToRustName
-                    { qualification = patternVariant.originTypeName
-                    , name = patternVariant.name
-                    }
+                ((if patternVariant.isReference then
+                    "&"
+
+                  else
+                    ""
+                 )
+                    ++ qualifiedRustReferenceToString
+                        { qualification = patternVariant.originTypeName
+                        , name = patternVariant.name
+                        }
                 )
                 |> Print.followedBy
                     (case patternVariant.values of
@@ -5234,8 +5328,7 @@ modules :
                     { parameters : List String
                     , variants :
                         FastDict.Dict String (List RustType)
-
-                    -- TODO , lifetimeParameter : Maybe String
+                    , lifetimeParameters : List String
                     }
             , structs :
                 FastDict.Dict
@@ -6053,7 +6146,8 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                             FastDict.Dict
                                 String
                                 { parameters : List String
-                                , cases : FastDict.Dict String (List RustType)
+                                , lifetimeParameters : List String
+                                , variants : FastDict.Dict String (List RustType)
                                 }
                         }
                     }
@@ -6199,12 +6293,13 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
 
                                                         Just inferredChoiceAliasDeclaration ->
                                                             let
-                                                                rustTypeAliasDeclaration :
+                                                                rustEnumDeclaration :
                                                                     { name : String
                                                                     , parameters : List String
+                                                                    , lifetimeParameters : List String
                                                                     , variants : FastDict.Dict String (List RustType)
                                                                     }
-                                                                rustTypeAliasDeclaration =
+                                                                rustEnumDeclaration =
                                                                     choiceTypeDeclaration
                                                                         (\moduleNameToAccess ->
                                                                             modulesInferred.types
@@ -6215,35 +6310,50 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                         , parameters = inferredChoiceAliasDeclaration.parameters
                                                                         , variants = inferredChoiceAliasDeclaration.variants
                                                                         }
+
+                                                                fullRustEnumGutsTypeName : String
+                                                                fullRustEnumGutsTypeName =
+                                                                    { moduleOrigin = moduleName
+                                                                    , name = rustEnumDeclaration.name
+                                                                    }
+                                                                        |> referenceToRustName
                                                             in
                                                             { errors = soFar.errors
                                                             , declarations =
                                                                 { lets = soFar.declarations.lets
                                                                 , fns = soFar.declarations.fns
-                                                                , typeAliases = soFar.declarations.typeAliases
                                                                 , enumTypes =
                                                                     soFar.declarations.enumTypes
+                                                                        |> FastDict.insert fullRustEnumGutsTypeName
+                                                                            { parameters = rustEnumDeclaration.parameters
+                                                                            , lifetimeParameters = rustEnumDeclaration.lifetimeParameters
+                                                                            , variants = rustEnumDeclaration.variants
+                                                                            }
+                                                                , typeAliases =
+                                                                    soFar.declarations.typeAliases
                                                                         |> FastDict.insert
                                                                             ({ moduleOrigin = moduleName
-                                                                             , name = rustTypeAliasDeclaration.name
+                                                                             , name = choiceTypeName
                                                                              }
                                                                                 |> referenceToRustName
                                                                             )
-                                                                            { parameters = rustTypeAliasDeclaration.parameters
-                                                                            , cases =
-                                                                                rustTypeAliasDeclaration.variants
-                                                                                    |> FastDict.foldl
-                                                                                        (\variantName values variantsSoFar ->
-                                                                                            variantsSoFar
-                                                                                                |> FastDict.insert
-                                                                                                    ({ moduleOrigin = moduleName
-                                                                                                     , name = variantName
-                                                                                                     }
-                                                                                                        |> referenceToRustName
-                                                                                                    )
-                                                                                                    values
-                                                                                        )
-                                                                                        FastDict.empty
+                                                                            { parameters = rustEnumDeclaration.parameters
+                                                                            , -- TODO , lifetimeParameters = rustEnumDeclaration.lifetimeParameters
+                                                                              type_ =
+                                                                                RustTypeBorrow
+                                                                                    { lifetimeVariable = Just generatedLifetimeVariableName
+                                                                                    , type_ =
+                                                                                        RustTypeConstruct
+                                                                                            { qualification = []
+                                                                                            , lifetimeArguments =
+                                                                                                rustEnumDeclaration.lifetimeParameters
+                                                                                            , name = fullRustEnumGutsTypeName
+                                                                                            , arguments =
+                                                                                                rustEnumDeclaration.parameters
+                                                                                                    |> List.map RustTypeVariable
+                                                                                            , isFunction = False
+                                                                                            }
+                                                                                    }
                                                                             }
                                                                 }
                                                             }
@@ -6370,8 +6480,8 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                         |> FastDict.map
                             (\_ enumDeclarationInfo ->
                                 { parameters = enumDeclarationInfo.parameters
-                                , variants =
-                                    enumDeclarationInfo.cases
+                                , variants = enumDeclarationInfo.variants
+                                , lifetimeParameters = enumDeclarationInfo.lifetimeParameters
                                 }
                             )
                 , typeAliases =
@@ -6899,7 +7009,7 @@ rustTypeConstructBumpaloBump =
         , name = "Bump"
         , isFunction = False
         , arguments = []
-        , lifetimeArgument = Nothing
+        , lifetimeArguments = []
         }
 
 
@@ -7437,10 +7547,10 @@ expression context expressionTypedNode =
                                             , name = reference.name
                                             }
                                     , originTypeName =
-                                        [ (reference.moduleOrigin |> String.replace "." "")
-                                            ++ "_"
+                                        [ ((reference.moduleOrigin |> String.replace "." "")
                                             ++ reference.choiceTypeName
                                             ++ "Guts"
+                                          )
                                             |> toRustPascalCaseName
                                         ]
                                     , isReference = True
@@ -7686,7 +7796,7 @@ expression context expressionTypedNode =
                                                         , isFunction = False
                                                         , name = "JsonEncodeValue"
                                                         , arguments = []
-                                                        , lifetimeArgument = Just generatedLifetimeVariableName
+                                                        , lifetimeArguments = [ generatedLifetimeVariableName ]
                                                         }
                                               }
                                             ]
@@ -7734,7 +7844,7 @@ expression context expressionTypedNode =
                                                                         , isFunction = False
                                                                         , name = "JsonEncodeValue"
                                                                         , arguments = []
-                                                                        , lifetimeArgument = Just generatedLifetimeVariableName
+                                                                        , lifetimeArguments = [ generatedLifetimeVariableName ]
                                                                         }
                                                                     ]
                                                                 , output = RustTypeVariable "event"
@@ -11875,6 +11985,7 @@ type RustEnumTypeOrTypeAliasDeclaration
     = RustEnumTypeDeclaration
         { name : String
         , parameters : List String
+        , lifetimeParameters : List String
         , variants :
             FastDict.Dict String (List RustType)
         }
@@ -11896,6 +12007,7 @@ rustTypeDeclarationsGroupByDependencies :
         List
             { name : String
             , parameters : List String
+            , lifetimeParameters : List String
             , variants :
                 FastDict.Dict String (List RustType)
             }
@@ -13660,12 +13772,12 @@ inferredTypeSpecializedVariablesFromNotVariable originalTypeNotVariable speciali
                     FastDict.empty
 
 
-qualifiedReferenceToRustName :
+qualifiedRustReferenceToString :
     { qualification : List String
     , name : String
     }
     -> String
-qualifiedReferenceToRustName reference =
+qualifiedRustReferenceToString reference =
     case reference.qualification of
         [] ->
             reference.name
@@ -13765,11 +13877,11 @@ printRustExpressionNotParenthesized rustExpression =
 
         RustExpressionReference reference ->
             Print.exactly
-                (reference |> qualifiedReferenceToRustName)
+                (reference |> qualifiedRustReferenceToString)
 
         RustExpressionVariant reference ->
             Print.exactly
-                (qualifiedReferenceToRustName
+                (qualifiedRustReferenceToString
                     { qualification = reference.originTypeName
                     , name = reference.name
                     }
@@ -14649,6 +14761,7 @@ rustDeclarationsToModuleString :
             { parameters : List String
             , variants :
                 FastDict.Dict String (List RustType)
+            , lifetimeParameters : List String
             }
     , structs :
         FastDict.Dict
@@ -14664,6 +14777,7 @@ rustDeclarationsToModuleString rustDeclarations =
             List
                 { name : String
                 , parameters : List String
+                , lifetimeParameters : List String
                 , variants :
                     FastDict.Dict String (List RustType)
                 }
@@ -14673,6 +14787,7 @@ rustDeclarationsToModuleString rustDeclarations =
                     (\name info ->
                         { name = name
                         , parameters = info.parameters
+                        , lifetimeParameters = info.lifetimeParameters
                         , variants = info.variants
                         }
                     )
@@ -14736,6 +14851,7 @@ use bumpalo::Bump;
                                             { indirect = False
                                             , name = rustEnumTypeDeclaration.name
                                             , parameters = rustEnumTypeDeclaration.parameters
+                                            , lifetimeParameters = rustEnumTypeDeclaration.lifetimeParameters
                                             , variants = rustEnumTypeDeclaration.variants
                                             }
 
@@ -14754,6 +14870,7 @@ use bumpalo::Bump;
                                                     { indirect = True
                                                     , name = rustEnumTypeDeclaration.name
                                                     , parameters = rustEnumTypeDeclaration.parameters
+                                                    , lifetimeParameters = rustEnumTypeDeclaration.lifetimeParameters
                                                     , variants = rustEnumTypeDeclaration.variants
                                                     }
 
@@ -14772,6 +14889,7 @@ use bumpalo::Bump;
                                                                                 { indirect = True
                                                                                 , name = rustEnumTypeDeclaration.name
                                                                                 , parameters = rustEnumTypeDeclaration.parameters
+                                                                                , lifetimeParameters = rustEnumTypeDeclaration.lifetimeParameters
                                                                                 , variants = rustEnumTypeDeclaration.variants
                                                                                 }
 
