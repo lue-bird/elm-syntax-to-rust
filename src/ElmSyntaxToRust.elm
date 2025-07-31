@@ -4094,8 +4094,8 @@ referenceToCoreRust reference =
 
                 "toMaybe" ->
                     Just
-                        { qualification = []
-                        , name = "result_to_maybe"
+                        { qualification = [ "Result" ]
+                        , name = "ok"
                         , requiresAllocator = False
                         }
 
