@@ -10,5 +10,9 @@ elmMain.js
 
 zombie
 
+# not ready for release
+example-worker-blocking
+example-elm-formatter
+
 # for experimentation
 /src/main.rs
