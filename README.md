@@ -31,7 +31,7 @@ Ok """...
 pub fn sample_plus2<'a>(allocator: &'a Bump, n: f64) -> f64 {
     basics_add(
         n,
-        list_sum(array_to_list(allocator, vec![2_f64].as_slice())),
+        list_sum(array_to_list(allocator, &[2_f64])),
     )
 }
 """
