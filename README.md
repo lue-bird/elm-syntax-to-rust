@@ -1,7 +1,7 @@
 > ⚠️ *very early* stage; likely has many situations it doesn't account for.
 > I'm also just learning rust so any tips (e.g. in issues) are appreciated
 >
-> - known TODO: handle type correctly reference type aliases without lifetime arguments
+> - known TODO: correctly handle type references of type aliases without lifetime arguments
 
 Print [`elm-syntax`](https://dark.elm.dmy.fr/packages/stil4m/elm-syntax/latest/) declarations as [rust](https://www.rust-lang.org/) code.
 To try it out, you can
