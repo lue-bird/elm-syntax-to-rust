@@ -14525,7 +14525,7 @@ printRustExpressionMatchCase branch =
             (Print.withIndentIncreasedBy 2
                 patternPrint
             )
-        |> Print.followedBy printExactlyColon
+        |> Print.followedBy (Print.exactly " => {")
         |> Print.followedBy
             (Print.withIndentAtNextMultipleOf4
                 (Print.linebreakIndented
@@ -14535,6 +14535,7 @@ printRustExpressionMatchCase branch =
                         )
                 )
             )
+        |> Print.followedBy (Print.exactly "}")
 
 
 rustPatternContainsBindings : RustPattern -> Bool
