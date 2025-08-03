@@ -14577,13 +14577,15 @@ printRustExpressionMatch rustMatch =
             )
         |> Print.followedBy printExactlySpaceCurlyOpening
         |> Print.followedBy
-            (Print.linebreakIndented
-                |> Print.followedBy
-                    ((rustMatch.case0 :: rustMatch.case1Up)
-                        |> Print.listMapAndIntersperseAndFlatten
-                            printRustExpressionMatchCase
-                            Print.linebreakIndented
-                    )
+            (Print.withIndentAtNextMultipleOf4
+                (Print.linebreakIndented
+                    |> Print.followedBy
+                        ((rustMatch.case0 :: rustMatch.case1Up)
+                            |> Print.listMapAndIntersperseAndFlatten
+                                printRustExpressionMatchCase
+                                Print.linebreakIndented
+                        )
+                )
             )
         |> Print.followedBy Print.linebreakIndented
         |> Print.followedBy printExactlyCurlyClosing
@@ -14612,52 +14614,8 @@ printRustExpressionMatchCase branch =
                         )
                 )
             )
+        |> Print.followedBy Print.linebreakIndented
         |> Print.followedBy (Print.exactly "}")
-
-
-rustPatternContainsBindings : RustPattern -> Bool
-rustPatternContainsBindings rustPattern =
-    -- IGNORE TCO
-    case rustPattern of
-        RustPatternVariable _ ->
-            True
-
-        RustPatternAlias _ ->
-            True
-
-        RustPatternIgnore ->
-            False
-
-        RustPatternBool _ ->
-            False
-
-        RustPatternInteger _ ->
-            False
-
-        RustPatternChar _ ->
-            False
-
-        RustPatternStringLiteral _ ->
-            False
-
-        RustPatternTuple partPatterns ->
-            (partPatterns.part0 |> rustPatternContainsBindings)
-                || (partPatterns.part1 |> rustPatternContainsBindings)
-                || (partPatterns.part2Up
-                        |> List.any rustPatternContainsBindings
-                   )
-
-        RustPatternVariant patternVariant ->
-            patternVariant.values
-                |> List.any rustPatternContainsBindings
-
-        RustPatternRecord recordPatternInexhaustiveFieldNames ->
-            recordPatternInexhaustiveFieldNames
-                |> FastDict.foldl
-                    (\_ valuePattern soFar ->
-                        soFar || (valuePattern |> rustPatternContainsBindings)
-                    )
-                    False
 
 
 printRustStatements : List RustStatement -> Print
