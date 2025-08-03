@@ -1122,23 +1122,6 @@ typeNotVariable context inferredTypeNotVariable =
                 }
 
 
-{-| Type position:
-
-  - `TypeIncoming` for a type that is itself (part of) a parameter
-  - `TypeOutgoing` for a type that is itself (part of) a result
-
-Only the innermost function counts. E.g. `Int` in
-
-    (() -> Int) -> ()
-
-is considered `TypeOutgoing`
-
--}
-type TypeIncomingOrOutgoing
-    = TypeIncoming
-    | TypeOutgoing
-
-
 printRustTypeNotParenthesized : RustType -> Print
 printRustTypeNotParenthesized rustType =
     -- IGNORE TCO
@@ -7703,6 +7686,7 @@ expression context expressionTypedNode =
                                         |> List.foldl
                                             (\fieldName soFar ->
                                                 let
+                                                    rustFieldName : String
                                                     rustFieldName =
                                                         fieldName |> toSnakeCaseRustName
                                                 in
