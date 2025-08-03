@@ -48,7 +48,8 @@ type RustType
         , part1 : RustType
         , part2Up : List RustType
         }
-    | RustTypeRecord
+    | -- TODO remove as records are transpiled to type constructs
+      RustTypeRecord
         -- invariant: cannot have exactly one entry
         (FastDict.Dict String RustType)
     | RustTypeVariable String
@@ -637,6 +638,27 @@ rustTypeParametersToString rustTypeParameters =
                 ++ ">"
 
 
+printLifetimeParametersAndTypeParameters : List String -> List String -> Print
+printLifetimeParametersAndTypeParameters lifetimeParameters typeParameters =
+    case
+        (lifetimeParameters
+            |> List.map (\lifetimeParameter -> "'" ++ lifetimeParameter)
+        )
+            ++ typeParameters
+    of
+        [] ->
+            Print.empty
+
+        parameter0 :: parameter1Up ->
+            Print.exactly
+                ("<"
+                    ++ ((parameter0 :: parameter1Up)
+                            |> String.join ", "
+                       )
+                    ++ ">"
+                )
+
+
 printRustEnumDeclaration :
     { -- TODO remove indirect
       indirect : Bool
@@ -653,27 +675,14 @@ printRustEnumDeclaration rustEnumType =
         |> Print.followedBy Print.linebreakIndented
         |> Print.followedBy
             (Print.exactly
-                ("pub enum "
-                    ++ rustEnumType.name
-                    ++ (case
-                            (rustEnumType.lifetimeParameters
-                                |> List.map (\lifetimeParameter -> "'" ++ lifetimeParameter)
-                            )
-                                ++ rustEnumType.parameters
-                        of
-                            [] ->
-                                ""
-
-                            parameter0 :: parameter1Up ->
-                                "<"
-                                    ++ ((parameter0 :: parameter1Up)
-                                            |> String.join ", "
-                                       )
-                                    ++ ">"
-                       )
-                    ++ " {"
-                )
+                ("pub enum " ++ rustEnumType.name)
             )
+        |> Print.followedBy
+            (printLifetimeParametersAndTypeParameters
+                rustEnumType.lifetimeParameters
+                rustEnumType.parameters
+            )
+        |> Print.followedBy (Print.exactly " {")
         |> Print.followedBy
             (Print.withIndentAtNextMultipleOf4
                 (Print.linebreakIndented
@@ -822,33 +831,95 @@ typeAliasDeclaration :
         }
     ->
         { name : String
+        , lifetimeParameters : List String
         , parameters : List String
         , type_ : RustType
         }
 typeAliasDeclaration typeAliasesInModule inferredTypeAlias =
+    let
+        aliasedAsRustType =
+            inferredTypeAlias.type_
+                |> inferredTypeExpandInnerAliases typeAliasesInModule
+                |> type_ { typeAliasesInModule = typeAliasesInModule }
+    in
     { name = inferredTypeAlias.name
     , parameters =
         inferredTypeAlias.parameters
             |> List.map toPascalCaseRustName
-    , type_ =
-        inferredTypeAlias.type_
-            |> type_ { typeAliasesInModule = typeAliasesInModule }
+    , type_ = aliasedAsRustType
+    , lifetimeParameters =
+        aliasedAsRustType
+            |> rustTypeUsedLifetimeParameters
+            |> FastSet.toList
     }
 
 
-printRustTypealiasDeclaration :
+rustTypeUsedLifetimeParameters : RustType -> FastSet.Set String
+rustTypeUsedLifetimeParameters rustType =
+    -- IGNORE TCO
+    case rustType of
+        RustTypeUnit ->
+            FastSet.empty
+
+        RustTypeVariable _ ->
+            FastSet.empty
+
+        RustTypeConstruct typeConstruct ->
+            typeConstruct.lifetimeArguments
+                |> FastSet.fromList
+                |> FastSet.union
+                    (typeConstruct.arguments
+                        |> listMapToFastSetsAndUnify rustTypeUsedLifetimeParameters
+                    )
+
+        RustTypeTuple typeTuple ->
+            (typeTuple.part0 |> rustTypeUsedLifetimeParameters)
+                |> FastSet.union
+                    (typeTuple.part1 |> rustTypeUsedLifetimeParameters)
+                |> FastSet.union
+                    (typeTuple.part2Up
+                        |> listMapToFastSetsAndUnify rustTypeUsedLifetimeParameters
+                    )
+
+        RustTypeRecord fields ->
+            fields
+                |> FastDict.values
+                |> listMapToFastSetsAndUnify rustTypeUsedLifetimeParameters
+
+        RustTypeFunction typeFunction ->
+            typeFunction.input
+                |> listMapToFastSetsAndUnify rustTypeUsedLifetimeParameters
+                |> FastSet.union
+                    (typeFunction.output |> rustTypeUsedLifetimeParameters)
+
+        RustTypeBorrow typeBorrow ->
+            FastSet.union
+                (case typeBorrow.lifetimeVariable of
+                    Nothing ->
+                        FastSet.empty
+
+                    Just lifetimeVariable ->
+                        FastSet.singleton lifetimeVariable
+                )
+                (typeBorrow.type_ |> rustTypeUsedLifetimeParameters)
+
+
+printRustTypeAliasDeclaration :
     { name : String
+    , lifetimeParameters : List String
     , parameters : List String
     , type_ : RustType
     }
     -> Print
-printRustTypealiasDeclaration rustTypeAliasDeclaration =
+printRustTypeAliasDeclaration rustTypeAliasDeclaration =
     Print.exactly
-        ("pub type "
-            ++ rustTypeAliasDeclaration.name
-            ++ rustTypeParametersToString rustTypeAliasDeclaration.parameters
-            ++ " ="
-        )
+        ("pub type " ++ rustTypeAliasDeclaration.name)
+        |> Print.followedBy
+            (printLifetimeParametersAndTypeParameters
+                rustTypeAliasDeclaration.lifetimeParameters
+                rustTypeAliasDeclaration.parameters
+            )
+        |> Print.followedBy (Print.exactly " =")
         |> Print.followedBy
             (Print.withIndentAtNextMultipleOf4
                 (Print.linebreakIndented
@@ -861,6 +932,9 @@ printRustTypealiasDeclaration rustTypeAliasDeclaration =
         |> Print.followedBy (Print.exactly ";")
 
 
+{-| TODO check that all uses of `type_` expand inner aliases prior,
+then remove `typeAliasesInModule` argument
+-}
 type_ :
     { typeAliasesInModule :
         String
@@ -5335,16 +5409,17 @@ modules :
             , typeAliases :
                 FastDict.Dict
                     String
-                    { parameters : List String
+                    { lifetimeParameters : List String
+                    , parameters : List String
                     , type_ : RustType
                     }
             , enumTypes :
                 FastDict.Dict
                     String
-                    { parameters : List String
+                    { lifetimeParameters : List String
+                    , parameters : List String
                     , variants :
                         FastDict.Dict String (List RustType)
-                    , lifetimeParameters : List String
                     }
             , structs :
                 FastDict.Dict
@@ -6155,7 +6230,8 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                         , typeAliases :
                             FastDict.Dict
                                 String
-                                { parameters : List String
+                                { lifetimeParameters : List String
+                                , parameters : List String
                                 , type_ : RustType
                                 }
                         , enumTypes :
@@ -6255,6 +6331,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                 let
                                                                     rustTypeAliasDeclaration :
                                                                         { name : String
+                                                                        , lifetimeParameters : List String
                                                                         , parameters : List String
                                                                         , type_ : RustType
                                                                         }
@@ -6283,7 +6360,9 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                  }
                                                                                     |> elmReferenceToPascalCaseRustName
                                                                                 )
-                                                                                { parameters = rustTypeAliasDeclaration.parameters
+                                                                                { lifetimeParameters =
+                                                                                    rustTypeAliasDeclaration.lifetimeParameters
+                                                                                , parameters = rustTypeAliasDeclaration.parameters
                                                                                 , type_ = rustTypeAliasDeclaration.type_
                                                                                 }
                                                                     }
@@ -6353,9 +6432,9 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                              }
                                                                                 |> elmReferenceToPascalCaseRustName
                                                                             )
-                                                                            { parameters = rustEnumDeclaration.parameters
-                                                                            , -- TODO , lifetimeParameters = rustEnumDeclaration.lifetimeParameters
-                                                                              type_ =
+                                                                            { lifetimeParameters = rustEnumDeclaration.lifetimeParameters
+                                                                            , parameters = rustEnumDeclaration.parameters
+                                                                            , type_ =
                                                                                 RustTypeBorrow
                                                                                     { lifetimeVariable = Just generatedLifetimeVariableName
                                                                                     , type_ =
@@ -6504,7 +6583,8 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                     transpiledRustDeclarations.declarations.typeAliases
                         |> FastDict.map
                             (\_ typeAliasInfo ->
-                                { parameters = typeAliasInfo.parameters
+                                { lifetimeParameters = typeAliasInfo.lifetimeParameters
+                                , parameters = typeAliasInfo.parameters
                                 , type_ = typeAliasInfo.type_
                                 }
                             )
@@ -12006,6 +12086,7 @@ type RustEnumTypeOrTypeAliasDeclaration
         }
     | RustTypeAliasDeclaration
         { name : String
+        , lifetimeParameters : List String
         , parameters : List String
         , type_ : RustType
         }
@@ -12015,6 +12096,7 @@ rustTypeDeclarationsGroupByDependencies :
     { typeAliases :
         List
             { name : String
+            , lifetimeParameters : List String
             , parameters : List String
             , type_ : RustType
             }
@@ -14740,7 +14822,8 @@ rustDeclarationsToModuleString :
     , typeAliases :
         FastDict.Dict
             String
-            { parameters : List String
+            { lifetimeParameters : List String
+            , parameters : List String
             , type_ : RustType
             }
     , enumTypes :
@@ -14794,6 +14877,7 @@ rustDeclarationsToModuleString rustDeclarations =
                         |> fastDictMapAndToList
                             (\name info ->
                                 { name = name
+                                , lifetimeParameters = info.lifetimeParameters
                                 , parameters = info.parameters
                                 , type_ = info.type_
                                 }
@@ -14844,7 +14928,7 @@ use bumpalo::Bump;
                                             }
 
                                     RustTypeAliasDeclaration aliasDeclaration ->
-                                        printRustTypealiasDeclaration aliasDeclaration
+                                        printRustTypeAliasDeclaration aliasDeclaration
 
                             Graph.CyclicSCC recursiveBucket ->
                                 case recursiveBucket of
@@ -14863,7 +14947,7 @@ use bumpalo::Bump;
                                                     }
 
                                             RustTypeAliasDeclaration aliasDeclaration ->
-                                                printRustTypealiasDeclaration aliasDeclaration
+                                                printRustTypeAliasDeclaration aliasDeclaration
                                         )
                                             |> Print.followedBy
                                                 (recursiveBucketMember1Up
@@ -14882,7 +14966,7 @@ use bumpalo::Bump;
                                                                                 }
 
                                                                         RustTypeAliasDeclaration aliasDeclaration ->
-                                                                            printRustTypealiasDeclaration aliasDeclaration
+                                                                            printRustTypeAliasDeclaration aliasDeclaration
                                                                     )
                                                         )
                                                         Print.empty

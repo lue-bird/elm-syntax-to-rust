@@ -113,7 +113,8 @@ elmModuleSourceTranspileToRust source =
                         , typeAliases :
                             FastDict.Dict
                                 String
-                                { parameters : List String
+                                { lifetimeParameters : List String
+                                , parameters : List String
                                 , type_ : ElmSyntaxToRust.RustType
                                 }
                         , enumTypes :
