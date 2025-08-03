@@ -624,20 +624,6 @@ rustTypeUsedLifetimeVariables rustType =
                     (rustTypeUsedLifetimeVariables borrowed.type_)
 
 
-rustTypeParametersToString : List String -> String
-rustTypeParametersToString rustTypeParameters =
-    case rustTypeParameters of
-        [] ->
-            ""
-
-        parameter0 :: parameter1Up ->
-            "<"
-                ++ ((parameter0 :: parameter1Up)
-                        |> String.join ", "
-                   )
-                ++ ">"
-
-
 printLifetimeParametersAndTypeParameters : List String -> List String -> Print
 printLifetimeParametersAndTypeParameters lifetimeParameters typeParameters =
     case
@@ -742,9 +728,7 @@ printRustStructDeclaration rustEnumType =
                                     let
                                         valuePrint : Print
                                         valuePrint =
-                                            value
-                                                |> printRustTypeNotParenthesized
-                                                    Nothing
+                                            value |> printRustTypeNotParenthesized
                                     in
                                     Print.exactly (name ++ ":")
                                         |> Print.followedBy
@@ -778,11 +762,7 @@ printRustEnumVariantDeclaration rustVariant =
                 valuePrints : List Print
                 valuePrints =
                     (value0 :: value1Up)
-                        |> List.map
-                            (\value ->
-                                value
-                                    |> printRustTypeNotParenthesized Nothing
-                            )
+                        |> List.map printRustTypeNotParenthesized
 
                 fullLineSpread : Print.LineSpread
                 fullLineSpread =
@@ -837,6 +817,7 @@ typeAliasDeclaration :
         }
 typeAliasDeclaration typeAliasesInModule inferredTypeAlias =
     let
+        aliasedAsRustType : RustType
         aliasedAsRustType =
             inferredTypeAlias.type_
                 |> inferredTypeExpandInnerAliases typeAliasesInModule
@@ -925,7 +906,7 @@ printRustTypeAliasDeclaration rustTypeAliasDeclaration =
                 (Print.linebreakIndented
                     |> Print.followedBy
                         (rustTypeAliasDeclaration.type_
-                            |> printRustTypeNotParenthesized Nothing
+                            |> printRustTypeNotParenthesized
                         )
                 )
             )
@@ -1158,10 +1139,8 @@ type TypeIncomingOrOutgoing
     | TypeOutgoing
 
 
-{-| TODO remove position
--}
-printRustTypeNotParenthesized : Maybe TypeIncomingOrOutgoing -> RustType -> Print
-printRustTypeNotParenthesized position rustType =
+printRustTypeNotParenthesized : RustType -> Print
+printRustTypeNotParenthesized rustType =
     -- IGNORE TCO
     case rustType of
         RustTypeUnit ->
@@ -1182,12 +1161,12 @@ printRustTypeNotParenthesized position rustType =
                 |> Print.followedBy
                     (Print.withIndentIncreasedBy 1
                         (borrow.type_
-                            |> printRustTypeParenthesizedIfSpaceSeparated position
+                            |> printRustTypeParenthesizedIfSpaceSeparated
                         )
                     )
 
         RustTypeConstruct typeConstruct ->
-            printRustTypeConstruct position typeConstruct
+            printRustTypeConstruct typeConstruct
 
         RustTypeTuple parts ->
             printRustTypeTuple parts
@@ -1196,7 +1175,7 @@ printRustTypeNotParenthesized position rustType =
             printRustTypeRecord fields
 
         RustTypeFunction typeFunction ->
-            printRustTypeFunction position typeFunction
+            printRustTypeFunction typeFunction
 
 
 printRustTypeRecordEmpty : Print
@@ -1220,7 +1199,7 @@ printRustTypeRecord fields =
                                 let
                                     fieldValuePrint : Print
                                     fieldValuePrint =
-                                        fieldValue |> printRustTypeNotParenthesized Nothing
+                                        fieldValue |> printRustTypeNotParenthesized
                                 in
                                 Print.exactly (fieldName ++ ":")
                                     |> Print.followedBy
@@ -1240,25 +1219,13 @@ printRustTypeRecord fields =
             |> Print.followedBy printExactlyParenClosing
 
 
-{-| TODO remove escaping
--}
-printRustTypeFunctionInput : { escaping : Bool } -> List RustType -> Print
-printRustTypeFunctionInput config input =
+printRustTypeFunctionInput : List RustType -> Print
+printRustTypeFunctionInput input =
     let
         input0PartPrints : List Print
         input0PartPrints =
             input
-                |> List.map
-                    (\inputPart ->
-                        inputPart
-                            |> printRustTypeNotParenthesized
-                                (if config.escaping then
-                                    Just TypeIncoming
-
-                                 else
-                                    Nothing
-                                )
-                    )
+                |> List.map printRustTypeNotParenthesized
 
         input0LineSpread : Print.LineSpread
         input0LineSpread =
@@ -1277,25 +1244,14 @@ printRustTypeFunctionInput config input =
 
 
 printRustTypeFunction :
-    Maybe TypeIncomingOrOutgoing
-    -> { input : List RustType, output : RustType }
+    { input : List RustType, output : RustType }
     -> Print
-printRustTypeFunction positionOrNothing typeFunction =
+printRustTypeFunction typeFunction =
     let
-        inputIsEscaping : Bool
-        inputIsEscaping =
-            case positionOrNothing of
-                Nothing ->
-                    False
-
-                Just _ ->
-                    True
-
         input0Print : Print
         input0Print =
             typeFunction.input
                 |> printRustTypeFunctionInput
-                    { escaping = inputIsEscaping }
 
         outputExpanded : { inputs : List (List RustType), output : RustType }
         outputExpanded =
@@ -1304,24 +1260,12 @@ printRustTypeFunction positionOrNothing typeFunction =
         outputPrint : Print
         outputPrint =
             printRustTypeParenthesizedIfSpaceSeparated
-                (case positionOrNothing of
-                    Nothing ->
-                        Nothing
-
-                    Just _ ->
-                        Just TypeOutgoing
-                )
                 outputExpanded.output
 
         input1UpPrints : List Print
         input1UpPrints =
             outputExpanded.inputs
-                |> List.map
-                    (\input ->
-                        input
-                            |> printRustTypeFunctionInput
-                                { escaping = inputIsEscaping }
-                    )
+                |> List.map printRustTypeFunctionInput
 
         fullLineSpread : Print.LineSpread
         fullLineSpread =
@@ -1573,19 +1517,16 @@ printRustTypeTuple parts =
     let
         part0Print : Print
         part0Print =
-            parts.part0 |> printRustTypeNotParenthesized Nothing
+            parts.part0 |> printRustTypeNotParenthesized
 
         part1Print : Print
         part1Print =
-            parts.part1 |> printRustTypeNotParenthesized Nothing
+            parts.part1 |> printRustTypeNotParenthesized
 
         part2UpPrints : List Print
         part2UpPrints =
             parts.part2Up
-                |> List.map
-                    (\part ->
-                        part |> printRustTypeNotParenthesized Nothing
-                    )
+                |> List.map printRustTypeNotParenthesized
 
         lineSpread : Print.LineSpread
         lineSpread =
@@ -1619,16 +1560,14 @@ printRustTypeTuple parts =
 
 
 printRustTypeConstruct :
-    Maybe TypeIncomingOrOutgoing
-    ->
-        { qualification : List String
-        , name : String
-        , arguments : List RustType
-        , isFunction : Bool
-        , lifetimeArguments : List String
-        }
+    { qualification : List String
+    , name : String
+    , arguments : List RustType
+    , isFunction : Bool
+    , lifetimeArguments : List String
+    }
     -> Print
-printRustTypeConstruct positionOrNothing typeConstruct =
+printRustTypeConstruct typeConstruct =
     let
         referencePrint : Print
         referencePrint =
@@ -1647,10 +1586,7 @@ printRustTypeConstruct positionOrNothing typeConstruct =
                 )
         )
             ++ (typeConstruct.arguments
-                    |> List.map
-                        (\argument ->
-                            argument |> printRustTypeNotParenthesized Nothing
-                        )
+                    |> List.map printRustTypeNotParenthesized
                )
     of
         [] ->
@@ -1723,12 +1659,12 @@ typeIsSpaceSeparated rustType =
             True
 
 
-printRustTypeParenthesizedIfSpaceSeparated : Maybe TypeIncomingOrOutgoing -> RustType -> Print
-printRustTypeParenthesizedIfSpaceSeparated position rustType =
+printRustTypeParenthesizedIfSpaceSeparated : RustType -> Print
+printRustTypeParenthesizedIfSpaceSeparated rustType =
     let
         notParenthesizedPrint : Print
         notParenthesizedPrint =
-            rustType |> printRustTypeNotParenthesized position
+            rustType |> printRustTypeNotParenthesized
     in
     if rustType |> typeIsSpaceSeparated then
         printParenthesized notParenthesizedPrint
@@ -11671,7 +11607,7 @@ printRustFuncDeclaration rustValueOrFunctionDeclaration =
     let
         resultTypePrint : Print
         resultTypePrint =
-            printRustTypeNotParenthesized (Just TypeOutgoing)
+            printRustTypeNotParenthesized
                 rustValueOrFunctionDeclaration.resultType
 
         parameterPrints : List Print
@@ -11682,7 +11618,7 @@ printRustFuncDeclaration rustValueOrFunctionDeclaration =
                         let
                             parameterTypePrint : Print
                             parameterTypePrint =
-                                printRustTypeNotParenthesized (Just TypeIncoming)
+                                printRustTypeNotParenthesized
                                     parameter.type_
                         in
                         parameter.pattern
@@ -11797,7 +11733,6 @@ printRustLetDeclaration rustLetDeclaration =
         resultTypePrint : Print
         resultTypePrint =
             printRustTypeNotParenthesized
-                Nothing
                 rustLetDeclaration.resultType
 
         resultTypeFullLineSpread : Print.LineSpread
@@ -11963,7 +11898,7 @@ printRustLocalFuncDeclaration rustValueOrFunctionDeclaration =
     let
         resultTypePrint : Print
         resultTypePrint =
-            printRustTypeNotParenthesized (Just TypeOutgoing)
+            printRustTypeNotParenthesized
                 rustValueOrFunctionDeclaration.resultType
 
         parameterPrints : List Print
@@ -11974,7 +11909,7 @@ printRustLocalFuncDeclaration rustValueOrFunctionDeclaration =
                         let
                             parameterTypePrint : Print
                             parameterTypePrint =
-                                printRustTypeNotParenthesized (Just TypeIncoming)
+                                printRustTypeNotParenthesized
                                     parameter.type_
                         in
                         Print.exactly ("_ " ++ parameter.name)
@@ -12052,7 +11987,6 @@ printRustLocalLetDeclaration rustLetDeclaration =
         resultTypePrint : Print
         resultTypePrint =
             printRustTypeNotParenthesized
-                Nothing
                 rustLetDeclaration.resultType
     in
     Print.exactly
@@ -14299,7 +14233,6 @@ printRustExpressionLambda lambda =
                             parameterTypePrint : Print
                             parameterTypePrint =
                                 printRustTypeNotParenthesized
-                                    (Just TypeIncoming)
                                     lambdaParameter.type_
                         in
                         lambdaParameter.pattern
@@ -14704,7 +14637,6 @@ printRustStatementLetDeclarationUninitialized letDeclarationUnassigned =
         typePrint : Print
         typePrint =
             printRustTypeNotParenthesized
-                Nothing
                 letDeclarationUnassigned.type_
     in
     Print.exactly
