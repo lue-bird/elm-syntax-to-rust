@@ -7091,7 +7091,7 @@ valueOrFunctionDeclaration moduleContext syntaxDeclarationValueOrFunction =
                                 |> listMapToFastSetsAndUnify
                                     patternTypedNodeIntroducedVariables
                         , letDeclaredValueAndFunctionTypes = FastDict.empty
-                        , path = [ "declarationResult" ]
+                        , path = [ "result" ]
                         }
                 )
 
@@ -8065,7 +8065,7 @@ expression context expressionTypedNode =
                             context.variablesFromWithinDeclarationInScope
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
-                        , path = "onTrue" :: context.path
+                        , path = "on_true" :: context.path
                         }
                 )
                 (ifThenElse.onFalse
@@ -8075,7 +8075,7 @@ expression context expressionTypedNode =
                             context.variablesFromWithinDeclarationInScope
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
-                        , path = "onFalse" :: context.path
+                        , path = "on_false" :: context.path
                         }
                 )
 
@@ -8248,7 +8248,9 @@ expression context expressionTypedNode =
                                             context.variablesFromWithinDeclarationInScope
                                         , letDeclaredValueAndFunctionTypes =
                                             context.letDeclaredValueAndFunctionTypes
-                                        , path = field.name :: context.path
+                                        , path =
+                                            (field.name |> toSnakeCaseRustName)
+                                                :: context.path
                                         }
                                 )
                         )
@@ -8315,7 +8317,9 @@ expression context expressionTypedNode =
                                                     context.variablesFromWithinDeclarationInScope
                                                 , letDeclaredValueAndFunctionTypes =
                                                     context.letDeclaredValueAndFunctionTypes
-                                                , path = field.name :: context.path
+                                                , path =
+                                                    (field.name |> toSnakeCaseRustName)
+                                                        :: context.path
                                                 }
                                         )
                                 )
@@ -8519,7 +8523,7 @@ expression context expressionTypedNode =
                                     , letDeclaredValueAndFunctionTypes =
                                         letDeclaredValueAndFunctionTypesIncludingCurrentFromLets
                                     , path =
-                                        ("letDeclaration" ++ (letDeclarationIndex |> String.fromInt))
+                                        ("let_declaration" ++ (letDeclarationIndex |> String.fromInt))
                                             :: context.path
                                     }
                         )
@@ -8533,7 +8537,7 @@ expression context expressionTypedNode =
                                     letIntroducedBindings
                         , letDeclaredValueAndFunctionTypes =
                             letDeclaredValueAndFunctionTypesIncludingCurrentFromLets
-                        , path = "letResult" :: context.path
+                        , path = "let_result" :: context.path
                         }
                 )
 
@@ -10796,7 +10800,9 @@ case_ context syntaxCase =
                             casePatternAsRust.introducedVariables
                 , letDeclaredValueAndFunctionTypes =
                     context.letDeclaredValueAndFunctionTypes
-                , path = "caseResult" :: context.path
+                , path =
+                    -- intentional as there is only one sub-expression
+                    context.path
                 }
         )
 
@@ -10848,7 +10854,9 @@ letDeclaration context syntaxLetDeclarationNode =
                             context.variablesFromWithinDeclarationInScope
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
-                        , path = "destructuredExpression" :: context.path
+                        , path =
+                            -- intentional as there is only one sub-expression
+                            context.path
                         }
                 )
 
@@ -11062,7 +11070,7 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
                                     )
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
-                        , path = "letDeclarationResult" :: context.path
+                        , path = "result" :: context.path
                         }
                 )
 
