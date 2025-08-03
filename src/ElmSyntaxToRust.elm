@@ -543,7 +543,7 @@ choiceTypeDeclaration typeAliasesInModule syntaxChoiceType =
                     (\elmVariantName variantValues soFar ->
                         soFar
                             |> FastDict.insert
-                                (elmVariantName |> toRustPascalCaseName)
+                                (elmVariantName |> toPascalCaseRustName)
                                 (variantValues
                                     |> List.map
                                         (\value ->
@@ -555,10 +555,10 @@ choiceTypeDeclaration typeAliasesInModule syntaxChoiceType =
     in
     { name =
         (syntaxChoiceType.name ++ "Guts")
-            |> toRustPascalCaseName
+            |> toPascalCaseRustName
     , parameters =
         syntaxChoiceType.parameters
-            |> List.map toRustPascalCaseName
+            |> List.map toPascalCaseRustName
     , lifetimeParameters =
         rustVariants
             |> FastDict.foldl
@@ -631,10 +631,9 @@ rustTypeParametersToString rustTypeParameters =
 
         parameter0 :: parameter1Up ->
             "<"
-                ++ listFilledMapAndStringJoinWith ", "
-                    (\parameter -> parameter)
-                    parameter0
-                    parameter1Up
+                ++ ((parameter0 :: parameter1Up)
+                        |> String.join ", "
+                   )
                 ++ ">"
 
 
@@ -688,7 +687,7 @@ printRustEnumDeclaration rustEnumType =
                                         , values = values
                                         }
                                 )
-                                Print.linebreakIndented
+                                printExactlyCommaLinebreakIndented
                         )
                 )
             )
@@ -763,7 +762,7 @@ printRustEnumVariantDeclaration :
 printRustEnumVariantDeclaration rustVariant =
     case rustVariant.values of
         [] ->
-            Print.exactly ("case " ++ rustVariant.name)
+            Print.exactly rustVariant.name
 
         value0 :: value1Up ->
             let
@@ -781,7 +780,7 @@ printRustEnumVariantDeclaration rustVariant =
                     valuePrints
                         |> Print.lineSpreadListMapAndCombine Print.lineSpread
             in
-            Print.exactly ("case " ++ rustVariant.name ++ "(")
+            Print.exactly (rustVariant.name ++ "(")
                 |> Print.followedBy
                     (Print.withIndentAtNextMultipleOf4
                         (Print.emptyOrLinebreakIndented fullLineSpread
@@ -830,7 +829,7 @@ typeAliasDeclaration typeAliasesInModule inferredTypeAlias =
     { name = inferredTypeAlias.name
     , parameters =
         inferredTypeAlias.parameters
-            |> List.map toRustPascalCaseName
+            |> List.map toPascalCaseRustName
     , type_ =
         inferredTypeAlias.type_
             |> type_ { typeAliasesInModule = typeAliasesInModule }
@@ -890,7 +889,7 @@ type_ context inferredType =
             else
                 RustTypeVariable
                     (variable.name
-                        |> toRustPascalCaseName
+                        |> toPascalCaseRustName
                     )
 
         ElmSyntaxTypeInfer.TypeNotVariable inferredTypeNotVariable ->
@@ -980,7 +979,7 @@ typeNotVariable context inferredTypeNotVariable =
                             { moduleOrigin = typeConstruct.moduleOrigin
                             , name = typeConstruct.name
                             }
-                                |> referenceToRustName
+                                |> elmReferenceToPascalCaseRustName
                         , isFunction =
                             case
                                 inferredTypeConstructToFunction context.typeAliasesInModule
@@ -2018,8 +2017,8 @@ toSnakeCase string =
         |> String.concat
 
 
-toRustPascalCaseName : String -> String
-toRustPascalCaseName name =
+toPascalCaseRustName : String -> String
+toPascalCaseRustName name =
     name
         |> String.split "_"
         |> List.map
@@ -2433,10 +2432,10 @@ pattern patternInferred =
                                             ++ variant.choiceTypeName
                                             ++ "Guts"
                                           )
-                                            |> toRustPascalCaseName
+                                            |> toPascalCaseRustName
                                         ]
                                     , name =
-                                        toRustPascalCaseName variant.name
+                                        toPascalCaseRustName variant.name
                                     , isReference = True
                                     }
 
@@ -5048,12 +5047,12 @@ referenceToCoreRust reference =
             Nothing
 
 
-referenceToRustName :
+elmReferenceToSnakeCaseRustName :
     { moduleOrigin : String
     , name : String
     }
     -> String
-referenceToRustName reference =
+elmReferenceToSnakeCaseRustName reference =
     (case reference.moduleOrigin |> String.replace "." "" of
         "" ->
             reference.name
@@ -5064,6 +5063,23 @@ referenceToRustName reference =
                 ++ reference.name
     )
         |> toSnakeCaseRustName
+
+
+elmReferenceToPascalCaseRustName :
+    { moduleOrigin : String
+    , name : String
+    }
+    -> String
+elmReferenceToPascalCaseRustName reference =
+    (case reference.moduleOrigin |> String.replace "." "" of
+        "" ->
+            reference.name
+
+        moduleOriginNotEmpty ->
+            moduleOriginNotEmpty
+                ++ (reference.name |> stringFirstCharToUpper)
+    )
+        |> toPascalCaseRustName
 
 
 printRustPatternNotParenthesized : RustPattern -> Print
@@ -6265,7 +6281,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                 ({ moduleOrigin = moduleName
                                                                                  , name = rustTypeAliasDeclaration.name
                                                                                  }
-                                                                                    |> referenceToRustName
+                                                                                    |> elmReferenceToPascalCaseRustName
                                                                                 )
                                                                                 { parameters = rustTypeAliasDeclaration.parameters
                                                                                 , type_ = rustTypeAliasDeclaration.type_
@@ -6316,7 +6332,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                     { moduleOrigin = moduleName
                                                                     , name = rustEnumDeclaration.name
                                                                     }
-                                                                        |> referenceToRustName
+                                                                        |> elmReferenceToPascalCaseRustName
                                                             in
                                                             { errors = soFar.errors
                                                             , declarations =
@@ -6335,7 +6351,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                             ({ moduleOrigin = moduleName
                                                                              , name = choiceTypeName
                                                                              }
-                                                                                |> referenceToRustName
+                                                                                |> elmReferenceToPascalCaseRustName
                                                                             )
                                                                             { parameters = rustEnumDeclaration.parameters
                                                                             , -- TODO , lifetimeParameters = rustEnumDeclaration.lifetimeParameters
@@ -6381,7 +6397,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                     { moduleOrigin = moduleName
                                                                     , name = valueOrFunctionDeclarationInferred.name
                                                                     }
-                                                                        |> referenceToRustName
+                                                                        |> elmReferenceToSnakeCaseRustName
                                                             in
                                                             { errors = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.errors
                                                             , declarations =
@@ -6526,22 +6542,19 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                         soFar
 
                                     elmRecordFieldsNotAlreadyInDefaultDeclarations ->
-                                        let
-                                            rustRecordFields : List String
-                                            rustRecordFields =
-                                                elmRecordFieldsNotAlreadyInDefaultDeclarations
-                                                    |> List.map toRustPascalCaseName
-                                        in
                                         soFar
                                             |> FastDict.insert
-                                                (generatedRecordTypeName rustRecordFields)
-                                                { parameters = rustRecordFields
+                                                (generatedRecordTypeName elmRecordFieldsNotAlreadyInDefaultDeclarations)
+                                                { parameters =
+                                                    elmRecordFieldsNotAlreadyInDefaultDeclarations
+                                                        |> List.map toPascalCaseRustName
                                                 , fields =
-                                                    rustRecordFields
+                                                    elmRecordFieldsNotAlreadyInDefaultDeclarations
                                                         |> List.map
                                                             (\rustRecordField ->
-                                                                ( rustRecordField
-                                                                , RustTypeVariable rustRecordField
+                                                                ( rustRecordField |> toSnakeCaseRustName
+                                                                , RustTypeVariable
+                                                                    (rustRecordField |> toPascalCaseRustName)
                                                                 )
                                                             )
                                                         |> FastDict.fromList
@@ -6564,6 +6577,7 @@ generatedRecordTypeName rustFieldNames =
                 |> List.map stringFirstCharToUpper
                 |> String.concat
            )
+        |> toPascalCaseRustName
 
 
 portsOutgoingDictEmptyPortsIncomingDictEmpty : { portsOutgoing : FastSet.Set a, portsIncoming : FastSet.Set a }
@@ -7542,16 +7556,14 @@ expression context expressionTypedNode =
 
                                 Nothing ->
                                     { name =
-                                        referenceToRustName
-                                            { moduleOrigin = reference.moduleOrigin
-                                            , name = reference.name
-                                            }
+                                        reference.name
+                                            |> toPascalCaseRustName
                                     , originTypeName =
                                         [ ((reference.moduleOrigin |> String.replace "." "")
                                             ++ reference.choiceTypeName
                                             ++ "Guts"
                                           )
-                                            |> toRustPascalCaseName
+                                            |> toPascalCaseRustName
                                         ]
                                     , isReference = True
                                     }
@@ -7674,12 +7686,16 @@ expression context expressionTypedNode =
                                     (fieldName0 :: fieldName1Up)
                                         |> List.foldl
                                             (\fieldName soFar ->
+                                                let
+                                                    rustFieldName =
+                                                        fieldName |> toSnakeCaseRustName
+                                                in
                                                 soFar
                                                     |> FastDict.insert
-                                                        (fieldName |> toSnakeCaseRustName)
+                                                        rustFieldName
                                                         (RustExpressionReference
                                                             { qualification = []
-                                                            , name = generatedFieldValueParameterName fieldName
+                                                            , name = generatedFieldValueParameterName rustFieldName
                                                             }
                                                         )
                                             )
@@ -7779,10 +7795,10 @@ expression context expressionTypedNode =
                                 RustExpressionReference
                                     { qualification = []
                                     , name =
-                                        referenceToRustName
-                                            { moduleOrigin = reference.moduleOrigin
-                                            , name = reference.name
-                                            }
+                                        { moduleOrigin = reference.moduleOrigin
+                                        , name = reference.name
+                                        }
+                                            |> elmReferenceToSnakeCaseRustName
                                     }
 
                             Just referenceOriginModuleInfo ->
@@ -7879,10 +7895,10 @@ expression context expressionTypedNode =
                                             RustExpressionReference
                                                 { qualification = []
                                                 , name =
-                                                    referenceToRustName
-                                                        { moduleOrigin = reference.moduleOrigin
-                                                        , name = reference.name
-                                                        }
+                                                    { moduleOrigin = reference.moduleOrigin
+                                                    , name = reference.name
+                                                    }
+                                                        |> elmReferenceToSnakeCaseRustName
                                                 }
 
                                         Just originDeclarationType ->
@@ -7918,10 +7934,10 @@ expression context expressionTypedNode =
                                                         Nothing ->
                                                             { qualification = []
                                                             , name =
-                                                                referenceToRustName
-                                                                    { moduleOrigin = reference.moduleOrigin
-                                                                    , name = reference.name
-                                                                    }
+                                                                { moduleOrigin = reference.moduleOrigin
+                                                                , name = reference.name
+                                                                }
+                                                                    |> elmReferenceToSnakeCaseRustName
                                                                     |> rustNameWithSpecializedTypes
                                                                         (inferredTypeSpecializedVariablesFrom
                                                                             originDeclarationTypeWithExpandedAliases
@@ -8166,13 +8182,12 @@ expression context expressionTypedNode =
                             let
                                 originalRecordVariable : String
                                 originalRecordVariable =
-                                    referenceToRustName
-                                        { moduleOrigin =
-                                            recordUpdate.recordVariable.value.moduleOrigin
-                                        , name =
-                                            recordUpdate.recordVariable.value.name
-                                        }
-                                        |> toSnakeCaseRustName
+                                    { moduleOrigin =
+                                        recordUpdate.recordVariable.value.moduleOrigin
+                                    , name =
+                                        recordUpdate.recordVariable.value.name
+                                    }
+                                        |> elmReferenceToSnakeCaseRustName
 
                                 rustOriginalRecordVariableReferenceExpression : RustExpression
                                 rustOriginalRecordVariableReferenceExpression =
@@ -13577,7 +13592,7 @@ rustNameWithSpecializedTypes specializedTypes name =
         |> FastDict.foldl
             (\variable specializedType nameSoFar ->
                 nameSoFar
-                    ++ "__"
+                    ++ "_"
                     ++ variable
                     ++ "_"
                     ++ (case specializedType of
@@ -14197,19 +14212,17 @@ printRustExpressionLambda lambda =
                                     (Just TypeIncoming)
                                     lambdaParameter.type_
                         in
-                        printParenthesized
-                            (lambdaParameter.pattern
-                                |> printRustPatternNotParenthesized
-                                |> Print.followedBy printExactlyColon
-                                |> Print.followedBy
-                                    (Print.withIndentAtNextMultipleOf4
-                                        (Print.spaceOrLinebreakIndented
-                                            (parameterTypePrint |> Print.lineSpread)
-                                            |> Print.followedBy
-                                                parameterTypePrint
-                                        )
+                        lambdaParameter.pattern
+                            |> printRustPatternNotParenthesized
+                            |> Print.followedBy printExactlyColon
+                            |> Print.followedBy
+                                (Print.withIndentAtNextMultipleOf4
+                                    (Print.spaceOrLinebreakIndented
+                                        (parameterTypePrint |> Print.lineSpread)
+                                        |> Print.followedBy
+                                            parameterTypePrint
                                     )
-                            )
+                                )
                     )
 
         parametersLineSpread : Print.LineSpread
@@ -14406,7 +14419,7 @@ printRustStatementMatch rustMatch =
                     ((rustMatch.case0 :: rustMatch.case1Up)
                         |> Print.listMapAndIntersperseAndFlatten
                             printRustStatementMatchCase
-                            Print.linebreakIndented
+                            printExactlyCommaLinebreakIndented
                     )
             )
         |> Print.followedBy Print.linebreakIndented
@@ -14429,16 +14442,8 @@ printRustStatementMatchCase branch =
         patternPrint =
             printRustPatternNotParenthesized branch.pattern
     in
-    (if branch.pattern |> rustPatternContainsBindings then
-        printExactlyCaseSpaceLetSpace
-
-     else
-        printExactlyCaseSpace
-    )
-        |> Print.followedBy
-            (Print.withIndentIncreasedBy 2
-                patternPrint
-            )
+    Print.withIndentIncreasedBy 2
+        patternPrint
         |> Print.followedBy printExactlyColon
         |> Print.followedBy
             (Print.withIndentAtNextMultipleOf4
@@ -14447,16 +14452,6 @@ printRustStatementMatchCase branch =
                         (printRustStatements branch.statements)
                 )
             )
-
-
-printExactlyCaseSpaceLetSpace : Print
-printExactlyCaseSpaceLetSpace =
-    Print.exactly "case let "
-
-
-printExactlyCaseSpace : Print
-printExactlyCaseSpace =
-    Print.exactly "case "
 
 
 printRustExpressionMatch :
@@ -14515,16 +14510,8 @@ printRustExpressionMatchCase branch =
         patternPrint =
             printRustPatternNotParenthesized branch.pattern
     in
-    (if branch.pattern |> rustPatternContainsBindings then
-        printExactlyCaseSpaceLetSpace
-
-     else
-        printExactlyCaseSpace
-    )
-        |> Print.followedBy
-            (Print.withIndentIncreasedBy 2
-                patternPrint
-            )
+    Print.withIndentIncreasedBy 2
+        patternPrint
         |> Print.followedBy (Print.exactly " => {")
         |> Print.followedBy
             (Print.withIndentAtNextMultipleOf4

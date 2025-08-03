@@ -83,7 +83,7 @@ mod elm
 print(elm::your_module_your_function("yourInput"))
 ```
 
-where `elm::your_module_your_function(firstArgument, secondArgument)` is the transpiled elm function `Your.Module.yourFunction firstArgument secondArgument`. (If the value/function contains extensible records, search for `Elm.YourModule_yourFunction__` to see the different specialized options)
+where `elm::your_module_your_function(firstArgument, secondArgument)` is the transpiled elm function `Your.Module.yourFunction firstArgument secondArgument`. (If the value/function contains extensible records, search for `elm::your_module_your_function_` with the underscore to see the different specialized options)
 
 Run with
 ```bash
