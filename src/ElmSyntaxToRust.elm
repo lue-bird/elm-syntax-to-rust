@@ -11896,7 +11896,7 @@ printRustLocalFuncDeclaration rustValueOrFunctionDeclaration =
                                 printRustTypeNotParenthesized
                                     parameter.type_
                         in
-                        Print.exactly ("_ " ++ parameter.name)
+                        Print.exactly parameter.name
                             |> Print.followedBy printExactlyColon
                             |> Print.followedBy
                                 (Print.withIndentAtNextMultipleOf4
