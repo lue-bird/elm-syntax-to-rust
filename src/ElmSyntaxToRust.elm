@@ -160,6 +160,9 @@ type RustExpression
 
 
 {-| The sub-set of rust statement syntax used in generated rust code
+
+TODO remove the unused ones like let mut, assignment, uninitialized, if-else, match
+
 -}
 type RustStatement
     = RustStatementLetDestructuring
@@ -173,7 +176,7 @@ type RustStatement
         }
     | RustStatementFnDeclaration
         { name : String
-        , parameters : List { name : String, type_ : RustType }
+        , parameters : List { pattern : RustPattern, type_ : RustType }
         , result : RustExpression
         , resultType : RustType
         , introducedTypeParameters : List String
@@ -182,7 +185,7 @@ type RustStatement
         { name : String
         , type_ : RustType
         }
-    | RustStatementVarDeclaration
+    | RustStatementLetMutDeclaration
         { name : String
         , value : RustExpression
         }
@@ -5249,7 +5252,7 @@ printRustPatternNotParenthesized rustPattern =
                 |> Print.followedBy
                     ((parts.part0 :: parts.part1 :: parts.part2Up)
                         |> Print.listMapAndIntersperseAndFlatten
-                            printRustPatternParenthesizedIfSpaceSeparated
+                            printRustPatternNotParenthesized
                             printExactlyCommaSpace
                     )
                 |> Print.followedBy printExactlyParenClosing
@@ -8976,8 +8979,8 @@ rustStatementAlterBindingNames variableNameChange rustStatement =
                         |> rustExpressionAlterBindingNames variableNameChange
                 }
 
-        RustStatementVarDeclaration varDeclaration ->
-            RustStatementVarDeclaration
+        RustStatementLetMutDeclaration varDeclaration ->
+            RustStatementLetMutDeclaration
                 { name = varDeclaration.name |> variableNameChange
                 , value =
                     varDeclaration.value
@@ -9019,7 +9022,9 @@ rustStatementAlterBindingNames variableNameChange rustStatement =
                         |> List.map
                             (\parameter ->
                                 { type_ = parameter.type_
-                                , name = parameter.name |> variableNameChange
+                                , pattern =
+                                    parameter.pattern
+                                        |> rustPatternAlterBindingNames variableNameChange
                                 }
                             )
                 , resultType = fnDeclaration.resultType
@@ -10209,7 +10214,7 @@ rustStatementUsesReferenceInLambdaOrFnDeclaration referenceToCheck rustStatement
             rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                 destructuring.expression
 
-        RustStatementVarDeclaration var ->
+        RustStatementLetMutDeclaration var ->
             rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                 var.value
 
@@ -10466,7 +10471,7 @@ rustStatementCountUsesOfReference referenceToCountUsesOf rustStatement =
             fnDeclaration.result
                 |> rustExpressionCountUsesOfReference referenceToCountUsesOf
 
-        RustStatementVarDeclaration var ->
+        RustStatementLetMutDeclaration var ->
             rustExpressionCountUsesOfReference referenceToCountUsesOf
                 var.value
 
@@ -10693,8 +10698,8 @@ rustStatementSubstituteReferences referenceToExpression rustStatement =
                         |> rustExpressionSubstituteReferences referenceToExpression
                 }
 
-        RustStatementVarDeclaration varDeclaration ->
-            RustStatementVarDeclaration
+        RustStatementLetMutDeclaration varDeclaration ->
+            RustStatementLetMutDeclaration
                 { name = varDeclaration.name
                 , value =
                     varDeclaration.value
@@ -11090,24 +11095,24 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
                         { name = rustName
                         , parameters =
                             (syntaxLetDeclarationValueOrFunctionNode.declaration.parameters
-                                |> List.indexedMap
-                                    (\parameterIndex parameter ->
-                                        { name =
-                                            case parameter.value of
-                                                ElmSyntaxTypeInfer.PatternVariable patternVariable ->
-                                                    toSnakeCaseRustName patternVariable
-
-                                                _ ->
-                                                    generatedParameterNameForIndexAtPath
-                                                        parameterIndex
-                                                        context.path
+                                |> List.map
+                                    (\parameter ->
+                                        { pattern = (pattern parameter).pattern
                                         , type_ =
                                             parameter.type_
                                                 |> type_ { typeAliasesInModule = typeAliasesInModule }
                                         }
                                     )
                             )
-                                ++ additionalGeneratedParameters
+                                ++ (additionalGeneratedParameters
+                                        |> List.map
+                                            (\generatedAdditionalParameter ->
+                                                { type_ = generatedAdditionalParameter.type_
+                                                , pattern =
+                                                    RustPatternVariable generatedAdditionalParameter.name
+                                                }
+                                            )
+                                   )
                         , resultType =
                             rustFullTypeAsFunction.output
                                 |> type_ { typeAliasesInModule = typeAliasesInModule }
@@ -11988,7 +11993,7 @@ rustTypeIsConcrete rustType =
 
 printRustLocalFnDeclaration :
     { name : String
-    , parameters : List { name : String, type_ : RustType }
+    , parameters : List { pattern : RustPattern, type_ : RustType }
     , result : RustExpression
     , resultType : RustType
     , introducedTypeParameters : List String
@@ -12011,13 +12016,21 @@ printRustLocalFnDeclaration rustValueOrFunctionDeclaration =
                             parameterTypePrint =
                                 printRustTypeNotParenthesized
                                     parameter.type_
+
+                            patternPrint : Print
+                            patternPrint =
+                                printRustPatternNotParenthesized parameter.pattern
                         in
-                        Print.exactly parameter.name
+                        patternPrint
                             |> Print.followedBy printExactlyColon
                             |> Print.followedBy
                                 (Print.withIndentAtNextMultipleOf4
                                     (Print.spaceOrLinebreakIndented
-                                        (parameterTypePrint |> Print.lineSpread)
+                                        (patternPrint
+                                            |> Print.lineSpread
+                                            |> Print.lineSpreadMergeWith
+                                                (\() -> parameterTypePrint |> Print.lineSpread)
+                                        )
                                         |> Print.followedBy
                                             parameterTypePrint
                                     )
@@ -14261,8 +14274,8 @@ printExactlyCurlyOpening =
     Print.exactly "{"
 
 
-patternIsSpaceSeparated : RustPattern -> Bool
-patternIsSpaceSeparated rustPattern =
+rustPatternIsSpaceSeparated : RustPattern -> Bool
+rustPatternIsSpaceSeparated rustPattern =
     case rustPattern of
         RustPatternAlias _ ->
             True
@@ -14302,7 +14315,7 @@ printRustPatternParenthesizedIfSpaceSeparated rustPattern =
         notParenthesizedPrint =
             rustPattern |> printRustPatternNotParenthesized
     in
-    if rustPattern |> patternIsSpaceSeparated then
+    if rustPattern |> rustPatternIsSpaceSeparated then
         printParenthesized notParenthesizedPrint
 
     else
@@ -14678,14 +14691,14 @@ printRustStatement rustStatement =
         RustStatementLetDeclarationUninitialized letDeclarationUnassigned ->
             printRustStatementLetDeclarationUninitialized letDeclarationUnassigned
 
-        RustStatementVarDeclaration varDeclarationInitialized ->
+        RustStatementLetMutDeclaration varDeclarationInitialized ->
             let
                 assignedValuePrint : Print
                 assignedValuePrint =
                     printRustExpressionNotParenthesized
                         varDeclarationInitialized.value
             in
-            Print.exactly ("var " ++ varDeclarationInitialized.name ++ " =")
+            Print.exactly ("let mut " ++ varDeclarationInitialized.name ++ " =")
                 |> Print.followedBy
                     (Print.withIndentAtNextMultipleOf4
                         (Print.spaceOrLinebreakIndented
@@ -14766,10 +14779,8 @@ printRustLetDestructuring letDestructuring =
     printExactlyLetSpace
         |> Print.followedBy
             (Print.withIndentAtNextMultipleOf4
-                (printParenthesized
-                    (letDestructuring.pattern
-                        |> printRustPatternParenthesizedIfSpaceSeparated
-                    )
+                (letDestructuring.pattern
+                    |> printRustPatternParenthesizedIfSpaceSeparated
                     |> Print.followedBy printExactlySpaceEquals
                     |> Print.followedBy
                         (Print.linebreakIndented
@@ -14780,6 +14791,7 @@ printRustLetDestructuring letDestructuring =
                         )
                 )
             )
+        |> Print.followedBy printExactlySemicolon
 
 
 printExactlyLetSpace : Print
