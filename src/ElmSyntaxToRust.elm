@@ -40,6 +40,7 @@ type RustType
         , arguments : List RustType
         , lifetimeArguments : List String
         , -- TODO isEq
+          -- TODO isDebug
           -- TODO remove
           isFunction : Bool
         }
@@ -170,7 +171,7 @@ type RustStatement
         , result : RustExpression
         , resultType : RustType
         }
-    | RustStatementFuncDeclaration
+    | RustStatementFnDeclaration
         { name : String
         , parameters : List { name : String, type_ : RustType }
         , result : RustExpression
@@ -656,8 +657,39 @@ printRustEnumDeclaration :
     }
     -> Print
 printRustEnumDeclaration rustEnumType =
-    -- TODO skip Eq if any type is known to be not equatable like a function
-    Print.exactly "#[derive(Copy, Clone, Debug, Eq, PartialEq)]"
+    -- consider adding Eq if all types are known to be equatable (e.g. not a function or f64)
+    Print.exactly
+        ("#[derive("
+            ++ ([ Just "Copy"
+                , Just "Clone"
+                , if
+                    rustEnumType.variants
+                        |> fastDictAll
+                            (\_ values ->
+                                values |> List.all rustTypeIsDebug
+                            )
+                  then
+                    Just "Debug"
+
+                  else
+                    Nothing
+                , if
+                    rustEnumType.variants
+                        |> fastDictAll
+                            (\_ values ->
+                                values |> List.all rustTypeIsPartialEq
+                            )
+                  then
+                    Just "PartialEq"
+
+                  else
+                    Nothing
+                ]
+                    |> List.filterMap identity
+                    |> String.join ", "
+               )
+            ++ ")]"
+        )
         |> Print.followedBy Print.linebreakIndented
         |> Print.followedBy
             (Print.exactly
@@ -690,6 +722,66 @@ printRustEnumDeclaration rustEnumType =
         |> Print.followedBy printExactlyCurlyClosing
 
 
+rustTypeIsDebug : RustType -> Bool
+rustTypeIsDebug rustType =
+    -- IGNORE TCO
+    case rustType of
+        RustTypeUnit ->
+            True
+
+        RustTypeVariable _ ->
+            True
+
+        RustTypeFunction _ ->
+            False
+
+        RustTypeBorrow borrowed ->
+            rustTypeIsDebug borrowed.type_
+
+        RustTypeTuple parts ->
+            (parts.part0 |> rustTypeIsDebug)
+                && (parts.part1 |> rustTypeIsDebug)
+                && (parts.part2Up |> List.all rustTypeIsDebug)
+
+        RustTypeConstruct typeConstruct ->
+            -- TODO typeConstruct.isDebug &&
+            typeConstruct.arguments
+                |> List.all rustTypeIsDebug
+
+        RustTypeRecord fields ->
+            fields |> fastDictAll (\_ fieldValue -> fieldValue |> rustTypeIsDebug)
+
+
+rustTypeIsPartialEq : RustType -> Bool
+rustTypeIsPartialEq rustType =
+    -- IGNORE TCO
+    case rustType of
+        RustTypeUnit ->
+            True
+
+        RustTypeVariable _ ->
+            True
+
+        RustTypeFunction _ ->
+            False
+
+        RustTypeBorrow borrowed ->
+            rustTypeIsPartialEq borrowed.type_
+
+        RustTypeTuple parts ->
+            (parts.part0 |> rustTypeIsPartialEq)
+                && (parts.part1 |> rustTypeIsPartialEq)
+                && (parts.part2Up |> List.all rustTypeIsPartialEq)
+
+        RustTypeConstruct typeConstruct ->
+            -- TODO typeConstruct.isPartialEq &&
+            typeConstruct.arguments
+                |> List.all rustTypeIsPartialEq
+
+        RustTypeRecord fields ->
+            fields |> fastDictAll (\_ fieldValue -> fieldValue |> rustTypeIsPartialEq)
+
+
 printRustStructDeclaration :
     { name : String
     , parameters : List String
@@ -697,7 +789,7 @@ printRustStructDeclaration :
     }
     -> Print
 printRustStructDeclaration rustEnumType =
-    Print.exactly "#[derive(Copy, Clone, Debug, Eq, PartialEq)]"
+    Print.exactly "#[derive(Copy, Clone, Debug, PartialEq)]"
         |> Print.followedBy Print.linebreakIndented
         |> Print.followedBy
             (Print.exactly
@@ -1267,6 +1359,9 @@ printRustTypeFunction typeFunction =
     (input0Print :: input1UpPrints)
         |> Print.listMapAndIntersperseAndFlatten
             (\typePrint ->
+                -- TODO switch to introducing type parameters with Fn constraints
+                --      because impl Trait is not allowed in the return type of `Fn` trait bounds
+                -- TODO switch to &'a dyn Fn in type alias, struct field value, variant value types
                 Print.exactly "impl Fn"
                     |> Print.followedBy
                         (Print.withIndentIncreasedBy 3 typePrint)
@@ -6351,7 +6446,11 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                              }
                                                                                 |> elmReferenceToPascalCaseRustName
                                                                             )
-                                                                            { lifetimeParameters = rustEnumDeclaration.lifetimeParameters
+                                                                            { lifetimeParameters =
+                                                                                (generatedLifetimeVariableName :: rustEnumDeclaration.lifetimeParameters)
+                                                                                    |> -- TODO optimize to sort |> unique
+                                                                                       FastSet.fromList
+                                                                                    |> FastSet.toList
                                                                             , parameters = rustEnumDeclaration.parameters
                                                                             , type_ =
                                                                                 RustTypeBorrow
@@ -6863,7 +6962,6 @@ valueOrFunctionDeclaration moduleContext syntaxDeclarationValueOrFunction =
     in
     case rustFullTypeAsFunction.inputs of
         [] ->
-            -- add allocator if result requires it
             Result.map
                 (\result ->
                     let
@@ -6872,7 +6970,15 @@ valueOrFunctionDeclaration moduleContext syntaxDeclarationValueOrFunction =
                             syntaxDeclarationValueOrFunction.type_
                                 |> type_ { typeAliasesInModule = typeAliasesInModule }
                     in
-                    if typeWithExpandedAliases |> inferredTypeIsConcreteRustType then
+                    if
+                        (rustResultType |> rustTypeIsConcrete)
+                            && (rustResultType
+                                    |> rustTypeUsedLifetimeVariables
+                                    |> FastSet.isEmpty
+                               )
+                    then
+                        -- TODO what if it internally references an allocator?
+                        -- add and reference a global bump allocator?
                         { parameters = Nothing
                         , resultType = rustResultType
                         , result = result
@@ -8524,9 +8630,25 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
                 }
 
         0 ->
+            -- TODO optimize checking
+            let
+                asRustType : RustType
+                asRustType =
+                    rustReference.originDeclarationTypeWithExpandedAliases
+                        |> type_
+                            { typeAliasesInModule =
+                                \moduleNameToAccess ->
+                                    context.moduleInfo
+                                        |> FastDict.get moduleNameToAccess
+                                        |> Maybe.map .typeAliases
+                            }
+            in
             if
-                rustReference.originDeclarationTypeWithExpandedAliases
-                    |> inferredTypeIsConcreteRustType
+                (asRustType |> rustTypeIsConcrete)
+                    && (asRustType
+                            |> rustTypeUsedLifetimeVariables
+                            |> FastSet.isEmpty
+                       )
             then
                 RustExpressionReference
                     { qualification = rustReference.qualification
@@ -8534,13 +8656,28 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
                     }
 
             else
+                -- TODO not if local fn
                 RustExpressionCall
                     { called =
                         RustExpressionReference
                             { qualification = rustReference.qualification
                             , name = rustReference.name
                             }
-                    , arguments = []
+                    , arguments =
+                        if
+                            (rustReference.qualification |> List.isEmpty)
+                                && (context.letDeclaredValueAndFunctionTypes
+                                        |> FastDict.member rustReference.name
+                                   )
+                        then
+                            []
+
+                        else
+                            [ RustExpressionReference
+                                { qualification = []
+                                , name = generatedAllocatorVariableName
+                                }
+                            ]
                     }
 
         _ ->
@@ -8874,21 +9011,21 @@ rustStatementAlterBindingNames variableNameChange rustStatement =
                         |> rustExpressionAlterBindingNames variableNameChange
                 }
 
-        RustStatementFuncDeclaration funcDeclaration ->
-            RustStatementFuncDeclaration
-                { name = funcDeclaration.name |> variableNameChange
+        RustStatementFnDeclaration fnDeclaration ->
+            RustStatementFnDeclaration
+                { name = fnDeclaration.name |> variableNameChange
                 , parameters =
-                    funcDeclaration.parameters
+                    fnDeclaration.parameters
                         |> List.map
                             (\parameter ->
                                 { type_ = parameter.type_
                                 , name = parameter.name |> variableNameChange
                                 }
                             )
-                , resultType = funcDeclaration.resultType
-                , introducedTypeParameters = funcDeclaration.introducedTypeParameters
+                , resultType = fnDeclaration.resultType
+                , introducedTypeParameters = fnDeclaration.introducedTypeParameters
                 , result =
-                    funcDeclaration.result
+                    fnDeclaration.result
                         |> rustExpressionAlterBindingNames variableNameChange
                 }
 
@@ -9684,14 +9821,14 @@ rustExpressionCallCondense call =
                                                     |> rustExpressionInnermostLambdaResult
                                          in
                                          (calledLambdaResultInnermostLambdaResult.result
-                                            |> rustExpressionUsesReferenceInLambdaOrFuncDeclaration
+                                            |> rustExpressionUsesReferenceInLambdaOrFnDeclaration
                                                 { qualification = [], name = parameter }
                                          )
                                             || (calledLambdaResultInnermostLambdaResult.statements
                                                     |> List.any
                                                         (\statement ->
                                                             statement
-                                                                |> rustStatementUsesReferenceInLambdaOrFuncDeclaration
+                                                                |> rustStatementUsesReferenceInLambdaOrFnDeclaration
                                                                     { qualification = [], name = parameter }
                                                         )
                                                )
@@ -9864,11 +10001,11 @@ rustExpressionCallCondense call =
                 }
 
 
-rustExpressionUsesReferenceInLambdaOrFuncDeclaration :
+rustExpressionUsesReferenceInLambdaOrFnDeclaration :
     { qualification : List String, name : String }
     -> RustExpression
     -> Bool
-rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck rustExpression =
+rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck rustExpression =
     -- IGNORE TCO
     case rustExpression of
         RustExpressionUnit ->
@@ -9893,26 +10030,26 @@ rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck rustExpres
             False
 
         RustExpressionNegateOperation inNegation ->
-            rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck
+            rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                 inNegation
 
         RustExpressionBorrow borrowed ->
-            rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck
+            rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                 borrowed
 
         RustExpressionRecordAccess recordAccess ->
-            rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck
+            rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                 recordAccess.record
 
         RustExpressionTuple parts ->
-            (parts.part0 |> rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck)
+            (parts.part0 |> rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck)
                 || (parts.part1
-                        |> rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck
+                        |> rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                    )
                 || (parts.part2Up
                         |> List.any
                             (\part ->
-                                part |> rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck
+                                part |> rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                             )
                    )
 
@@ -9921,7 +10058,7 @@ rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck rustExpres
                 |> List.any
                     (\element ->
                         element
-                            |> rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck
+                            |> rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                     )
 
         RustExpressionRecord fields ->
@@ -9929,16 +10066,16 @@ rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck rustExpres
                 |> fastDictAny
                     (\_ fieldValue ->
                         fieldValue
-                            |> rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck
+                            |> rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                     )
 
         RustExpressionCall call ->
-            (call.called |> rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck)
+            (call.called |> rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck)
                 || (call.arguments
                         |> List.any
                             (\argument ->
                                 argument
-                                    |> rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck
+                                    |> rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                             )
                    )
 
@@ -9947,33 +10084,33 @@ rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck rustExpres
                 >= 1
 
         RustExpressionIfElse ifElse ->
-            (ifElse.condition |> rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck)
+            (ifElse.condition |> rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck)
                 || (ifElse.onTrue
-                        |> rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck
+                        |> rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                    )
                 || (ifElse.onFalse
-                        |> rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck
+                        |> rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                    )
 
         RustExpressionMatch match ->
-            (match.matched |> rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck)
+            (match.matched |> rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck)
                 || (match.case0.result
-                        |> rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck
+                        |> rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                    )
                 || (match.case1Up
                         |> List.any
                             (\laterCase ->
                                 laterCase.result
-                                    |> rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck
+                                    |> rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                             )
                    )
 
         RustExpressionAfterStatement rustExpressionAfterStatement ->
             (rustExpressionAfterStatement.statement
-                |> rustStatementUsesReferenceInLambdaOrFuncDeclaration referenceToCheck
+                |> rustStatementUsesReferenceInLambdaOrFnDeclaration referenceToCheck
             )
                 || (rustExpressionAfterStatement.result
-                        |> rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck
+                        |> rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                    )
 
 
@@ -10054,64 +10191,64 @@ rustExpressionInnermostLambdaResult rustExpression =
             }
 
 
-rustStatementUsesReferenceInLambdaOrFuncDeclaration :
+rustStatementUsesReferenceInLambdaOrFnDeclaration :
     { qualification : List String, name : String }
     -> RustStatement
     -> Bool
-rustStatementUsesReferenceInLambdaOrFuncDeclaration referenceToCheck rustStatement =
+rustStatementUsesReferenceInLambdaOrFnDeclaration referenceToCheck rustStatement =
     -- IGNORE TCO
     case rustStatement of
         RustStatementLetDeclarationUninitialized _ ->
             False
 
-        RustStatementFuncDeclaration func ->
-            (func.result |> rustExpressionCountUsesOfReference referenceToCheck)
+        RustStatementFnDeclaration fn ->
+            (fn.result |> rustExpressionCountUsesOfReference referenceToCheck)
                 >= 1
 
         RustStatementLetDestructuring destructuring ->
-            rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck
+            rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                 destructuring.expression
 
         RustStatementVarDeclaration var ->
-            rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck
+            rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                 var.value
 
         RustStatementBindingAssignment assignment ->
-            rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck
+            rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                 assignment.assignedValue
 
         RustStatementRecordFieldAssignment assignment ->
-            rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck
+            rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                 assignment.assignedValue
 
         RustStatementLetDeclaration rustStatementLetDeclaration ->
-            rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck
+            rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                 rustStatementLetDeclaration.result
 
         RustStatementIfElse ifElse ->
-            (ifElse.condition |> rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck)
+            (ifElse.condition |> rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck)
                 || (ifElse.onTrue
                         |> List.any
                             (\statement ->
                                 statement
-                                    |> rustStatementUsesReferenceInLambdaOrFuncDeclaration referenceToCheck
+                                    |> rustStatementUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                             )
                    )
                 || (ifElse.onFalse
                         |> List.any
                             (\statement ->
                                 statement
-                                    |> rustStatementUsesReferenceInLambdaOrFuncDeclaration referenceToCheck
+                                    |> rustStatementUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                             )
                    )
 
         RustStatementMatch match ->
-            (match.matched |> rustExpressionUsesReferenceInLambdaOrFuncDeclaration referenceToCheck)
+            (match.matched |> rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck)
                 || (match.case0.statements
                         |> List.any
                             (\statement ->
                                 statement
-                                    |> rustStatementUsesReferenceInLambdaOrFuncDeclaration referenceToCheck
+                                    |> rustStatementUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                             )
                    )
                 || (match.case1Up
@@ -10121,7 +10258,7 @@ rustStatementUsesReferenceInLambdaOrFuncDeclaration referenceToCheck rustStateme
                                     |> List.any
                                         (\statement ->
                                             statement
-                                                |> rustStatementUsesReferenceInLambdaOrFuncDeclaration referenceToCheck
+                                                |> rustStatementUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                                         )
                             )
                    )
@@ -10325,8 +10462,8 @@ rustStatementCountUsesOfReference referenceToCountUsesOf rustStatement =
             rustExpressionCountUsesOfReference referenceToCountUsesOf
                 rustStatementLetDeclaration.result
 
-        RustStatementFuncDeclaration funcDeclaration ->
-            funcDeclaration.result
+        RustStatementFnDeclaration fnDeclaration ->
+            fnDeclaration.result
                 |> rustExpressionCountUsesOfReference referenceToCountUsesOf
 
         RustStatementVarDeclaration var ->
@@ -10590,14 +10727,14 @@ rustStatementSubstituteReferences referenceToExpression rustStatement =
                         |> rustExpressionSubstituteReferences referenceToExpression
                 }
 
-        RustStatementFuncDeclaration funcDeclaration ->
-            RustStatementFuncDeclaration
-                { name = funcDeclaration.name
-                , parameters = funcDeclaration.parameters
-                , resultType = funcDeclaration.resultType
-                , introducedTypeParameters = funcDeclaration.introducedTypeParameters
+        RustStatementFnDeclaration fnDeclaration ->
+            RustStatementFnDeclaration
+                { name = fnDeclaration.name
+                , parameters = fnDeclaration.parameters
+                , resultType = fnDeclaration.resultType
+                , introducedTypeParameters = fnDeclaration.introducedTypeParameters
                 , result =
-                    funcDeclaration.result
+                    fnDeclaration.result
                         |> rustExpressionSubstituteReferences referenceToExpression
                 }
 
@@ -10846,7 +10983,7 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
                                         |> rangeIncludesRange variableUseRange
                                    )
                         then
-                            variableName :: soFar
+                            (variableName |> toPascalCaseRustName) :: soFar
 
                         else
                             soFar
@@ -10889,7 +11026,7 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
                             }
 
                     else
-                        RustStatementFuncDeclaration
+                        RustStatementFnDeclaration
                             { name = rustName
                             , parameters = []
                             , result = result
@@ -10949,7 +11086,7 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
                                     )
                                     result
                     in
-                    RustStatementFuncDeclaration
+                    RustStatementFnDeclaration
                         { name = rustName
                         , parameters =
                             (syntaxLetDeclarationValueOrFunctionNode.declaration.parameters
@@ -11578,7 +11715,7 @@ rustFuncGenericsToString typeVariablesToDeclare =
                 ++ ">"
 
 
-printRustFuncDeclaration :
+printRustFnDeclaration :
     { name : String
     , parameters : List { pattern : RustPattern, type_ : RustType }
     , result : RustExpression
@@ -11586,7 +11723,7 @@ printRustFuncDeclaration :
     , resultType : RustType
     }
     -> Print
-printRustFuncDeclaration rustValueOrFunctionDeclaration =
+printRustFnDeclaration rustValueOrFunctionDeclaration =
     let
         resultTypePrint : Print
         resultTypePrint =
@@ -11849,7 +11986,7 @@ rustTypeIsConcrete rustType =
                 && (typeFunction.output |> rustTypeIsConcrete)
 
 
-printRustLocalFuncDeclaration :
+printRustLocalFnDeclaration :
     { name : String
     , parameters : List { name : String, type_ : RustType }
     , result : RustExpression
@@ -11857,7 +11994,7 @@ printRustLocalFuncDeclaration :
     , introducedTypeParameters : List String
     }
     -> Print
-printRustLocalFuncDeclaration rustValueOrFunctionDeclaration =
+printRustLocalFnDeclaration rustValueOrFunctionDeclaration =
     let
         resultTypePrint : Print
         resultTypePrint =
@@ -11968,6 +12105,7 @@ printRustLocalLetDeclaration rustLetDeclaration =
                         )
                 )
             )
+        |> Print.followedBy printExactlySemicolon
 
 
 printExactlySpaceEqualsLinebreakIndented : Print
@@ -14259,7 +14397,6 @@ printRustExpressionAfterStatement :
     -> Print
 printRustExpressionAfterStatement rustExpressionAfterStatement =
     printRustStatement rustExpressionAfterStatement.statement
-        |> Print.followedBy (Print.exactly ";")
         |> Print.followedBy Print.linebreakIndented
         |> Print.followedBy
             (printRustExpressionNotParenthesized
@@ -14532,8 +14669,8 @@ printRustStatement rustStatement =
         RustStatementLetDestructuring letDestructuring ->
             letDestructuring |> printRustLetDestructuring
 
-        RustStatementFuncDeclaration letValueOrFunction ->
-            letValueOrFunction |> printRustLocalFuncDeclaration
+        RustStatementFnDeclaration letValueOrFunction ->
+            letValueOrFunction |> printRustLocalFnDeclaration
 
         RustStatementLetDeclaration rustLetDeclaration ->
             rustLetDeclaration |> printRustLocalLetDeclaration
@@ -14858,7 +14995,7 @@ use bumpalo::Bump;
                 ++ (rustDeclarations.fns
                         |> fastDictMapAndToList
                             (\name valueOrFunctionInfo ->
-                                printRustFuncDeclaration
+                                printRustFnDeclaration
                                     { name = name
                                     , parameters = valueOrFunctionInfo.parameters
                                     , result = valueOrFunctionInfo.result

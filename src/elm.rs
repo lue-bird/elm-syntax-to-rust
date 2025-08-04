@@ -266,7 +266,7 @@ pub fn list_all<A: Copy, IsExpected: Fn(A) -> bool>(
 pub fn list_any<A: Copy, IsNeedle: Fn(A) -> bool>(is_needle: IsNeedle, list: ListList<A>) -> bool {
     list.iter().any(is_needle)
 }
-pub fn list_member<A: Copy + Eq>(needle: A, list: ListList<A>) -> bool {
+pub fn list_member<A: Copy + PartialEq>(needle: A, list: ListList<A>) -> bool {
     list.iter().any(|el| el == needle)
 }
 pub fn list_minimum<A: Copy + PartialOrd>(list: ListList<A>) -> Option<A> {
