@@ -28435,7 +28435,7 @@ impl<'a, A: Copy + std::fmt::Debug> std::fmt::Debug for ListListGuts<'a, A> {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum Never {}
+pub enum BasicsNever {}
 
 pub fn basics_identity<A>(a: A) -> A {
     a
@@ -28561,8 +28561,30 @@ pub fn basics_from_polar((radius, theta): (f64, f64)) -> (f64, f64) {
     (radius * (f64::cos(theta)), radius * (f64::sin(theta)))
 }
 
-pub fn basics_never<A>(never: Never) -> A {
+pub fn basics_never<A>(never: BasicsNever) -> A {
     match never {}
+}
+
+pub fn bitwise_complement(n: f64) -> f64 {
+    !(n as i32) as f64
+}
+pub fn bitwise_and(a: f64, b: f64) -> f64 {
+    std::ops::BitAnd::bitand(a as i32, b as i32) as f64
+}
+pub fn bitwise_or(a: f64, b: f64) -> f64 {
+    std::ops::BitOr::bitor(a as i32, b as i32) as f64
+}
+pub fn bitwise_xor(a: f64, b: f64) -> f64 {
+    std::ops::BitXor::bitxor(a as i32, b as i32) as f64
+}
+pub fn bitwise_shift_left_by(positions: f64, n: f64) -> f64 {
+    std::ops::Shl::shl(n as i32, positions as i32) as f64
+}
+pub fn bitwise_shift_right_by(positions: f64, n: f64) -> f64 {
+    std::ops::Shr::shr(n as i32, positions as i32) as f64
+}
+pub fn bitwise_shift_right_zf_by(positions: f64, n: f64) -> f64 {
+    std::ops::Shr::shr(n as u32, positions as u32) as f64
 }
 
 pub fn list_is_empty<A: Copy>(list: ListList<A>) -> bool {
