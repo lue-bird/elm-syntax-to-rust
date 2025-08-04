@@ -1,4 +1,6 @@
 #![allow(dead_code)]
+#![allow(non_shorthand_field_patterns)]
+#![allow(non_upper_case_globals)]
 use bumpalo::Bump;
 
 pub type ResultResult<X, A> = Result<A, X>;

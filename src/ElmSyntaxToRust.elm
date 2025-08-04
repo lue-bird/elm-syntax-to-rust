@@ -5051,7 +5051,7 @@ elmReferenceToSnakeCaseRustName reference =
             reference.name
 
         moduleOriginNotEmpty ->
-            moduleOriginNotEmpty
+            (moduleOriginNotEmpty |> String.replace "_" "0")
                 ++ "_"
                 ++ reference.name
     )
@@ -8387,8 +8387,7 @@ expression context expressionTypedNode =
                             (\syntaxLetDeclarationAndRange ->
                                 case syntaxLetDeclarationAndRange.declaration of
                                     ElmSyntaxTypeInfer.LetValueOrFunctionDeclaration syntaxLetValueOrFunction ->
-                                        FastSet.singleton
-                                            syntaxLetValueOrFunction.name
+                                        FastSet.singleton syntaxLetValueOrFunction.name
 
                                     ElmSyntaxTypeInfer.LetDestructuring syntaxLetDestructuring ->
                                         syntaxLetDestructuring.pattern
@@ -10866,17 +10865,17 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
         rustFullTypeAsFunction =
             typeWithExpandedAliases
                 |> inferredTypeExpandFunction
+
+        rustName : String
+        rustName =
+            syntaxLetDeclarationValueOrFunctionNode.declaration.name
+                |> toSnakeCaseRustName
     in
     case rustFullTypeAsFunction.inputs of
         [] ->
             Result.map
                 (\result ->
                     let
-                        rustName : String
-                        rustName =
-                            syntaxLetDeclarationValueOrFunctionNode.declaration.name
-                                |> toSnakeCaseRustName
-
                         rustResultType : RustType
                         rustResultType =
                             syntaxLetDeclarationValueOrFunctionNode.declaration.type_
@@ -10951,7 +10950,7 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
                                     result
                     in
                     RustStatementFuncDeclaration
-                        { name = syntaxLetDeclarationValueOrFunctionNode.declaration.name
+                        { name = rustName
                         , parameters =
                             (syntaxLetDeclarationValueOrFunctionNode.declaration.parameters
                                 |> List.indexedMap
@@ -11724,9 +11723,7 @@ printRustLetDeclaration rustLetDeclaration =
             resultTypePrint |> Print.lineSpread
     in
     Print.exactly
-        ("pub let "
-            ++ rustLetDeclaration.name
-        )
+        ("pub static " ++ rustLetDeclaration.name)
         |> Print.followedBy
             (Print.withIndentAtNextMultipleOf4
                 (printExactlyColon
@@ -11744,30 +11741,12 @@ printRustLetDeclaration rustLetDeclaration =
                         )
                 )
             )
+        |> Print.followedBy printExactlySemicolon
 
 
-printRustReturn : RustExpression -> Print
-printRustReturn rustResultExpression =
-    let
-        rustResultExpressionPrint : Print
-        rustResultExpressionPrint =
-            printRustExpressionNotParenthesized
-                rustResultExpression
-    in
-    printExactlyReturn
-        |> Print.followedBy
-            (Print.withIndentAtNextMultipleOf4
-                (Print.spaceOrLinebreakIndented
-                    (rustResultExpressionPrint |> Print.lineSpread)
-                    |> Print.followedBy
-                        rustResultExpressionPrint
-                )
-            )
-
-
-printExactlyReturn : Print
-printExactlyReturn =
-    Print.exactly "return"
+printExactlySemicolon : Print
+printExactlySemicolon =
+    Print.exactly ";"
 
 
 listFilledMapAndStringJoinWith : String -> (a -> String) -> a -> List a -> String
@@ -12692,7 +12671,9 @@ syntaxTypeApplySpecialization specialization syntaxType =
                                                 ( Elm.Syntax.Node.empty fieldName
                                                 , Elm.Syntax.Node.empty
                                                     (Elm.Syntax.TypeAnnotation.GenericType
-                                                        (variable ++ "_" ++ toSnakeCaseRustName fieldName)
+                                                        ((variable ++ "_" ++ fieldName)
+                                                            |> toSnakeCaseRustName
+                                                        )
                                                     )
                                                 )
                                         )
@@ -12785,7 +12766,9 @@ syntaxTypeApplySpecialization specialization syntaxType =
                                                             ( Elm.Syntax.Node.empty specializationFieldName
                                                             , Elm.Syntax.Node.empty
                                                                 (Elm.Syntax.TypeAnnotation.GenericType
-                                                                    (recordVariableName ++ "_" ++ toSnakeCaseRustName specializationFieldName)
+                                                                    ((recordVariableName ++ "_" ++ specializationFieldName)
+                                                                        |> toSnakeCaseRustName
+                                                                    )
                                                                 )
                                                             )
                                                         )
@@ -14279,7 +14262,7 @@ printRustExpressionAfterStatement rustExpressionAfterStatement =
         |> Print.followedBy (Print.exactly ";")
         |> Print.followedBy Print.linebreakIndented
         |> Print.followedBy
-            (printRustReturn
+            (printRustExpressionNotParenthesized
                 rustExpressionAfterStatement.result
             )
 
@@ -14769,6 +14752,7 @@ rustDeclarationsToModuleString rustDeclarations =
     in
     """#![allow(dead_code)]
 #![allow(non_shorthand_field_patterns)]
+#![allow(non_upper_case_globals)]
 
 use bumpalo::Bump;
 
