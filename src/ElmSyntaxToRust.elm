@@ -2170,74 +2170,6 @@ rustPatternListCons head tail =
         }
 
 
-inferredPatternIntroducedVariables :
-    ElmSyntaxTypeInfer.TypedNode
-        ElmSyntaxTypeInfer.Pattern
-    -> List { name : String, type_ : ElmSyntaxTypeInfer.Type }
-inferredPatternIntroducedVariables patternTypedNode =
-    -- IGNORE TCO
-    case patternTypedNode.value of
-        ElmSyntaxTypeInfer.PatternUnit ->
-            []
-
-        ElmSyntaxTypeInfer.PatternIgnored ->
-            []
-
-        ElmSyntaxTypeInfer.PatternInt _ ->
-            []
-
-        ElmSyntaxTypeInfer.PatternString _ ->
-            []
-
-        ElmSyntaxTypeInfer.PatternChar _ ->
-            []
-
-        ElmSyntaxTypeInfer.PatternVariable variable ->
-            [ { name = variable |> toSnakeCaseRustName
-              , type_ = patternTypedNode.type_
-              }
-            ]
-
-        ElmSyntaxTypeInfer.PatternRecord fieldVariables ->
-            fieldVariables
-                |> List.map
-                    (\fieldVariable ->
-                        { name = fieldVariable.value |> toSnakeCaseRustName
-                        , type_ = fieldVariable.type_
-                        }
-                    )
-
-        ElmSyntaxTypeInfer.PatternAs patternAs ->
-            { name = patternAs.variable.value |> toSnakeCaseRustName
-            , type_ = patternAs.variable.type_
-            }
-                :: (patternAs.pattern |> inferredPatternIntroducedVariables)
-
-        ElmSyntaxTypeInfer.PatternParenthesized inParens ->
-            inferredPatternIntroducedVariables inParens
-
-        ElmSyntaxTypeInfer.PatternListCons listCons ->
-            (listCons.head |> inferredPatternIntroducedVariables)
-                ++ (listCons.tail |> inferredPatternIntroducedVariables)
-
-        ElmSyntaxTypeInfer.PatternTuple parts ->
-            (parts.part0 |> inferredPatternIntroducedVariables)
-                ++ (parts.part1 |> inferredPatternIntroducedVariables)
-
-        ElmSyntaxTypeInfer.PatternTriple parts ->
-            (parts.part0 |> inferredPatternIntroducedVariables)
-                ++ (parts.part1 |> inferredPatternIntroducedVariables)
-                ++ (parts.part2 |> inferredPatternIntroducedVariables)
-
-        ElmSyntaxTypeInfer.PatternListExact elements ->
-            elements
-                |> List.concatMap inferredPatternIntroducedVariables
-
-        ElmSyntaxTypeInfer.PatternVariant variant ->
-            variant.values
-                |> List.concatMap inferredPatternIntroducedVariables
-
-
 pattern :
     ElmSyntaxTypeInfer.TypedNode
         ElmSyntaxTypeInfer.Pattern
@@ -6790,100 +6722,85 @@ portTypeSignifiesOutgoing (Elm.Syntax.Node.Node _ syntaxType) =
 patternTypedNodeIntroducedVariables :
     ElmSyntaxTypeInfer.TypedNode
         ElmSyntaxTypeInfer.Pattern
-    -> FastSet.Set String
+    -> FastDict.Dict String ElmSyntaxTypeInfer.Type
 patternTypedNodeIntroducedVariables patternTypedNode =
-    patternTypedNode.value
-        |> patternIntroducedVariables
-
-
-patternIntroducedVariables :
-    ElmSyntaxTypeInfer.Pattern
-    -> FastSet.Set String
-patternIntroducedVariables inferredPattern =
-    case inferredPattern of
+    -- IGNORE TCO
+    case patternTypedNode.value of
         ElmSyntaxTypeInfer.PatternIgnored ->
-            FastSet.empty
+            FastDict.empty
 
         ElmSyntaxTypeInfer.PatternUnit ->
-            FastSet.empty
+            FastDict.empty
 
         ElmSyntaxTypeInfer.PatternChar _ ->
-            FastSet.empty
+            FastDict.empty
 
         ElmSyntaxTypeInfer.PatternString _ ->
-            FastSet.empty
+            FastDict.empty
 
         ElmSyntaxTypeInfer.PatternInt _ ->
-            FastSet.empty
+            FastDict.empty
 
         ElmSyntaxTypeInfer.PatternVariable variable ->
-            FastSet.singleton variable
+            FastDict.singleton variable patternTypedNode.type_
 
         ElmSyntaxTypeInfer.PatternParenthesized inParens ->
-            patternTypedNodeIntroducedVariables
-                inParens
+            patternTypedNodeIntroducedVariables inParens
 
         ElmSyntaxTypeInfer.PatternAs patternAs ->
-            FastSet.insert patternAs.variable.value
+            FastDict.insert patternAs.variable.value
+                patternAs.variable.type_
                 (patternAs.pattern
                     |> patternTypedNodeIntroducedVariables
                 )
 
         ElmSyntaxTypeInfer.PatternTuple parts ->
-            FastSet.union
-                (parts.part0
-                    |> patternTypedNodeIntroducedVariables
-                )
-                (parts.part1
-                    |> patternTypedNodeIntroducedVariables
-                )
-
-        ElmSyntaxTypeInfer.PatternTriple parts ->
-            FastSet.union
-                (parts.part0
-                    |> patternTypedNodeIntroducedVariables
-                )
-                (FastSet.union
+            parts.part0
+                |> patternTypedNodeIntroducedVariables
+                |> FastDict.union
                     (parts.part1
                         |> patternTypedNodeIntroducedVariables
                     )
+
+        ElmSyntaxTypeInfer.PatternTriple parts ->
+            parts.part0
+                |> patternTypedNodeIntroducedVariables
+                |> FastDict.union
+                    (parts.part1
+                        |> patternTypedNodeIntroducedVariables
+                    )
+                |> FastDict.union
                     (parts.part2
                         |> patternTypedNodeIntroducedVariables
                     )
-                )
 
         ElmSyntaxTypeInfer.PatternListCons patternListCons ->
-            FastSet.union
-                (patternListCons.head
-                    |> patternTypedNodeIntroducedVariables
-                )
-                (patternListCons.tail
-                    |> patternTypedNodeIntroducedVariables
-                )
+            patternListCons.head
+                |> patternTypedNodeIntroducedVariables
+                |> FastDict.union
+                    (patternListCons.tail
+                        |> patternTypedNodeIntroducedVariables
+                    )
 
         ElmSyntaxTypeInfer.PatternListExact elements ->
             elements
-                |> listMapToFastSetsAndUnify
-                    (\element ->
-                        element
-                            |> patternTypedNodeIntroducedVariables
-                    )
+                |> listMapToFastDictsAndUnify
+                    patternTypedNodeIntroducedVariables
 
         ElmSyntaxTypeInfer.PatternVariant patternVariant ->
             patternVariant.values
-                |> listMapToFastSetsAndUnify
-                    (\value ->
-                        value
-                            |> patternTypedNodeIntroducedVariables
-                    )
+                |> listMapToFastDictsAndUnify
+                    patternTypedNodeIntroducedVariables
 
         ElmSyntaxTypeInfer.PatternRecord fields ->
             fields
                 |> List.foldl
                     (\fieldTypedNode soFar ->
-                        soFar |> FastSet.insert fieldTypedNode.value
+                        soFar
+                            |> FastDict.insert fieldTypedNode.value
+                                fieldTypedNode.type_
                     )
-                    FastSet.empty
+                    FastDict.empty
 
 
 moduleHeaderName : Elm.Syntax.Module.Module -> String
@@ -7021,7 +6938,7 @@ valueOrFunctionDeclaration moduleContext syntaxDeclarationValueOrFunction =
                 (syntaxDeclarationValueOrFunction.result
                     |> expression
                         { moduleInfo = moduleContext
-                        , variablesFromWithinDeclarationInScope = FastSet.empty
+                        , variablesFromWithinDeclarationInScope = FastDict.empty
                         , letDeclaredValueAndFunctionTypes = FastDict.empty
                         , path = []
                         }
@@ -7119,7 +7036,7 @@ valueOrFunctionDeclaration moduleContext syntaxDeclarationValueOrFunction =
                         { moduleInfo = moduleContext
                         , variablesFromWithinDeclarationInScope =
                             syntaxDeclarationValueOrFunction.parameters
-                                |> listMapToFastSetsAndUnify
+                                |> listMapToFastDictsAndUnify
                                     patternTypedNodeIntroducedVariables
                         , letDeclaredValueAndFunctionTypes = FastDict.empty
                         , path = [ "result" ]
@@ -7232,7 +7149,7 @@ rustKeywords =
 
 
 type alias ExpressionToRustContext =
-    { variablesFromWithinDeclarationInScope : FastSet.Set String
+    { variablesFromWithinDeclarationInScope : FastDict.Dict String ElmSyntaxTypeInfer.Type
     , letDeclaredValueAndFunctionTypes : FastDict.Dict String ElmSyntaxTypeInfer.Type
     , moduleInfo :
         FastDict.Dict
@@ -7867,7 +7784,7 @@ expression context expressionTypedNode =
                         "" ->
                             if
                                 context.variablesFromWithinDeclarationInScope
-                                    |> FastSet.member reference.name
+                                    |> FastDict.member reference.name
                             then
                                 Just (reference.name |> toSnakeCaseRustName)
 
@@ -8438,9 +8355,9 @@ expression context expressionTypedNode =
                         { moduleInfo = context.moduleInfo
                         , variablesFromWithinDeclarationInScope =
                             context.variablesFromWithinDeclarationInScope
-                                |> FastSet.union
+                                |> FastDict.union
                                     ((lambda.parameter0 :: lambda.parameter1Up)
-                                        |> listMapToFastSetsAndUnify
+                                        |> listMapToFastDictsAndUnify
                                             patternTypedNodeIntroducedVariables
                                     )
                         , letDeclaredValueAndFunctionTypes =
@@ -8511,19 +8428,18 @@ expression context expressionTypedNode =
 
         ElmSyntaxTypeInfer.ExpressionLetIn letIn ->
             let
-                letIntroducedBindings : FastSet.Set String
+                letIntroducedBindings : FastDict.Dict String ElmSyntaxTypeInfer.Type
                 letIntroducedBindings =
                     (letIn.declaration0 :: letIn.declaration1Up)
-                        |> listMapToFastSetsAndUnify
+                        |> listMapToFastDictsAndUnify
                             (\syntaxLetDeclarationAndRange ->
                                 case syntaxLetDeclarationAndRange.declaration of
                                     ElmSyntaxTypeInfer.LetValueOrFunctionDeclaration syntaxLetValueOrFunction ->
-                                        FastSet.singleton syntaxLetValueOrFunction.name
+                                        FastDict.singleton syntaxLetValueOrFunction.name
+                                            syntaxLetValueOrFunction.type_
 
                                     ElmSyntaxTypeInfer.LetDestructuring syntaxLetDestructuring ->
-                                        syntaxLetDestructuring.pattern
-                                            |> inferredPatternBindings
-                                            |> FastSet.fromList
+                                        syntaxLetDestructuring.pattern |> patternTypedNodeIntroducedVariables
                             )
 
                 letDeclaredValueAndFunctionTypesIncludingCurrentFromLets : FastDict.Dict String ElmSyntaxTypeInfer.Type
@@ -8568,7 +8484,7 @@ expression context expressionTypedNode =
                                     { moduleInfo = context.moduleInfo
                                     , variablesFromWithinDeclarationInScope =
                                         context.variablesFromWithinDeclarationInScope
-                                            |> FastSet.union
+                                            |> FastDict.union
                                                 letIntroducedBindings
                                     , letDeclaredValueAndFunctionTypes =
                                         letDeclaredValueAndFunctionTypesIncludingCurrentFromLets
@@ -8583,7 +8499,7 @@ expression context expressionTypedNode =
                         { moduleInfo = context.moduleInfo
                         , variablesFromWithinDeclarationInScope =
                             context.variablesFromWithinDeclarationInScope
-                                |> FastSet.union
+                                |> FastDict.union
                                     letIntroducedBindings
                         , letDeclaredValueAndFunctionTypes =
                             letDeclaredValueAndFunctionTypesIncludingCurrentFromLets
@@ -9542,10 +9458,10 @@ fsharpLetDeclarationsInsertFsharpLetDestructuring fsharpLetDestructuringToInsert
         variablesIntroducedInDestructuringPattern : FastSet.Set String
         variablesIntroducedInDestructuringPattern =
             fsharpLetDestructuringToInsert.declaration.pattern
-                |> inferredPatternIntroducedVariables
-                |> List.foldl
-                    (\variable soFar ->
-                        soFar |> FastSet.insert variable.name
+                |> patternTypedNodeIntroducedVariables
+                |> FastDict.foldl
+                    (\variable _ soFar ->
+                        soFar |> FastSet.insert variable
                     )
                     FastSet.empty
 
@@ -9746,65 +9662,6 @@ inferredTypeExpandFunction inferredType =
 
         typeNotFunction ->
             { inputs = [], output = typeNotFunction }
-
-
-{-| Recursively find all introduced variables
-in the [pattern](https://dark.elm.dmy.fr/packages/stil4m/elm-syntax/latest/Elm-Syntax-Pattern)
-(like `a` and `b` in `( Just a, { b } )`)
--}
-inferredPatternBindings :
-    ElmSyntaxTypeInfer.TypedNode ElmSyntaxTypeInfer.Pattern
-    -> List String
-inferredPatternBindings syntaxPattern =
-    -- IGNORE TCO
-    case syntaxPattern.value of
-        ElmSyntaxTypeInfer.PatternIgnored ->
-            []
-
-        ElmSyntaxTypeInfer.PatternUnit ->
-            []
-
-        ElmSyntaxTypeInfer.PatternChar _ ->
-            []
-
-        ElmSyntaxTypeInfer.PatternString _ ->
-            []
-
-        ElmSyntaxTypeInfer.PatternInt _ ->
-            []
-
-        ElmSyntaxTypeInfer.PatternVariable name ->
-            [ name ]
-
-        ElmSyntaxTypeInfer.PatternAs patternAs ->
-            patternAs.variable.value
-                :: (patternAs.pattern |> inferredPatternBindings)
-
-        ElmSyntaxTypeInfer.PatternParenthesized inParens ->
-            inParens |> inferredPatternBindings
-
-        ElmSyntaxTypeInfer.PatternListExact elements ->
-            elements |> List.concatMap inferredPatternBindings
-
-        ElmSyntaxTypeInfer.PatternTuple parts ->
-            (parts.part0 |> inferredPatternBindings)
-                ++ (parts.part1 |> inferredPatternBindings)
-
-        ElmSyntaxTypeInfer.PatternTriple parts ->
-            (parts.part0 |> inferredPatternBindings)
-                ++ (parts.part1 |> inferredPatternBindings)
-                ++ (parts.part2 |> inferredPatternBindings)
-
-        ElmSyntaxTypeInfer.PatternRecord fields ->
-            fields
-                |> List.map (\field -> field.value)
-
-        ElmSyntaxTypeInfer.PatternVariant patternVariant ->
-            patternVariant.values |> List.concatMap inferredPatternBindings
-
-        ElmSyntaxTypeInfer.PatternListCons listCons ->
-            (listCons.head |> inferredPatternBindings)
-                ++ (listCons.head |> inferredPatternBindings)
 
 
 listOfFastDictsUnify :
@@ -10874,16 +10731,16 @@ case_ :
             , result : RustExpression
             }
 case_ context syntaxCase =
-    let
-        casePatternAsRust :
-            { pattern : RustPattern
-            , introducedVariables : FastSet.Set String
-            }
-        casePatternAsRust =
-            syntaxCase.pattern |> pattern
-    in
     Result.map
         (\result ->
+            let
+                casePatternAsRust :
+                    { pattern : RustPattern
+                    , introducedVariables : FastSet.Set String
+                    }
+                casePatternAsRust =
+                    syntaxCase.pattern |> pattern
+            in
             { pattern = casePatternAsRust.pattern
             , result = result
             }
@@ -10893,8 +10750,8 @@ case_ context syntaxCase =
                 { moduleInfo = context.moduleInfo
                 , variablesFromWithinDeclarationInScope =
                     context.variablesFromWithinDeclarationInScope
-                        |> FastSet.union
-                            casePatternAsRust.introducedVariables
+                        |> FastDict.union
+                            (syntaxCase.pattern |> patternTypedNodeIntroducedVariables)
                 , letDeclaredValueAndFunctionTypes =
                     context.letDeclaredValueAndFunctionTypes
                 , path =
@@ -11162,9 +11019,9 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
                         { moduleInfo = context.moduleInfo
                         , variablesFromWithinDeclarationInScope =
                             context.variablesFromWithinDeclarationInScope
-                                |> FastSet.union
+                                |> FastDict.union
                                     (syntaxLetDeclarationValueOrFunctionNode.declaration.parameters
-                                        |> listMapToFastSetsAndUnify patternTypedNodeIntroducedVariables
+                                        |> listMapToFastDictsAndUnify patternTypedNodeIntroducedVariables
                                     )
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
