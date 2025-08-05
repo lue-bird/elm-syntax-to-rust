@@ -133,7 +133,7 @@ type RustExpression
         { parameters :
             List
                 { pattern : RustPattern
-                , type_ : RustType
+                , type_ : {- TODO Maybe -} RustType
                 }
         , result : RustExpression
         }
@@ -7011,8 +7011,19 @@ rustKeywords =
 
 
 type alias ExpressionToRustContext =
-    { variablesFromWithinDeclarationInScope : FastDict.Dict String ElmSyntaxTypeInfer.Type
-    , letDeclaredValueAndFunctionTypes : FastDict.Dict String ElmSyntaxTypeInfer.Type
+    { -- merge the next two?
+      variablesFromWithinDeclarationInScope : FastDict.Dict String ElmSyntaxTypeInfer.Type
+    , letDeclaredValueAndFunctionTypes :
+        FastDict.Dict
+            String
+            (Maybe
+                -- Nothing means value, Just means function
+                { capturedVariablesFromContextAsParameters :
+                    -- not including the always-present generated allocator
+                    List String
+                , parameters : List ElmSyntaxTypeInfer.Type
+                }
+            )
     , moduleInfo :
         FastDict.Dict
             {- module origin -} String
@@ -7640,229 +7651,286 @@ expression context expressionTypedNode =
 
         ElmSyntaxTypeInfer.ExpressionReference reference ->
             let
-                asVariableFromWithinDeclaration : Maybe String
-                asVariableFromWithinDeclaration =
+                isVariableFromWithinDeclaration : Bool
+                isVariableFromWithinDeclaration =
                     case reference.moduleOrigin of
                         "" ->
                             if
                                 context.variablesFromWithinDeclarationInScope
                                     |> FastDict.member reference.name
                             then
-                                Just (reference.name |> toSnakeCaseRustName)
+                                True
 
                             else
-                                Nothing
+                                False
 
                         _ ->
-                            Nothing
+                            False
             in
             Ok
-                (case asVariableFromWithinDeclaration of
-                    Just variableFromWithinDeclaration ->
-                        case
-                            context.letDeclaredValueAndFunctionTypes
-                                |> FastDict.get variableFromWithinDeclaration
-                        of
-                            Nothing ->
-                                -- variable from pattern
-                                RustExpressionReference
-                                    { qualification = []
-                                    , name = variableFromWithinDeclaration
-                                    }
+                (if isVariableFromWithinDeclaration then
+                    let
+                        rustExpressionReference : RustExpression
+                        rustExpressionReference =
+                            RustExpressionReference
+                                { qualification = []
+                                , name = reference.name |> toSnakeCaseRustName
+                                }
+                    in
+                    case
+                        context.letDeclaredValueAndFunctionTypes
+                            |> FastDict.get reference.name
+                    of
+                        Nothing ->
+                            -- variable from pattern
+                            rustExpressionReference
 
-                            Just letDeclaredValueOrFunctionType ->
-                                rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary context
-                                    { qualification = []
-                                    , name = variableFromWithinDeclaration
-                                    , requiresAllocator = False
-                                    , inferredType = expressionTypedNode.type_
-                                    , originDeclarationTypeWithExpandedAliases =
-                                        letDeclaredValueOrFunctionType
-                                            |> inferredTypeExpandInnerAliases
-                                                (\moduleName ->
-                                                    context.moduleInfo
-                                                        |> FastDict.get moduleName
-                                                        |> Maybe.map .typeAliases
-                                                )
-                                    }
+                        Just letDeclaredValueOrFunction ->
+                            case letDeclaredValueOrFunction of
+                                -- value
+                                Nothing ->
+                                    rustExpressionReference
 
-                    Nothing ->
-                        case context.moduleInfo |> FastDict.get reference.moduleOrigin of
-                            Nothing ->
-                                -- error?
-                                RustExpressionReference
-                                    { qualification = []
-                                    , name =
-                                        { moduleOrigin = reference.moduleOrigin
-                                        , name = reference.name
-                                        }
-                                            |> elmReferenceToSnakeCaseRustName
-                                    }
-
-                            Just referenceOriginModuleInfo ->
-                                if referenceOriginModuleInfo.portsOutgoing |> FastSet.member reference.name then
-                                    rustExpressionAlloc
-                                        (RustExpressionClosure
-                                            { parameters =
-                                                [ { pattern = RustPatternVariable "generated_value"
-                                                  , type_ =
-                                                        RustTypeConstruct
-                                                            { qualification = []
-                                                            , isFunction = False
-                                                            , name = "JsonEncodeValue"
-                                                            , arguments = []
-                                                            , lifetimeArguments = [ generatedLifetimeVariableName ]
-                                                            }
-                                                  }
-                                                ]
-                                            , result =
-                                                RustExpressionArrayLiteral
-                                                    [ RustExpressionCall
-                                                        { called =
-                                                            RustExpressionVariant
-                                                                { originTypeName = [ "PlatformCmdSingle" ]
-                                                                , name = "PortOutgoing"
-                                                                }
-                                                        , arguments =
-                                                            [ RustExpressionStringLiteral reference.name
-                                                            , RustExpressionReference
-                                                                { qualification = []
-                                                                , name = "generated_value"
-                                                                }
-                                                            ]
-                                                        }
-                                                    ]
-                                            }
-                                        )
-
-                                else if referenceOriginModuleInfo.portsIncoming |> FastSet.member reference.name then
-                                    rustExpressionAlloc
-                                        (RustExpressionClosure
-                                            { parameters =
-                                                [ { pattern = RustPatternVariable "generated_onValue"
-                                                  , type_ =
-                                                        case expressionTypedNode.type_ of
-                                                            ElmSyntaxTypeInfer.TypeNotVariable (ElmSyntaxTypeInfer.TypeFunction expressionTypeFunction) ->
-                                                                expressionTypeFunction.input
-                                                                    |> type_
-                                                                        { typeAliasesInModule =
-                                                                            \moduleName ->
-                                                                                context.moduleInfo
-                                                                                    |> FastDict.get moduleName
-                                                                                    |> Maybe.map .typeAliases
-                                                                        }
-
-                                                            _ ->
-                                                                -- error?
-                                                                RustTypeBorrow
-                                                                    { lifetimeVariable = Just generatedLifetimeVariableName
-                                                                    , type_ =
-                                                                        RustTypeFunction
-                                                                            { input =
-                                                                                [ RustTypeConstruct
-                                                                                    { qualification = []
-                                                                                    , isFunction = False
-                                                                                    , name = "JsonEncodeValue"
-                                                                                    , arguments = []
-                                                                                    , lifetimeArguments = [ generatedLifetimeVariableName ]
-                                                                                    }
-                                                                                ]
-                                                                            , output = RustTypeVariable "event"
+                                -- function
+                                Just functionParameters ->
+                                    functionParameters.parameters
+                                        |> List.indexedMap Tuple.pair
+                                        |> List.foldr
+                                            (\( parameterIndex, parameterType ) resultSoFar ->
+                                                rustExpressionAlloc
+                                                    (RustExpressionClosure
+                                                        { parameters =
+                                                            [ { pattern =
+                                                                    RustPatternVariable
+                                                                        (generatedParameterNameForIndexAtPath parameterIndex
+                                                                            context.path
+                                                                        )
+                                                              , type_ =
+                                                                    -- TODO avoid this type as it could contain
+                                                                    -- types specific to that fn
+                                                                    parameterType
+                                                                        |> type_
+                                                                            { typeAliasesInModule =
+                                                                                \moduleName ->
+                                                                                    context.moduleInfo
+                                                                                        |> FastDict.get moduleName
+                                                                                        |> Maybe.map .typeAliases
                                                                             }
-                                                                    }
-                                                  }
-                                                ]
-                                            , result =
-                                                RustExpressionArrayLiteral
-                                                    [ RustExpressionCall
-                                                        { called =
-                                                            RustExpressionVariant
-                                                                { originTypeName = [ "PlatformSubSingle" ]
-                                                                , name = "PortIncoming"
-                                                                }
-                                                        , arguments =
-                                                            [ RustExpressionStringLiteral reference.name
-                                                            , RustExpressionReference
-                                                                { qualification = []
-                                                                , name = "generated_onValue"
-                                                                }
+                                                              }
                                                             ]
+                                                        , result = resultSoFar
                                                         }
-                                                    ]
-                                            }
-                                        )
+                                                    )
+                                            )
+                                            (RustExpressionCall
+                                                { called = rustExpressionReference
+                                                , arguments =
+                                                    RustExpressionReference
+                                                        { qualification = []
+                                                        , name = generatedAllocatorVariableName
+                                                        }
+                                                        :: (functionParameters.capturedVariablesFromContextAsParameters
+                                                                |> List.map
+                                                                    (\capturedVariableFromContextAsParameters ->
+                                                                        RustExpressionReference
+                                                                            { qualification = []
+                                                                            , name =
+                                                                                capturedVariableFromContextAsParameters
+                                                                                    |> toSnakeCaseRustName
+                                                                            }
+                                                                    )
+                                                           )
+                                                        ++ (functionParameters.parameters
+                                                                |> List.indexedMap
+                                                                    (\parameterIndex _ ->
+                                                                        RustExpressionReference
+                                                                            { qualification = []
+                                                                            , name =
+                                                                                generatedParameterNameForIndexAtPath parameterIndex
+                                                                                    context.path
+                                                                            }
+                                                                    )
+                                                           )
+                                                }
+                                            )
 
-                                else
-                                    case
-                                        referenceOriginModuleInfo.valueAndFunctionAnnotations
-                                            |> FastDict.get reference.name
-                                    of
-                                        Nothing ->
-                                            RustExpressionReference
-                                                { qualification = []
-                                                , name =
+                 else
+                    case context.moduleInfo |> FastDict.get reference.moduleOrigin of
+                        Nothing ->
+                            -- error?
+                            RustExpressionReference
+                                { qualification = []
+                                , name =
+                                    { moduleOrigin = reference.moduleOrigin
+                                    , name = reference.name
+                                    }
+                                        |> elmReferenceToSnakeCaseRustName
+                                }
+
+                        Just referenceOriginModuleInfo ->
+                            if referenceOriginModuleInfo.portsOutgoing |> FastSet.member reference.name then
+                                rustExpressionAlloc
+                                    (RustExpressionClosure
+                                        { parameters =
+                                            [ { pattern = RustPatternVariable "generated_value"
+                                              , type_ =
+                                                    RustTypeConstruct
+                                                        { qualification = []
+                                                        , isFunction = False
+                                                        , name = "JsonEncodeValue"
+                                                        , arguments = []
+                                                        , lifetimeArguments = [ generatedLifetimeVariableName ]
+                                                        }
+                                              }
+                                            ]
+                                        , result =
+                                            RustExpressionArrayLiteral
+                                                [ RustExpressionCall
+                                                    { called =
+                                                        RustExpressionVariant
+                                                            { originTypeName = [ "PlatformCmdSingle" ]
+                                                            , name = "PortOutgoing"
+                                                            }
+                                                    , arguments =
+                                                        [ RustExpressionStringLiteral reference.name
+                                                        , RustExpressionReference
+                                                            { qualification = []
+                                                            , name = "generated_value"
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                        }
+                                    )
+
+                            else if referenceOriginModuleInfo.portsIncoming |> FastSet.member reference.name then
+                                rustExpressionAlloc
+                                    (RustExpressionClosure
+                                        { parameters =
+                                            [ { pattern = RustPatternVariable "generated_onValue"
+                                              , type_ =
+                                                    case expressionTypedNode.type_ of
+                                                        ElmSyntaxTypeInfer.TypeNotVariable (ElmSyntaxTypeInfer.TypeFunction expressionTypeFunction) ->
+                                                            expressionTypeFunction.input
+                                                                |> type_
+                                                                    { typeAliasesInModule =
+                                                                        \moduleName ->
+                                                                            context.moduleInfo
+                                                                                |> FastDict.get moduleName
+                                                                                |> Maybe.map .typeAliases
+                                                                    }
+
+                                                        _ ->
+                                                            -- error?
+                                                            RustTypeBorrow
+                                                                { lifetimeVariable = Just generatedLifetimeVariableName
+                                                                , type_ =
+                                                                    RustTypeFunction
+                                                                        { input =
+                                                                            [ RustTypeConstruct
+                                                                                { qualification = []
+                                                                                , isFunction = False
+                                                                                , name = "JsonEncodeValue"
+                                                                                , arguments = []
+                                                                                , lifetimeArguments = [ generatedLifetimeVariableName ]
+                                                                                }
+                                                                            ]
+                                                                        , output = RustTypeVariable "event"
+                                                                        }
+                                                                }
+                                              }
+                                            ]
+                                        , result =
+                                            RustExpressionArrayLiteral
+                                                [ RustExpressionCall
+                                                    { called =
+                                                        RustExpressionVariant
+                                                            { originTypeName = [ "PlatformSubSingle" ]
+                                                            , name = "PortIncoming"
+                                                            }
+                                                    , arguments =
+                                                        [ RustExpressionStringLiteral reference.name
+                                                        , RustExpressionReference
+                                                            { qualification = []
+                                                            , name = "generated_onValue"
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                        }
+                                    )
+
+                            else
+                                case
+                                    referenceOriginModuleInfo.valueAndFunctionAnnotations
+                                        |> FastDict.get reference.name
+                                of
+                                    Nothing ->
+                                        RustExpressionReference
+                                            { qualification = []
+                                            , name =
+                                                { moduleOrigin = reference.moduleOrigin
+                                                , name = reference.name
+                                                }
+                                                    |> elmReferenceToSnakeCaseRustName
+                                            }
+
+                                    Just originDeclarationType ->
+                                        let
+                                            typeAliasesInModule : String -> Maybe (FastDict.Dict String { parameters : List String, recordFieldOrder : Maybe (List String), type_ : ElmSyntaxTypeInfer.Type })
+                                            typeAliasesInModule moduleNameToAccess =
+                                                context.moduleInfo
+                                                    |> FastDict.get moduleNameToAccess
+                                                    |> Maybe.map .typeAliases
+
+                                            originDeclarationTypeWithExpandedAliases : ElmSyntaxTypeInfer.Type
+                                            originDeclarationTypeWithExpandedAliases =
+                                                originDeclarationType
+                                                    |> inferredTypeExpandInnerAliases
+                                                        typeAliasesInModule
+
+                                            rustReference :
+                                                { qualification : List String
+                                                , name : String
+                                                , requiresAllocator : Bool
+                                                }
+                                            rustReference =
+                                                case
                                                     { moduleOrigin = reference.moduleOrigin
                                                     , name = reference.name
+                                                    , type_ = expressionTypedNode.type_
                                                     }
-                                                        |> elmReferenceToSnakeCaseRustName
-                                                }
+                                                        |> referenceToCoreRust
+                                                of
+                                                    Just coreRustReference ->
+                                                        coreRustReference
 
-                                        Just originDeclarationType ->
-                                            let
-                                                typeAliasesInModule : String -> Maybe (FastDict.Dict String { parameters : List String, recordFieldOrder : Maybe (List String), type_ : ElmSyntaxTypeInfer.Type })
-                                                typeAliasesInModule moduleNameToAccess =
-                                                    context.moduleInfo
-                                                        |> FastDict.get moduleNameToAccess
-                                                        |> Maybe.map .typeAliases
-
-                                                originDeclarationTypeWithExpandedAliases : ElmSyntaxTypeInfer.Type
-                                                originDeclarationTypeWithExpandedAliases =
-                                                    originDeclarationType
-                                                        |> inferredTypeExpandInnerAliases
-                                                            typeAliasesInModule
-
-                                                rustReference :
-                                                    { qualification : List String
-                                                    , name : String
-                                                    , requiresAllocator : Bool
-                                                    }
-                                                rustReference =
-                                                    case
-                                                        { moduleOrigin = reference.moduleOrigin
-                                                        , name = reference.name
-                                                        , type_ = expressionTypedNode.type_
-                                                        }
-                                                            |> referenceToCoreRust
-                                                    of
-                                                        Just coreRustReference ->
-                                                            coreRustReference
-
-                                                        Nothing ->
-                                                            { qualification = []
-                                                            , name =
-                                                                { moduleOrigin = reference.moduleOrigin
-                                                                , name = reference.name
-                                                                }
-                                                                    |> elmReferenceToSnakeCaseRustName
-                                                                    |> rustNameWithSpecializedTypes
-                                                                        (inferredTypeSpecializedVariablesFrom
-                                                                            originDeclarationTypeWithExpandedAliases
-                                                                            (expressionTypedNode.type_
-                                                                                |> inferredTypeExpandInnerAliases
-                                                                                    typeAliasesInModule
-                                                                            )
-                                                                        )
-                                                            , requiresAllocator = True
+                                                    Nothing ->
+                                                        { qualification = []
+                                                        , name =
+                                                            { moduleOrigin = reference.moduleOrigin
+                                                            , name = reference.name
                                                             }
-                                            in
-                                            rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary context
-                                                { qualification = rustReference.qualification
-                                                , name = rustReference.name
-                                                , requiresAllocator = rustReference.requiresAllocator
-                                                , inferredType = expressionTypedNode.type_
-                                                , originDeclarationTypeWithExpandedAliases =
-                                                    originDeclarationTypeWithExpandedAliases
-                                                }
+                                                                |> elmReferenceToSnakeCaseRustName
+                                                                |> rustNameWithSpecializedTypes
+                                                                    (inferredTypeSpecializedVariablesFrom
+                                                                        originDeclarationTypeWithExpandedAliases
+                                                                        (expressionTypedNode.type_
+                                                                            |> inferredTypeExpandInnerAliases
+                                                                                typeAliasesInModule
+                                                                        )
+                                                                    )
+                                                        , requiresAllocator = True
+                                                        }
+                                        in
+                                        rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary context
+                                            { qualification = rustReference.qualification
+                                            , name = rustReference.name
+                                            , requiresAllocator = rustReference.requiresAllocator
+                                            , inferredType = expressionTypedNode.type_
+                                            , originDeclarationTypeWithExpandedAliases =
+                                                originDeclarationTypeWithExpandedAliases
+                                            }
                 )
 
         ElmSyntaxTypeInfer.ExpressionIfThenElse ifThenElse ->
@@ -8299,23 +8367,51 @@ expression context expressionTypedNode =
                                             syntaxLetValueOrFunction.type_
 
                                     ElmSyntaxTypeInfer.LetDestructuring syntaxLetDestructuring ->
-                                        syntaxLetDestructuring.pattern |> patternTypedNodeIntroducedVariables
+                                        syntaxLetDestructuring.pattern
+                                            |> patternTypedNodeIntroducedVariables
                             )
 
-                letDeclaredValueAndFunctionTypesIncludingCurrentFromLets : FastDict.Dict String ElmSyntaxTypeInfer.Type
-                letDeclaredValueAndFunctionTypesIncludingCurrentFromLets =
+                letDeclarationsSortedFromMostToLeastDependedOn : List { declaration : ElmSyntaxTypeInfer.LetDeclaration, range : Elm.Syntax.Range.Range }
+                letDeclarationsSortedFromMostToLeastDependedOn =
                     (letIn.declaration0 :: letIn.declaration1Up)
+                        |> inferredLetDeclarationNodesSortFromMostToLeastDependedOn
+
+                letDeclaredValueAndFunctionTypesIncludingFromContext :
+                    FastDict.Dict
+                        String
+                        (Maybe
+                            -- Nothing means value, Just means function
+                            { capturedVariablesFromContextAsParameters :
+                                -- not including the always-present generated allocator
+                                List String
+                            , parameters : List ElmSyntaxTypeInfer.Type
+                            }
+                        )
+                letDeclaredValueAndFunctionTypesIncludingFromContext =
+                    letDeclarationsSortedFromMostToLeastDependedOn
                         |> List.foldl
-                            (\declarationNode soFar ->
+                            (\declarationNode letDeclaredValueAndFunctionTypesIncludingFromContextSoFar ->
                                 case declarationNode.declaration of
                                     ElmSyntaxTypeInfer.LetDestructuring _ ->
-                                        soFar
+                                        letDeclaredValueAndFunctionTypesIncludingFromContextSoFar
 
                                     ElmSyntaxTypeInfer.LetValueOrFunctionDeclaration inferredLetValueOrFunction ->
-                                        soFar
+                                        letDeclaredValueAndFunctionTypesIncludingFromContextSoFar
                                             |> FastDict.insert
                                                 inferredLetValueOrFunction.name
-                                                inferredLetValueOrFunction.type_
+                                                (letValueOrFunctionDeclarationToRustKindAndParameters
+                                                    { moduleInfo = context.moduleInfo
+                                                    , variablesFromWithinDeclarationInScope =
+                                                        context.variablesFromWithinDeclarationInScope
+                                                            |> FastDict.union
+                                                                letIntroducedBindings
+                                                    , letDeclaredValueAndFunctionTypes =
+                                                        letDeclaredValueAndFunctionTypesIncludingFromContextSoFar
+                                                    }
+                                                    { range = declarationNode.range
+                                                    , declaration = inferredLetValueOrFunction
+                                                    }
+                                                )
                             )
                             context.letDeclaredValueAndFunctionTypes
             in
@@ -8331,8 +8427,7 @@ expression context expressionTypedNode =
                             )
                             result
                 )
-                ((letIn.declaration0 :: letIn.declaration1Up)
-                    |> inferredLetDeclarationNodesSortFromMostToLeastDependedOn
+                (letDeclarationsSortedFromMostToLeastDependedOn
                     |> List.indexedMap
                         (\letDeclarationIndex laterDeclaration ->
                             ( letDeclarationIndex, laterDeclaration )
@@ -8347,7 +8442,7 @@ expression context expressionTypedNode =
                                             |> FastDict.union
                                                 letIntroducedBindings
                                     , letDeclaredValueAndFunctionTypes =
-                                        letDeclaredValueAndFunctionTypesIncludingCurrentFromLets
+                                        letDeclaredValueAndFunctionTypesIncludingFromContext
                                     , path =
                                         ("let_declaration" ++ (letDeclarationIndex |> String.fromInt))
                                             :: context.path
@@ -8362,7 +8457,7 @@ expression context expressionTypedNode =
                                 |> FastDict.union
                                     letIntroducedBindings
                         , letDeclaredValueAndFunctionTypes =
-                            letDeclaredValueAndFunctionTypesIncludingCurrentFromLets
+                            letDeclaredValueAndFunctionTypesIncludingFromContext
                         , path = "let_result" :: context.path
                         }
                 )
@@ -10653,6 +10748,147 @@ letDeclaration context syntaxLetDeclarationNode =
                 |> letValueOrFunctionDeclaration context
 
 
+letValueOrFunctionDeclarationToRustKindAndParameters :
+    { variablesFromWithinDeclarationInScope : FastDict.Dict String ElmSyntaxTypeInfer.Type
+    , letDeclaredValueAndFunctionTypes :
+        FastDict.Dict
+            String
+            (Maybe
+                -- Nothing means value, Just means function
+                { capturedVariablesFromContextAsParameters :
+                    -- not including the always-present generated allocator
+                    List String
+                , parameters : List ElmSyntaxTypeInfer.Type
+                }
+            )
+    , moduleInfo :
+        FastDict.Dict
+            {- module origin -} String
+            { portsIncoming : FastSet.Set String
+            , portsOutgoing : FastSet.Set String
+            , -- TODO rename to valueAndFunctionTypesWithExpandedAliases
+              valueAndFunctionAnnotations :
+                FastDict.Dict
+                    String
+                    ElmSyntaxTypeInfer.Type
+            , typeAliases :
+                FastDict.Dict
+                    String
+                    { parameters : List String
+                    , recordFieldOrder : Maybe (List String)
+                    , type_ : ElmSyntaxTypeInfer.Type
+                    }
+            }
+    }
+    ->
+        { range : Elm.Syntax.Range.Range
+        , declaration :
+            { signature :
+                Maybe
+                    { range : Elm.Syntax.Range.Range
+                    , nameRange : Elm.Syntax.Range.Range
+                    , annotationType : Elm.Syntax.TypeAnnotation.TypeAnnotation
+                    , annotationTypeRange : Elm.Syntax.Range.Range
+                    }
+            , nameRange : Elm.Syntax.Range.Range
+            , name : String
+            , parameters : List (ElmSyntaxTypeInfer.TypedNode ElmSyntaxTypeInfer.Pattern)
+            , result : ElmSyntaxTypeInfer.TypedNode ElmSyntaxTypeInfer.Expression
+            , type_ : ElmSyntaxTypeInfer.Type
+            }
+        }
+    ->
+        Maybe
+            -- Nothing means value, Just means function
+            { capturedVariablesFromContextAsParameters :
+                -- not including the always-present generated allocator
+                List String
+            , parameters : List ElmSyntaxTypeInfer.Type
+            }
+letValueOrFunctionDeclarationToRustKindAndParameters context inferredLetDeclarationValueOrFunctionNode =
+    let
+        introducedTypeParameters : List String
+        introducedTypeParameters =
+            inferredLetDeclarationValueOrFunctionNode.declaration.type_
+                |> inferredTypeContainedVariables
+                |> FastDict.foldl
+                    (\variableName variableUseRange soFar ->
+                        if
+                            Basics.not (variableName |> String.startsWith "number")
+                                && (inferredLetDeclarationValueOrFunctionNode.range
+                                        |> rangeIncludesRange variableUseRange
+                                   )
+                        then
+                            (variableName |> toPascalCaseRustName) :: soFar
+
+                        else
+                            soFar
+                    )
+                    []
+
+        typeWithExpandedAliases : ElmSyntaxTypeInfer.Type
+        typeWithExpandedAliases =
+            inferredLetDeclarationValueOrFunctionNode.declaration.type_
+                |> inferredTypeExpandInnerAliases
+                    (\moduleNameToAccess ->
+                        context.moduleInfo
+                            |> FastDict.get moduleNameToAccess
+                            |> Maybe.map .typeAliases
+                    )
+
+        rustFullTypeAsFunction :
+            { inputs : List ElmSyntaxTypeInfer.Type
+            , output : ElmSyntaxTypeInfer.Type
+            }
+        rustFullTypeAsFunction =
+            typeWithExpandedAliases
+                |> inferredTypeExpandFunction
+    in
+    if
+        (rustFullTypeAsFunction.inputs |> List.isEmpty)
+            && (introducedTypeParameters |> List.isEmpty)
+    then
+        -- using lifetime parameters from the outer scope _is_ allowed
+        Nothing
+
+    else
+        let
+            syntaxParameterCount : Int
+            syntaxParameterCount =
+                inferredLetDeclarationValueOrFunctionNode.declaration.parameters
+                    |> List.length
+
+            additionalGeneratedParameters : List ElmSyntaxTypeInfer.Type
+            additionalGeneratedParameters =
+                rustFullTypeAsFunction.inputs
+                    |> List.drop syntaxParameterCount
+
+            parameters : List ElmSyntaxTypeInfer.Type
+            parameters =
+                (inferredLetDeclarationValueOrFunctionNode.declaration.parameters
+                    |> List.map
+                        (\parameter ->
+                            parameter.type_
+                        )
+                )
+                    ++ additionalGeneratedParameters
+        in
+        Just
+            { capturedVariablesFromContextAsParameters =
+                inferredExpressionCapturedVariablesFromContext
+                    { bindings =
+                        context.variablesFromWithinDeclarationInScope
+                            |> FastDict.remove inferredLetDeclarationValueOrFunctionNode.declaration.name
+                    , letDeclaredValueAndFunctionTypes =
+                        context.letDeclaredValueAndFunctionTypes
+                            |> FastDict.remove inferredLetDeclarationValueOrFunctionNode.declaration.name
+                    }
+                    inferredLetDeclarationValueOrFunctionNode.declaration.result.value
+                    |> List.map .name
+            , parameters = parameters
+            }
+
+
 letValueOrFunctionDeclaration :
     ExpressionToRustContext
     ->
@@ -10673,7 +10909,7 @@ letValueOrFunctionDeclaration :
             }
         }
     -> Result String RustStatement
-letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
+letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode =
     let
         typeAliasesInModule : String -> Maybe (FastDict.Dict String { parameters : List String, recordFieldOrder : Maybe (List String), type_ : ElmSyntaxTypeInfer.Type })
         typeAliasesInModule moduleNameToAccess =
@@ -10683,13 +10919,13 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
 
         introducedTypeParameters : List String
         introducedTypeParameters =
-            syntaxLetDeclarationValueOrFunctionNode.declaration.type_
+            inferredLetDeclarationValueOrFunctionNode.declaration.type_
                 |> inferredTypeContainedVariables
                 |> FastDict.foldl
                     (\variableName variableUseRange soFar ->
                         if
                             Basics.not (variableName |> String.startsWith "number")
-                                && (syntaxLetDeclarationValueOrFunctionNode.range
+                                && (inferredLetDeclarationValueOrFunctionNode.range
                                         |> rangeIncludesRange variableUseRange
                                    )
                         then
@@ -10702,7 +10938,7 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
 
         typeWithExpandedAliases : ElmSyntaxTypeInfer.Type
         typeWithExpandedAliases =
-            syntaxLetDeclarationValueOrFunctionNode.declaration.type_
+            inferredLetDeclarationValueOrFunctionNode.declaration.type_
                 |> inferredTypeExpandInnerAliases typeAliasesInModule
 
         rustFullTypeAsFunction :
@@ -10715,7 +10951,7 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
 
         rustName : String
         rustName =
-            syntaxLetDeclarationValueOrFunctionNode.declaration.name
+            inferredLetDeclarationValueOrFunctionNode.declaration.name
                 |> toSnakeCaseRustName
     in
     if
@@ -10728,12 +10964,12 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
                 RustStatementLetDeclaration
                     { name = rustName
                     , resultType =
-                        syntaxLetDeclarationValueOrFunctionNode.declaration.type_
+                        inferredLetDeclarationValueOrFunctionNode.declaration.type_
                             |> type_ { typeAliasesInModule = typeAliasesInModule }
                     , result = result
                     }
             )
-            (syntaxLetDeclarationValueOrFunctionNode.declaration.result
+            (inferredLetDeclarationValueOrFunctionNode.declaration.result
                 |> expression
                     { moduleInfo = context.moduleInfo
                     , path = context.path
@@ -10750,7 +10986,7 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
                 let
                     syntaxParameterCount : Int
                     syntaxParameterCount =
-                        syntaxLetDeclarationValueOrFunctionNode.declaration.parameters
+                        inferredLetDeclarationValueOrFunctionNode.declaration.parameters
                             |> List.length
 
                     additionalGeneratedParameters : List { name : String, type_ : RustType }
@@ -10805,14 +11041,29 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
                                 , type_ = rustTypeConstructBumpaloBump
                                 }
                         }
-                            :: inferredExpressionCapturedVariablesFromContextToRustParameters
-                                { bindings = context.variablesFromWithinDeclarationInScope
-                                , letDeclaredValueAndFunctionTypes =
-                                    context.letDeclaredValueAndFunctionTypes
-                                , typeAliasesInModule = typeAliasesInModule
-                                }
-                                syntaxLetDeclarationValueOrFunctionNode.declaration.result.value
-                            ++ (syntaxLetDeclarationValueOrFunctionNode.declaration.parameters
+                            :: (inferredExpressionCapturedVariablesFromContext
+                                    { bindings =
+                                        context.variablesFromWithinDeclarationInScope
+                                            |> FastDict.remove inferredLetDeclarationValueOrFunctionNode.declaration.name
+                                    , letDeclaredValueAndFunctionTypes =
+                                        context.letDeclaredValueAndFunctionTypes
+                                            |> FastDict.remove inferredLetDeclarationValueOrFunctionNode.declaration.name
+                                    }
+                                    inferredLetDeclarationValueOrFunctionNode.declaration.result.value
+                                    |> List.map
+                                        (\parameter ->
+                                            { pattern =
+                                                RustPatternVariable
+                                                    (parameter.name
+                                                        |> toSnakeCaseRustName
+                                                    )
+                                            , type_ =
+                                                parameter.type_
+                                                    |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                            }
+                                        )
+                               )
+                            ++ (inferredLetDeclarationValueOrFunctionNode.declaration.parameters
                                     |> List.map
                                         (\parameter ->
                                             { pattern = pattern parameter
@@ -10856,13 +11107,13 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
                     , result = resultWithAdditionalParameters
                     }
             )
-            (syntaxLetDeclarationValueOrFunctionNode.declaration.result
+            (inferredLetDeclarationValueOrFunctionNode.declaration.result
                 |> expression
                     { moduleInfo = context.moduleInfo
                     , variablesFromWithinDeclarationInScope =
                         context.variablesFromWithinDeclarationInScope
                             |> FastDict.union
-                                (syntaxLetDeclarationValueOrFunctionNode.declaration.parameters
+                                (inferredLetDeclarationValueOrFunctionNode.declaration.parameters
                                     |> listMapToFastDictsAndUnify patternTypedNodeIntroducedVariables
                                 )
                     , letDeclaredValueAndFunctionTypes =
@@ -10872,25 +11123,23 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
             )
 
 
-inferredExpressionCapturedVariablesFromContextToRustParameters :
+inferredExpressionCapturedVariablesFromContext :
     { bindings : FastDict.Dict String ElmSyntaxTypeInfer.Type
     , letDeclaredValueAndFunctionTypes :
-        FastDict.Dict String ElmSyntaxTypeInfer.Type
-    , typeAliasesInModule :
-        String
-        ->
-            Maybe
-                (FastDict.Dict
-                    String
-                    { parameters : List String
-                    , recordFieldOrder : Maybe (List String)
-                    , type_ : ElmSyntaxTypeInfer.Type
-                    }
-                )
+        FastDict.Dict
+            String
+            (Maybe
+                -- Nothing means value, Just means function
+                { capturedVariablesFromContextAsParameters :
+                    -- not including the always-present generated allocator
+                    List String
+                , parameters : List ElmSyntaxTypeInfer.Type
+                }
+            )
     }
     -> ElmSyntaxTypeInfer.Expression
-    -> List { pattern : RustPattern, type_ : RustType }
-inferredExpressionCapturedVariablesFromContextToRustParameters context inferredExpression =
+    -> List { name : String, type_ : ElmSyntaxTypeInfer.Type }
+inferredExpressionCapturedVariablesFromContext context inferredExpression =
     let
         resultUsedLocalReferences : FastSet.Set String
         resultUsedLocalReferences =
@@ -10911,31 +11160,19 @@ inferredExpressionCapturedVariablesFromContextToRustParameters context inferredE
                                 Nothing ->
                                     True
 
-                                Just letValueOrFunctionType ->
-                                    (letValueOrFunctionType
-                                        |> inferredTypeIsConcreteRustType
-                                    )
-                                        && (case
-                                                letValueOrFunctionType
-                                                    |> inferredTypeToFunction
-                                                        context.typeAliasesInModule
-                                            of
-                                                Just _ ->
-                                                    False
+                                Just letValueOrFunction ->
+                                    case letValueOrFunction of
+                                        -- value
+                                        Nothing ->
+                                            True
 
-                                                Nothing ->
-                                                    True
-                                           )
+                                        -- function
+                                        Just _ ->
+                                            False
                            )
                 then
-                    { pattern =
-                        RustPatternVariable
-                            (variableFromWithinDeclarationInScope
-                                |> toSnakeCaseRustName
-                            )
-                    , type_ =
-                        variableFromWithinDeclarationInScopeType
-                            |> type_ { typeAliasesInModule = context.typeAliasesInModule }
+                    { name = variableFromWithinDeclarationInScope
+                    , type_ = variableFromWithinDeclarationInScopeType
                     }
                         :: soFar
 

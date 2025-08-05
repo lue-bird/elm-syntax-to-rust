@@ -1,10 +1,9 @@
-> ⚠️ *very early* stage; likely has many situations it doesn't account for.
+> ⚠️ *pretty early* stage; likely has many situations it doesn't account for.
 > I'm also just learning rust so any tips (e.g. in issues) are appreciated
 >
 > TODO
-> - local functions capture all used context but on use these context variables are not provided, yet. Steps: add captured context to values of `letDeclaredValueAndFunctionTypes` in `ExpressionToRustContext`
-> - if lambda is called with a function, always inline that function
 > - figure out why `alloc(|a| alloc(|b| ...))` fails with `&mut` not allowed, borrow here
+> - if lambda is called with a function, always inline that function
 
 Print [`elm-syntax`](https://dark.elm.dmy.fr/packages/stil4m/elm-syntax/latest/) declarations as [rust](https://www.rust-lang.org/) code.
 To try it out, you can
