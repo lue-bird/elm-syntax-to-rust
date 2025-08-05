@@ -2,7 +2,7 @@
 > I'm also just learning rust so any tips (e.g. in issues) are appreciated
 >
 > TODO
-> - local functions should instead list all captured context (almost always including `generated_allocator`) and on use also provide that context. This also helps with allowing recursive let function declarations because closures (which can in fact capture context) cannot recurse (*easily)
+> - local functions capture all used context but on use these context variables are not provided, yet. Steps: add captured context to values of `letDeclaredValueAndFunctionTypes` in `ExpressionToRustContext`
 > - if lambda is called with a function, always inline that function
 > - figure out why `alloc(|a| alloc(|b| ...))` fails with `&mut` not allowed, borrow here
 

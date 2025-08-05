@@ -180,7 +180,8 @@ type RustStatement
         , parameters : List { pattern : RustPattern, type_ : RustType }
         , result : RustExpression
         , resultType : RustType
-        , introducedTypeParameters : List String
+        , typeParameters : List String
+        , lifetimeParameters : List String
         }
     | RustStatementLetDeclarationUninitialized
         { name : String
@@ -8850,7 +8851,8 @@ rustStatementAlterBindingNames variableNameChange rustStatement =
                                 }
                             )
                 , resultType = fnDeclaration.resultType
-                , introducedTypeParameters = fnDeclaration.introducedTypeParameters
+                , lifetimeParameters = fnDeclaration.lifetimeParameters
+                , typeParameters = fnDeclaration.typeParameters
                 , result =
                     fnDeclaration.result
                         |> rustExpressionAlterBindingNames variableNameChange
@@ -10509,7 +10511,8 @@ rustStatementSubstituteReferences referenceToExpression rustStatement =
                 { name = fnDeclaration.name
                 , parameters = fnDeclaration.parameters
                 , resultType = fnDeclaration.resultType
-                , introducedTypeParameters = fnDeclaration.introducedTypeParameters
+                , lifetimeParameters = fnDeclaration.lifetimeParameters
+                , typeParameters = fnDeclaration.typeParameters
                 , result =
                     fnDeclaration.result
                         |> rustExpressionSubstituteReferences referenceToExpression
@@ -10715,168 +10718,231 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
             syntaxLetDeclarationValueOrFunctionNode.declaration.name
                 |> toSnakeCaseRustName
     in
-    case rustFullTypeAsFunction.inputs of
-        [] ->
-            Result.map
-                (\result ->
-                    let
-                        rustResultType : RustType
-                        rustResultType =
-                            syntaxLetDeclarationValueOrFunctionNode.declaration.type_
-                                |> type_ { typeAliasesInModule = typeAliasesInModule }
-                    in
-                    case introducedTypeParameters of
-                        [] ->
-                            RustStatementLetDeclaration
-                                { name = rustName
-                                , resultType = rustResultType
-                                , result = result
-                                }
+    if
+        (rustFullTypeAsFunction.inputs |> List.isEmpty)
+            && (introducedTypeParameters |> List.isEmpty)
+    then
+        -- using lifetime parameters from the outer scope _is_ allowed
+        Result.map
+            (\result ->
+                RustStatementLetDeclaration
+                    { name = rustName
+                    , resultType =
+                        syntaxLetDeclarationValueOrFunctionNode.declaration.type_
+                            |> type_ { typeAliasesInModule = typeAliasesInModule }
+                    , result = result
+                    }
+            )
+            (syntaxLetDeclarationValueOrFunctionNode.declaration.result
+                |> expression
+                    { moduleInfo = context.moduleInfo
+                    , path = context.path
+                    , letDeclaredValueAndFunctionTypes =
+                        context.letDeclaredValueAndFunctionTypes
+                    , variablesFromWithinDeclarationInScope =
+                        context.variablesFromWithinDeclarationInScope
+                    }
+            )
 
-                        introducedTypeParameter0 :: introducedTypeParameter1Up ->
-                            -- happens with e.g. let empty = Dict.empty
-                            -- does that actually solve it?
-                            RustStatementFnDeclaration
-                                { name = rustName
-                                , parameters = []
-                                , result = result
-                                , resultType = rustResultType
-                                , introducedTypeParameters =
-                                    introducedTypeParameter0 :: introducedTypeParameter1Up
-                                }
-                )
-                (syntaxLetDeclarationValueOrFunctionNode.declaration.result
-                    |> expression
-                        { moduleInfo = context.moduleInfo
-                        , path = context.path
-                        , letDeclaredValueAndFunctionTypes =
-                            context.letDeclaredValueAndFunctionTypes
-                        , variablesFromWithinDeclarationInScope =
-                            context.variablesFromWithinDeclarationInScope
-                        }
-                )
+    else
+        Result.map
+            (\result ->
+                let
+                    syntaxParameterCount : Int
+                    syntaxParameterCount =
+                        syntaxLetDeclarationValueOrFunctionNode.declaration.parameters
+                            |> List.length
 
-        _ :: _ ->
-            Result.map
-                (\result ->
-                    let
-                        syntaxParameterCount : Int
-                        syntaxParameterCount =
-                            syntaxLetDeclarationValueOrFunctionNode.declaration.parameters
-                                |> List.length
-
-                        additionalGeneratedParameters : List { name : String, type_ : RustType }
-                        additionalGeneratedParameters =
-                            rustFullTypeAsFunction.inputs
-                                |> List.drop syntaxParameterCount
-                                |> List.indexedMap
-                                    (\additionalParameterIndex additionalParameterInferredType ->
-                                        { name =
-                                            generatedParameterNameForIndexAtPath
-                                                (syntaxParameterCount + additionalParameterIndex)
-                                                context.path
-                                        , type_ =
-                                            additionalParameterInferredType
-                                                |> type_ { typeAliasesInModule = typeAliasesInModule }
-                                        }
-                                    )
-
-                        resultWithAdditionalParameters : RustExpression
-                        resultWithAdditionalParameters =
-                            additionalGeneratedParameters
-                                |> List.foldl
-                                    (\additionalGeneratedParameter soFar ->
-                                        rustExpressionCallCondense
-                                            { called = soFar
-                                            , argument =
-                                                RustExpressionReference
-                                                    { qualification = []
-                                                    , name = additionalGeneratedParameter.name
-                                                    }
-                                            }
-                                    )
-                                    result
-
-                        parameters : List { pattern : RustPattern, type_ : RustType }
-                        parameters =
-                            (syntaxLetDeclarationValueOrFunctionNode.declaration.parameters
-                                |> List.map
-                                    (\parameter ->
-                                        { pattern = pattern parameter
-                                        , type_ =
-                                            parameter.type_
-                                                |> type_ { typeAliasesInModule = typeAliasesInModule }
-                                        }
-                                    )
-                            )
-                                ++ (additionalGeneratedParameters
-                                        |> List.map
-                                            (\generatedAdditionalParameter ->
-                                                { type_ = generatedAdditionalParameter.type_
-                                                , pattern =
-                                                    RustPatternVariable generatedAdditionalParameter.name
-                                                }
-                                            )
-                                   )
-
-                        resultType : RustType
-                        resultType =
-                            rustFullTypeAsFunction.output
-                                |> type_ { typeAliasesInModule = typeAliasesInModule }
-
-                        closureType : RustType
-                        closureType =
-                            RustTypeBorrow
-                                { lifetimeVariable = Just generatedLifetimeVariableName
-                                , type_ =
-                                    RustTypeFunction
-                                        { input = parameters |> List.map .type_
-                                        , output = resultType
-                                        }
-                                }
-
-                        closure : RustExpression
-                        closure =
-                            rustExpressionAlloc
-                                (RustExpressionClosure
-                                    { parameters = parameters
-                                    , result = resultWithAdditionalParameters
+                    additionalGeneratedParameters : List { name : String, type_ : RustType }
+                    additionalGeneratedParameters =
+                        rustFullTypeAsFunction.inputs
+                            |> List.drop syntaxParameterCount
+                            |> List.indexedMap
+                                (\additionalParameterIndex additionalParameterInferredType ->
+                                    { name =
+                                        generatedParameterNameForIndexAtPath
+                                            (syntaxParameterCount + additionalParameterIndex)
+                                            context.path
+                                    , type_ =
+                                        additionalParameterInferredType
+                                            |> type_ { typeAliasesInModule = typeAliasesInModule }
                                     }
                                 )
-                    in
-                    case introducedTypeParameters of
-                        [] ->
-                            RustStatementLetDeclaration
-                                { name = rustName
-                                , resultType = closureType
-                                , result = closure
-                                }
 
-                        introducedTypeParameter0 :: introducedTypeParameter1Up ->
-                            -- does that actually solve it?
-                            RustStatementFnDeclaration
-                                { name = rustName
-                                , parameters = []
-                                , resultType = closureType
-                                , introducedTypeParameters =
-                                    introducedTypeParameter0 :: introducedTypeParameter1Up
-                                , result = closure
+                    resultWithAdditionalParameters : RustExpression
+                    resultWithAdditionalParameters =
+                        additionalGeneratedParameters
+                            |> List.foldl
+                                (\additionalGeneratedParameter soFar ->
+                                    rustExpressionCallCondense
+                                        { called = soFar
+                                        , argument =
+                                            RustExpressionReference
+                                                { qualification = []
+                                                , name = additionalGeneratedParameter.name
+                                                }
+                                        }
+                                )
+                                result
+
+                    parameters : List { pattern : RustPattern, type_ : RustType }
+                    parameters =
+                        { pattern =
+                            if
+                                (result
+                                    |> rustExpressionCountUsesOfReference
+                                        { qualification = [], name = generatedAllocatorVariableName }
+                                )
+                                    == 0
+                            then
+                                RustPatternIgnore
+
+                            else
+                                RustPatternVariable generatedAllocatorVariableName
+                        , type_ =
+                            RustTypeBorrow
+                                { lifetimeVariable = Just generatedLifetimeVariableName
+                                , type_ = rustTypeConstructBumpaloBump
                                 }
-                )
-                (syntaxLetDeclarationValueOrFunctionNode.declaration.result
-                    |> expression
-                        { moduleInfo = context.moduleInfo
-                        , variablesFromWithinDeclarationInScope =
-                            context.variablesFromWithinDeclarationInScope
-                                |> FastDict.union
-                                    (syntaxLetDeclarationValueOrFunctionNode.declaration.parameters
-                                        |> listMapToFastDictsAndUnify patternTypedNodeIntroducedVariables
-                                    )
-                        , letDeclaredValueAndFunctionTypes =
-                            context.letDeclaredValueAndFunctionTypes
-                        , path = "result" :: context.path
                         }
+                            :: inferredExpressionCapturedVariablesFromContextToRustParameters
+                                { bindings = context.variablesFromWithinDeclarationInScope
+                                , letDeclaredValueAndFunctionTypes =
+                                    context.letDeclaredValueAndFunctionTypes
+                                , typeAliasesInModule = typeAliasesInModule
+                                }
+                                syntaxLetDeclarationValueOrFunctionNode.declaration.result.value
+                            ++ (syntaxLetDeclarationValueOrFunctionNode.declaration.parameters
+                                    |> List.map
+                                        (\parameter ->
+                                            { pattern = pattern parameter
+                                            , type_ =
+                                                parameter.type_
+                                                    |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                            }
+                                        )
+                               )
+                            ++ (additionalGeneratedParameters
+                                    |> List.map
+                                        (\generatedAdditionalParameter ->
+                                            { type_ = generatedAdditionalParameter.type_
+                                            , pattern =
+                                                RustPatternVariable generatedAdditionalParameter.name
+                                            }
+                                        )
+                               )
+
+                    resultType : RustType
+                    resultType =
+                        rustFullTypeAsFunction.output
+                            |> type_ { typeAliasesInModule = typeAliasesInModule }
+                in
+                RustStatementFnDeclaration
+                    { name = rustName
+                    , parameters = parameters
+                    , resultType = resultType
+                    , lifetimeParameters =
+                        (resultType |> rustTypeUsedLifetimeVariables)
+                            |> FastSet.union
+                                (parameters
+                                    |> listMapToFastSetsAndUnify
+                                        (\parameter ->
+                                            parameter.type_ |> rustTypeUsedLifetimeVariables
+                                        )
+                                )
+                            |> FastSet.toList
+                    , typeParameters =
+                        introducedTypeParameters
+                    , result = resultWithAdditionalParameters
+                    }
+            )
+            (syntaxLetDeclarationValueOrFunctionNode.declaration.result
+                |> expression
+                    { moduleInfo = context.moduleInfo
+                    , variablesFromWithinDeclarationInScope =
+                        context.variablesFromWithinDeclarationInScope
+                            |> FastDict.union
+                                (syntaxLetDeclarationValueOrFunctionNode.declaration.parameters
+                                    |> listMapToFastDictsAndUnify patternTypedNodeIntroducedVariables
+                                )
+                    , letDeclaredValueAndFunctionTypes =
+                        context.letDeclaredValueAndFunctionTypes
+                    , path = "result" :: context.path
+                    }
+            )
+
+
+inferredExpressionCapturedVariablesFromContextToRustParameters :
+    { bindings : FastDict.Dict String ElmSyntaxTypeInfer.Type
+    , letDeclaredValueAndFunctionTypes :
+        FastDict.Dict String ElmSyntaxTypeInfer.Type
+    , typeAliasesInModule :
+        String
+        ->
+            Maybe
+                (FastDict.Dict
+                    String
+                    { parameters : List String
+                    , recordFieldOrder : Maybe (List String)
+                    , type_ : ElmSyntaxTypeInfer.Type
+                    }
                 )
+    }
+    -> ElmSyntaxTypeInfer.Expression
+    -> List { pattern : RustPattern, type_ : RustType }
+inferredExpressionCapturedVariablesFromContextToRustParameters context inferredExpression =
+    let
+        resultUsedLocalReferences : FastSet.Set String
+        resultUsedLocalReferences =
+            inferredExpression
+                |> inferredExpressionUsedLocalReferences
+    in
+    context.bindings
+        |> FastDict.foldr
+            (\variableFromWithinDeclarationInScope variableFromWithinDeclarationInScopeType soFar ->
+                if
+                    (resultUsedLocalReferences
+                        |> FastSet.member variableFromWithinDeclarationInScope
+                    )
+                        && (case
+                                context.letDeclaredValueAndFunctionTypes
+                                    |> FastDict.get variableFromWithinDeclarationInScope
+                            of
+                                Nothing ->
+                                    True
+
+                                Just letValueOrFunctionType ->
+                                    (letValueOrFunctionType
+                                        |> inferredTypeIsConcreteRustType
+                                    )
+                                        && (case
+                                                letValueOrFunctionType
+                                                    |> inferredTypeToFunction
+                                                        context.typeAliasesInModule
+                                            of
+                                                Just _ ->
+                                                    False
+
+                                                Nothing ->
+                                                    True
+                                           )
+                           )
+                then
+                    { pattern =
+                        RustPatternVariable
+                            (variableFromWithinDeclarationInScope
+                                |> toSnakeCaseRustName
+                            )
+                    , type_ =
+                        variableFromWithinDeclarationInScopeType
+                            |> type_ { typeAliasesInModule = context.typeAliasesInModule }
+                    }
+                        :: soFar
+
+                else
+                    soFar
+            )
+            []
 
 
 rangeIncludesRange : Elm.Syntax.Range.Range -> Elm.Syntax.Range.Range -> Bool
@@ -11442,25 +11508,39 @@ inferredTypeString =
         )
 
 
-rustFuncGenericsToString : List String -> String
-rustFuncGenericsToString typeVariablesToDeclare =
-    case typeVariablesToDeclare of
+printRustFnGenerics :
+    { lifetimeParameters : List String
+    , typeParameters : List String
+    }
+    -> Print
+printRustFnGenerics typeVariablesToDeclare =
+    case
+        (typeVariablesToDeclare.lifetimeParameters
+            |> List.map (\variable -> "'" ++ variable)
+        )
+            ++ (typeVariablesToDeclare.typeParameters
+                    |> List.map
+                        (\typeParameter ->
+                            if typeParameter |> String.startsWith "comparable" then
+                                typeParameter ++ ": Copy + PartialOrd"
+
+                            else
+                                typeParameter ++ ": Copy"
+                        )
+               )
+    of
         [] ->
-            ""
+            Print.empty
 
         typeParameter0 :: typeParameter1Up ->
-            "<"
-                ++ listFilledMapAndStringJoinWith ", "
-                    (\typeParameter ->
-                        if typeParameter |> String.startsWith "comparable" then
-                            typeParameter ++ ": Copy + PartialOrd"
-
-                        else
-                            typeParameter ++ ": Copy"
-                    )
-                    typeParameter0
-                    typeParameter1Up
-                ++ ">"
+            Print.exactly
+                ("<"
+                    ++ listFilledMapAndStringJoinWith ", "
+                        (\typeParameter -> typeParameter)
+                        typeParameter0
+                        typeParameter1Up
+                    ++ ">"
+                )
 
 
 printRustFnDeclaration :
@@ -11528,35 +11608,14 @@ printRustFnDeclaration rustValueOrFunctionDeclaration =
                 |> FastSet.toList
     in
     Print.exactly
-        ("pub fn "
-            ++ rustValueOrFunctionDeclaration.name
-            ++ (case
-                    (rustValueOrFunctionDeclaration.lifetimeParameters
-                        |> List.map (\variable -> "'" ++ variable)
-                    )
-                        ++ (typeVariablesToDeclare
-                                |> List.map
-                                    (\typeParameter ->
-                                        if typeParameter |> String.startsWith "comparable" then
-                                            typeParameter ++ ": Copy + PartialOrd"
-
-                                        else
-                                            typeParameter ++ ": Copy"
-                                    )
-                           )
-                of
-                    [] ->
-                        ""
-
-                    typeParameter0 :: typeParameter1Up ->
-                        "<"
-                            ++ listFilledMapAndStringJoinWith ", "
-                                (\typeParameter -> typeParameter)
-                                typeParameter0
-                                typeParameter1Up
-                            ++ ">"
-               )
-        )
+        ("pub fn " ++ rustValueOrFunctionDeclaration.name)
+        |> Print.followedBy
+            (printRustFnGenerics
+                { lifetimeParameters =
+                    rustValueOrFunctionDeclaration.lifetimeParameters
+                , typeParameters = typeVariablesToDeclare
+                }
+            )
         |> Print.followedBy
             (Print.withIndentIncreasedBy 4
                 (printParenthesized
@@ -11739,19 +11798,20 @@ printRustLocalFnDeclaration :
     , parameters : List { pattern : RustPattern, type_ : RustType }
     , result : RustExpression
     , resultType : RustType
-    , introducedTypeParameters : List String
+    , typeParameters : List String
+    , lifetimeParameters : List String
     }
     -> Print
-printRustLocalFnDeclaration rustValueOrFunctionDeclaration =
+printRustLocalFnDeclaration rustFnDeclaration =
     let
         resultTypePrint : Print
         resultTypePrint =
             printRustTypeNotParenthesized
-                rustValueOrFunctionDeclaration.resultType
+                rustFnDeclaration.resultType
 
         parameterPrints : List Print
         parameterPrints =
-            rustValueOrFunctionDeclaration.parameters
+            rustFnDeclaration.parameters
                 |> List.map
                     (\parameter ->
                         let
@@ -11793,12 +11853,13 @@ printRustLocalFnDeclaration rustValueOrFunctionDeclaration =
                     (\() -> resultTypePrint |> Print.lineSpread)
     in
     Print.exactly
-        ("fn "
-            ++ rustValueOrFunctionDeclaration.name
-            ++ (rustValueOrFunctionDeclaration.introducedTypeParameters
-                    |> rustFuncGenericsToString
-               )
-        )
+        ("fn " ++ rustFnDeclaration.name)
+        |> Print.followedBy
+            (printRustFnGenerics
+                { lifetimeParameters = rustFnDeclaration.lifetimeParameters
+                , typeParameters = rustFnDeclaration.typeParameters
+                }
+            )
         |> Print.followedBy
             (Print.withIndentIncreasedBy 4
                 (printParenthesized
@@ -11824,7 +11885,7 @@ printRustLocalFnDeclaration rustValueOrFunctionDeclaration =
                     |> Print.followedBy Print.linebreakIndented
                     |> Print.followedBy
                         (printRustExpressionNotParenthesized
-                            rustValueOrFunctionDeclaration.result
+                            rustFnDeclaration.result
                         )
                 )
             )
