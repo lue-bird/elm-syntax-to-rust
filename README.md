@@ -2,9 +2,9 @@
 > I'm also just learning rust so any tips (e.g. in issues) are appreciated
 >
 > TODO
-> - local functions are currently generated as `fn` but should generally be `let =` closure to be able to use outer allocator etc
+> - local functions should instead list all captured context (almost always including `generated_allocator`) and on use also provide that context. This also helps with allowing recursive let function declarations because closures (which can in fact capture context) cannot recurse (*easily)
 > - if lambda is called with a function, always inline that function
-> - recursive let functions don't work (one solution is passing itself when calling, another is explicitly capturing context and using `fn`. Both are somewhat complicated but I prefer the second because it also solves the "introducing new type variables"-problem)
+> - figure out why `alloc(|a| alloc(|b| ...))` fails with `&mut` not allowed, borrow here
 
 Print [`elm-syntax`](https://dark.elm.dmy.fr/packages/stil4m/elm-syntax/latest/) declarations as [rust](https://www.rust-lang.org/) code.
 To try it out, you can
