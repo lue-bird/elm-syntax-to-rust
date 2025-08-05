@@ -2173,100 +2173,42 @@ rustPatternListCons head tail =
 pattern :
     ElmSyntaxTypeInfer.TypedNode
         ElmSyntaxTypeInfer.Pattern
-    ->
-        { pattern : RustPattern
-        , -- TODO remove
-          introducedVariables : FastSet.Set String
-        }
+    -> RustPattern
 pattern patternInferred =
     -- IGNORE TCO
     case patternInferred.value of
         ElmSyntaxTypeInfer.PatternIgnored ->
-            rustPatternIgnoreIntroducedVariablesSetEmpty
+            RustPatternIgnore
 
         ElmSyntaxTypeInfer.PatternUnit ->
-            rustPatternIgnoreIntroducedVariablesSetEmpty
+            RustPatternIgnore
 
         ElmSyntaxTypeInfer.PatternChar charValue ->
-            { pattern = RustPatternChar charValue
-            , introducedVariables = FastSet.empty
-            }
+            RustPatternChar charValue
 
         ElmSyntaxTypeInfer.PatternString stringValue ->
-            { pattern = RustPatternStringLiteral stringValue
-            , introducedVariables = FastSet.empty
-            }
+            RustPatternStringLiteral stringValue
 
         ElmSyntaxTypeInfer.PatternInt intValue ->
-            { pattern = RustPatternInteger intValue.value
-            , introducedVariables = FastSet.empty
-            }
+            RustPatternInteger intValue.value
 
         ElmSyntaxTypeInfer.PatternVariable variableName ->
-            { pattern =
-                RustPatternVariable
-                    (variableName |> toSnakeCaseRustName)
-            , introducedVariables =
-                FastSet.singleton (variableName |> toSnakeCaseRustName)
-            }
+            RustPatternVariable
+                (variableName |> toSnakeCaseRustName)
 
         ElmSyntaxTypeInfer.PatternParenthesized inParens ->
             pattern inParens
 
         ElmSyntaxTypeInfer.PatternTuple parts ->
-            let
-                part0 :
-                    { pattern : RustPattern
-                    , introducedVariables : FastSet.Set String
-                    }
-                part0 =
-                    parts.part0 |> pattern
-
-                part1 :
-                    { pattern : RustPattern
-                    , introducedVariables : FastSet.Set String
-                    }
-                part1 =
-                    parts.part1 |> pattern
-            in
-            { pattern =
-                rustPatternVariantTuple part0.pattern part1.pattern
-            , introducedVariables =
-                FastSet.union
-                    part0.introducedVariables
-                    part1.introducedVariables
-            }
+            rustPatternVariantTuple
+                (parts.part0 |> pattern)
+                (parts.part1 |> pattern)
 
         ElmSyntaxTypeInfer.PatternTriple parts ->
-            let
-                part0 :
-                    { pattern : RustPattern
-                    , introducedVariables : FastSet.Set String
-                    }
-                part0 =
-                    parts.part0 |> pattern
-
-                part1 :
-                    { pattern : RustPattern
-                    , introducedVariables : FastSet.Set String
-                    }
-                part1 =
-                    parts.part1 |> pattern
-
-                part2 :
-                    { pattern : RustPattern
-                    , introducedVariables : FastSet.Set String
-                    }
-                part2 =
-                    parts.part2 |> pattern
-            in
-            { pattern =
-                rustPatternVariantTriple part0.pattern part1.pattern part2.pattern
-            , introducedVariables =
-                part0.introducedVariables
-                    |> FastSet.union part1.introducedVariables
-                    |> FastSet.union part2.introducedVariables
-            }
+            rustPatternVariantTriple
+                (parts.part0 |> pattern)
+                (parts.part1 |> pattern)
+                (parts.part2 |> pattern)
 
         ElmSyntaxTypeInfer.PatternRecord patternFields ->
             let
@@ -2299,21 +2241,14 @@ pattern patternInferred =
                                 ElmSyntaxTypeInfer.TypeFunction _ ->
                                     FastDict.empty
 
-                combinedFieldNames :
-                    { fields : FastDict.Dict String RustPattern
-                    , introducedVariables : FastSet.Set String
-                    }
+                combinedFieldNames : FastDict.Dict String RustPattern
                 combinedFieldNames =
                     FastDict.merge
                         (\fieldName _ soFar ->
-                            { fields =
-                                soFar.fields
-                                    |> FastDict.insert
-                                        (fieldName |> toSnakeCaseRustName)
-                                        RustPatternIgnore
-                            , introducedVariables =
-                                soFar.introducedVariables
-                            }
+                            soFar
+                                |> FastDict.insert
+                                    (fieldName |> toSnakeCaseRustName)
+                                    RustPatternIgnore
                         )
                         (\fieldName _ () soFar ->
                             let
@@ -2321,16 +2256,11 @@ pattern patternInferred =
                                 rustFieldName =
                                     fieldName |> toSnakeCaseRustName
                             in
-                            { fields =
-                                soFar.fields
-                                    |> FastDict.insert rustFieldName
-                                        (RustPatternVariable
-                                            rustFieldName
-                                        )
-                            , introducedVariables =
-                                soFar.introducedVariables
-                                    |> FastSet.insert rustFieldName
-                            }
+                            soFar
+                                |> FastDict.insert rustFieldName
+                                    (RustPatternVariable
+                                        rustFieldName
+                                    )
                         )
                         (\fieldName () soFar ->
                             let
@@ -2338,17 +2268,12 @@ pattern patternInferred =
                                 rustFieldName =
                                     fieldName |> toSnakeCaseRustName
                             in
-                            { fields =
-                                soFar.fields
-                                    |> FastDict.insert
+                            soFar
+                                |> FastDict.insert
+                                    rustFieldName
+                                    (RustPatternVariable
                                         rustFieldName
-                                        (RustPatternVariable
-                                            rustFieldName
-                                        )
-                            , introducedVariables =
-                                soFar.introducedVariables
-                                    |> FastSet.insert fieldName
-                            }
+                                    )
                         )
                         allFields
                         (patternFields
@@ -2358,60 +2283,22 @@ pattern patternInferred =
                                 )
                                 FastDict.empty
                         )
-                        fieldsDictEmptyIntroducedVariablesDictEmpty
+                        FastDict.empty
             in
-            { pattern =
-                RustPatternRecord
-                    combinedFieldNames.fields
-            , introducedVariables = combinedFieldNames.introducedVariables
-            }
+            RustPatternRecord combinedFieldNames
 
         ElmSyntaxTypeInfer.PatternListCons listCons ->
-            let
-                head :
-                    { pattern : RustPattern
-                    , introducedVariables : FastSet.Set String
-                    }
-                head =
-                    listCons.head |> pattern
-
-                tail :
-                    { pattern : RustPattern
-                    , introducedVariables : FastSet.Set String
-                    }
-                tail =
-                    listCons.tail |> pattern
-            in
-            { pattern =
-                rustPatternListCons head.pattern tail.pattern
-            , introducedVariables =
-                FastSet.union
-                    head.introducedVariables
-                    tail.introducedVariables
-            }
+            rustPatternListCons
+                (listCons.head |> pattern)
+                (listCons.tail |> pattern)
 
         ElmSyntaxTypeInfer.PatternListExact elementPatterns ->
-            let
-                elements :
-                    List
-                        { pattern : RustPattern
-                        , introducedVariables : FastSet.Set String
-                        }
-                elements =
-                    elementPatterns
-                        |> List.map pattern
-            in
-            { pattern =
-                elements
-                    |> List.foldr
-                        (\element soFar ->
-                            rustPatternListCons element.pattern soFar
-                        )
-                        rustPatternListEmpty
-            , introducedVariables =
-                elements
-                    |> listMapToFastSetsAndUnify .introducedVariables
-            }
+            elementPatterns
+                |> List.foldr
+                    (\element soFar ->
+                        rustPatternListCons (element |> pattern) soFar
+                    )
+                    rustPatternListEmpty
 
         ElmSyntaxTypeInfer.PatternVariant variant ->
             let
@@ -2434,9 +2321,8 @@ pattern patternInferred =
             in
             case asBool of
                 Just bool ->
-                    { pattern = RustPatternBool bool
-                    , introducedVariables = FastSet.empty
-                    }
+                    -- is the special-casing still necessary
+                    RustPatternBool bool
 
                 Nothing ->
                     let
@@ -2465,47 +2351,23 @@ pattern patternInferred =
                                     , isReference = True
                                     }
 
-                        values :
-                            List
-                                { pattern : RustPattern
-                                , introducedVariables : FastSet.Set String
-                                }
+                        values : List RustPattern
                         values =
                             variant.values
                                 |> List.map pattern
                     in
-                    { pattern =
-                        RustPatternVariant
-                            { originTypeName = reference.originTypeName
-                            , name = reference.name
-                            , isReference = reference.isReference
-                            , values =
-                                values
-                                    |> List.map (\value -> value.pattern)
-                            }
-                    , introducedVariables =
-                        values
-                            |> listMapToFastSetsAndUnify .introducedVariables
-                    }
+                    RustPatternVariant
+                        { originTypeName = reference.originTypeName
+                        , name = reference.name
+                        , isReference = reference.isReference
+                        , values = values
+                        }
 
         ElmSyntaxTypeInfer.PatternAs patternAs ->
-            let
-                aliasedPattern :
-                    { pattern : RustPattern
-                    , introducedVariables : FastSet.Set String
-                    }
-                aliasedPattern =
-                    patternAs.pattern |> pattern
-            in
-            { pattern =
-                RustPatternAlias
-                    { variable = patternAs.variable.value
-                    , pattern = aliasedPattern.pattern
-                    }
-            , introducedVariables =
-                aliasedPattern.introducedVariables
-                    |> FastSet.insert patternAs.variable.value
-            }
+            RustPatternAlias
+                { variable = patternAs.variable.value
+                , pattern = patternAs.pattern |> pattern
+                }
 
 
 rustPatternVariantTuple : RustPattern -> RustPattern -> RustPattern
@@ -7007,8 +6869,7 @@ valueOrFunctionDeclaration moduleContext syntaxDeclarationValueOrFunction =
                                 :: (syntaxDeclarationValueOrFunction.parameters
                                         |> List.map
                                             (\parameter ->
-                                                { pattern =
-                                                    parameter |> pattern |> .pattern
+                                                { pattern = parameter |> pattern
                                                 , type_ =
                                                     parameter.type_
                                                         |> type_ { typeAliasesInModule = typeAliasesInModule }
@@ -8312,7 +8173,7 @@ expression context expressionTypedNode =
                             lambda.parameter1Up
                                 |> List.map
                                     (\parameter ->
-                                        { pattern = parameter |> pattern |> .pattern
+                                        { pattern = parameter |> pattern
                                         , type_ = parameter.type_
                                         }
                                     )
@@ -8337,9 +8198,7 @@ expression context expressionTypedNode =
                         (RustExpressionClosure
                             { parameters =
                                 [ { pattern =
-                                        lambda.parameter0
-                                            |> pattern
-                                            |> .pattern
+                                        lambda.parameter0 |> pattern
                                   , type_ =
                                         lambda.parameter0.type_
                                             |> type_ { typeAliasesInModule = typeAliasesInModule }
@@ -10733,15 +10592,7 @@ case_ :
 case_ context syntaxCase =
     Result.map
         (\result ->
-            let
-                casePatternAsRust :
-                    { pattern : RustPattern
-                    , introducedVariables : FastSet.Set String
-                    }
-                casePatternAsRust =
-                    syntaxCase.pattern |> pattern
-            in
-            { pattern = casePatternAsRust.pattern
+            { pattern = syntaxCase.pattern |> pattern
             , result = result
             }
         )
@@ -10775,9 +10626,7 @@ letDeclaration context syntaxLetDeclarationNode =
                 (\destructuredExpression ->
                     RustStatementLetDestructuring
                         { pattern =
-                            letDestructuring.pattern
-                                |> pattern
-                                |> .pattern
+                            letDestructuring.pattern |> pattern
                         , expression = destructuredExpression
                         }
                 )
@@ -10953,7 +10802,7 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
                             (syntaxLetDeclarationValueOrFunctionNode.declaration.parameters
                                 |> List.map
                                     (\parameter ->
-                                        { pattern = (pattern parameter).pattern
+                                        { pattern = pattern parameter
                                         , type_ =
                                             parameter.type_
                                                 |> type_ { typeAliasesInModule = typeAliasesInModule }
