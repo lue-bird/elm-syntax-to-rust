@@ -133,7 +133,7 @@ type RustExpression
         { parameters :
             List
                 { pattern : RustPattern
-                , type_ : {- TODO Maybe -} RustType
+                , type_ : Maybe RustType
                 }
         , result : RustExpression
         }
@@ -2407,26 +2407,6 @@ rustExpressionCallTriple part0 part1 part2 =
         , part1 = part1
         , part2Up = [ part2 ]
         }
-
-
-fieldsDictEmptyIntroducedVariablesDictEmpty :
-    { fields : FastDict.Dict String RustPattern
-    , introducedVariables : FastSet.Set String
-    }
-fieldsDictEmptyIntroducedVariablesDictEmpty =
-    { fields = FastDict.empty
-    , introducedVariables = FastSet.empty
-    }
-
-
-rustPatternIgnoreIntroducedVariablesSetEmpty :
-    { pattern : RustPattern
-    , introducedVariables : FastSet.Set String
-    }
-rustPatternIgnoreIntroducedVariablesSetEmpty =
-    { pattern = RustPatternIgnore
-    , introducedVariables = FastSet.empty
-    }
 
 
 typeConstructReferenceToCoreRust :
@@ -7096,6 +7076,7 @@ expression context expressionTypedNode =
                                                                 |> FastDict.get moduleNameToAccess
                                                                 |> Maybe.map .typeAliases
                                                     }
+                                                |> Just
                                       }
                                     ]
                                 , result =
@@ -7136,6 +7117,7 @@ expression context expressionTypedNode =
                                           , type_ =
                                                 leftInferredType
                                                     |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                                    |> Just
                                           }
                                         ]
                                     , result =
@@ -7146,6 +7128,7 @@ expression context expressionTypedNode =
                                                       , type_ =
                                                             rightInferredType
                                                                 |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                                                |> Just
                                                       }
                                                     ]
                                                 , result =
@@ -7532,7 +7515,7 @@ expression context expressionTypedNode =
                                                 (RustExpressionClosure
                                                     { parameters =
                                                         [ { pattern = RustPatternVariable parameter.pattern
-                                                          , type_ = parameter.type_
+                                                          , type_ = parameter.type_ |> Just
                                                           }
                                                         ]
                                                     , result = resultSoFar
@@ -7632,6 +7615,7 @@ expression context expressionTypedNode =
                                                                                     |> FastDict.get moduleNameToAccess
                                                                                     |> Maybe.map .typeAliases
                                                                         }
+                                                                    |> Just
                                                           }
                                                         ]
                                                     , result = resultSoFar
@@ -7706,16 +7690,13 @@ expression context expressionTypedNode =
                                                                             context.path
                                                                         )
                                                               , type_ =
-                                                                    -- TODO avoid this type as it could contain
+                                                                    -- avoid using `parameterType` as it could contain
                                                                     -- types specific to that fn
-                                                                    parameterType
-                                                                        |> type_
-                                                                            { typeAliasesInModule =
-                                                                                \moduleName ->
-                                                                                    context.moduleInfo
-                                                                                        |> FastDict.get moduleName
-                                                                                        |> Maybe.map .typeAliases
-                                                                            }
+                                                                    --
+                                                                    -- However, if adding types here turns out to be useful
+                                                                    -- we could instead expand expressionTypedNode.type_
+                                                                    -- to a function and take its input types
+                                                                    Nothing
                                                               }
                                                             ]
                                                         , result = resultSoFar
@@ -7781,6 +7762,7 @@ expression context expressionTypedNode =
                                                         , arguments = []
                                                         , lifetimeArguments = [ generatedLifetimeVariableName ]
                                                         }
+                                                        |> Just
                                               }
                                             ]
                                         , result =
@@ -7819,25 +7801,11 @@ expression context expressionTypedNode =
                                                                                 |> FastDict.get moduleName
                                                                                 |> Maybe.map .typeAliases
                                                                     }
+                                                                |> Just
 
                                                         _ ->
                                                             -- error?
-                                                            RustTypeBorrow
-                                                                { lifetimeVariable = Just generatedLifetimeVariableName
-                                                                , type_ =
-                                                                    RustTypeFunction
-                                                                        { input =
-                                                                            [ RustTypeConstruct
-                                                                                { qualification = []
-                                                                                , isFunction = False
-                                                                                , name = "JsonEncodeValue"
-                                                                                , arguments = []
-                                                                                , lifetimeArguments = [ generatedLifetimeVariableName ]
-                                                                                }
-                                                                            ]
-                                                                        , output = RustTypeVariable "event"
-                                                                        }
-                                                                }
+                                                            Nothing
                                               }
                                             ]
                                         , result =
@@ -8255,6 +8223,7 @@ expression context expressionTypedNode =
                                                       , type_ =
                                                             parameter.type_
                                                                 |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                                                |> Just
                                                       }
                                                     ]
                                                 , result = soFar
@@ -8271,6 +8240,7 @@ expression context expressionTypedNode =
                                   , type_ =
                                         lambda.parameter0.type_
                                             |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                            |> Just
                                   }
                                 ]
                             , result =
@@ -8627,6 +8597,7 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
                                       , type_ =
                                             parameterInferredType
                                                 |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                                |> Just
                                       }
                                     ]
                                 , result = resultSoFar
@@ -14100,8 +14071,8 @@ printRustExpressionNotParenthesized rustExpression =
         RustExpressionTuple parts ->
             printRustExpressionTuple parts
 
-        RustExpressionClosure syntaxLambda ->
-            printRustExpressionClosure syntaxLambda
+        RustExpressionClosure rustClosure ->
+            printRustExpressionClosure rustClosure
 
         RustExpressionAfterStatement rustExpressionAfterStatement ->
             printRustExpressionAfterStatement rustExpressionAfterStatement
@@ -14367,7 +14338,7 @@ printRustExpressionClosure :
     { parameters :
         List
             { pattern : RustPattern
-            , type_ : RustType
+            , type_ : Maybe RustType
             }
     , result : RustExpression
     }
@@ -14388,22 +14359,29 @@ printRustExpressionClosure lambda =
             lambda.parameters
                 |> List.map
                     (\lambdaParameter ->
-                        let
-                            parameterTypePrint : Print
-                            parameterTypePrint =
-                                printRustTypeNotParenthesized
-                                    lambdaParameter.type_
-                        in
                         lambdaParameter.pattern
                             |> printRustPatternNotParenthesized
-                            |> Print.followedBy printExactlyColon
                             |> Print.followedBy
-                                (Print.withIndentAtNextMultipleOf4
-                                    (Print.spaceOrLinebreakIndented
-                                        (parameterTypePrint |> Print.lineSpread)
-                                        |> Print.followedBy
-                                            parameterTypePrint
-                                    )
+                                (case lambdaParameter.type_ of
+                                    Nothing ->
+                                        Print.empty
+
+                                    Just parameterType ->
+                                        let
+                                            parameterTypePrint : Print
+                                            parameterTypePrint =
+                                                printRustTypeNotParenthesized
+                                                    parameterType
+                                        in
+                                        printExactlyColon
+                                            |> Print.followedBy
+                                                (Print.withIndentAtNextMultipleOf4
+                                                    (Print.spaceOrLinebreakIndented
+                                                        (parameterTypePrint |> Print.lineSpread)
+                                                        |> Print.followedBy
+                                                            parameterTypePrint
+                                                    )
+                                                )
                                 )
                     )
 
