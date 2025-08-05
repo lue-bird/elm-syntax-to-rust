@@ -2,8 +2,8 @@
 > I'm also just learning rust so any tips (e.g. in issues) are appreciated
 >
 > TODO
-> - for now declare all top-level elm values as fn()/fn(allocator).
-    in the future think about finding out which of those has no lifetimes and allocators and declare those as `pub static` (or `const`)
+> - local functions are currently generated as `fn` but should generally be `let =` closure to be able to use outer allocator etc
+> - if lambda is called with a function, always inline that function
 
 Print [`elm-syntax`](https://dark.elm.dmy.fr/packages/stil4m/elm-syntax/latest/) declarations as [rust](https://www.rust-lang.org/) code.
 To try it out, you can

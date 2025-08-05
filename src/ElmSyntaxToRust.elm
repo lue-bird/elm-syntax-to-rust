@@ -54,8 +54,9 @@ type RustType
         -- invariant: cannot have exactly one entry
         (FastDict.Dict String RustType)
     | RustTypeVariable String
-    | -- TODO remove in favor of returning fns from type_
-      -- that are Path: Fn(in) -> out
+    | -- TODO for functions: switch to introducing type parameters with Fn constraints
+      --      because impl Trait is not allowed in the return type of `Fn` trait bounds
+      -- TODO in general: switch to &'a dyn Fn in type alias, struct field value, variant value types
       RustTypeFunction
         { input : List RustType
         , output : RustType
@@ -128,7 +129,7 @@ type RustExpression
         { called : RustExpression
         , arguments : List RustExpression
         }
-    | RustExpressionLambda
+    | RustExpressionClosure
         { parameters :
             List
                 { pattern : RustPattern
@@ -1182,9 +1183,14 @@ typeNotVariable context inferredTypeNotVariable =
                 }
 
         ElmSyntaxTypeInfer.TypeFunction typeFunction ->
-            RustTypeFunction
-                { input = [ typeFunction.input |> type_ { typeAliasesInModule = context.typeAliasesInModule } ]
-                , output = typeFunction.output |> type_ { typeAliasesInModule = context.typeAliasesInModule }
+            -- TODO not in function
+            RustTypeBorrow
+                { lifetimeVariable = Just generatedLifetimeVariableName
+                , type_ =
+                    RustTypeFunction
+                        { input = [ typeFunction.input |> type_ { typeAliasesInModule = context.typeAliasesInModule } ]
+                        , output = typeFunction.output |> type_ { typeAliasesInModule = context.typeAliasesInModule }
+                        }
                 }
 
         ElmSyntaxTypeInfer.TypeRecordExtension typeRecordExtension ->
@@ -1362,10 +1368,7 @@ printRustTypeFunction typeFunction =
     (input0Print :: input1UpPrints)
         |> Print.listMapAndIntersperseAndFlatten
             (\typePrint ->
-                -- TODO switch to introducing type parameters with Fn constraints
-                --      because impl Trait is not allowed in the return type of `Fn` trait bounds
-                -- TODO switch to &'a dyn Fn in type alias, struct field value, variant value types
-                Print.exactly "impl Fn"
+                Print.exactly "dyn Fn"
                     |> Print.followedBy
                         (Print.withIndentIncreasedBy 3 typePrint)
                     |> Print.followedBy
@@ -6533,7 +6536,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                             RustExpressionAfterStatement _ ->
                                                                                                 RustExpressionCall
                                                                                                     { called =
-                                                                                                        RustExpressionLambda
+                                                                                                        RustExpressionClosure
                                                                                                             { parameters = []
                                                                                                             , result = rustValueOrFunctionDeclaration.result
                                                                                                             }
@@ -7285,34 +7288,36 @@ expression context expressionTypedNode =
             case expressionTypedNode.type_ of
                 ElmSyntaxTypeInfer.TypeNotVariable (ElmSyntaxTypeInfer.TypeFunction typeFunction) ->
                     Ok
-                        (RustExpressionLambda
-                            { parameters =
-                                [ { pattern =
-                                        RustPatternVariable generatedAccessedRecordVariableName
-                                  , type_ =
-                                        typeFunction.input
-                                            |> type_
-                                                { typeAliasesInModule =
-                                                    \moduleNameToAccess ->
-                                                        context.moduleInfo
-                                                            |> FastDict.get moduleNameToAccess
-                                                            |> Maybe.map .typeAliases
+                        (rustExpressionAlloc
+                            (RustExpressionClosure
+                                { parameters =
+                                    [ { pattern =
+                                            RustPatternVariable generatedAccessedRecordVariableName
+                                      , type_ =
+                                            typeFunction.input
+                                                |> type_
+                                                    { typeAliasesInModule =
+                                                        \moduleNameToAccess ->
+                                                            context.moduleInfo
+                                                                |> FastDict.get moduleNameToAccess
+                                                                |> Maybe.map .typeAliases
+                                                    }
+                                      }
+                                    ]
+                                , result =
+                                    RustExpressionRecordAccess
+                                        { record =
+                                            RustExpressionReference
+                                                { qualification = []
+                                                , name = generatedAccessedRecordVariableName
                                                 }
-                                  }
-                                ]
-                            , result =
-                                RustExpressionRecordAccess
-                                    { record =
-                                        RustExpressionReference
-                                            { qualification = []
-                                            , name = generatedAccessedRecordVariableName
-                                            }
-                                    , field =
-                                        fieldName
-                                            |> String.replace "." ""
-                                            |> toSnakeCaseRustName
-                                    }
-                            }
+                                        , field =
+                                            fieldName
+                                                |> String.replace "." ""
+                                                |> toSnakeCaseRustName
+                                        }
+                                }
+                            )
                         )
 
                 _ ->
@@ -7330,49 +7335,53 @@ expression context expressionTypedNode =
                     in
                     Result.map
                         (\reference ->
-                            RustExpressionLambda
-                                { parameters =
-                                    [ { pattern = RustPatternVariable "generated_left"
-                                      , type_ =
-                                            leftInferredType
-                                                |> type_ { typeAliasesInModule = typeAliasesInModule }
-                                      }
-                                    ]
-                                , result =
-                                    RustExpressionLambda
-                                        { parameters =
-                                            [ { pattern = RustPatternVariable "generated_right"
-                                              , type_ =
-                                                    rightInferredType
-                                                        |> type_ { typeAliasesInModule = typeAliasesInModule }
-                                              }
-                                            ]
-                                        , result =
-                                            RustExpressionCall
-                                                { called =
-                                                    RustExpressionReference
-                                                        { qualification = reference.qualification
-                                                        , name = reference.name
-                                                        }
-                                                , arguments =
-                                                    (if reference.requiresAllocator then
-                                                        [ RustExpressionReference
-                                                            { qualification = []
-                                                            , name = generatedAllocatorVariableName
-                                                            }
-                                                        ]
+                            rustExpressionAlloc
+                                (RustExpressionClosure
+                                    { parameters =
+                                        [ { pattern = RustPatternVariable "generated_left"
+                                          , type_ =
+                                                leftInferredType
+                                                    |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                          }
+                                        ]
+                                    , result =
+                                        rustExpressionAlloc
+                                            (RustExpressionClosure
+                                                { parameters =
+                                                    [ { pattern = RustPatternVariable "generated_right"
+                                                      , type_ =
+                                                            rightInferredType
+                                                                |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                                      }
+                                                    ]
+                                                , result =
+                                                    RustExpressionCall
+                                                        { called =
+                                                            RustExpressionReference
+                                                                { qualification = reference.qualification
+                                                                , name = reference.name
+                                                                }
+                                                        , arguments =
+                                                            (if reference.requiresAllocator then
+                                                                [ RustExpressionReference
+                                                                    { qualification = []
+                                                                    , name = generatedAllocatorVariableName
+                                                                    }
+                                                                ]
 
-                                                     else
-                                                        []
-                                                    )
-                                                        ++ [ RustExpressionReference
-                                                                { qualification = [], name = "generated_left" }
-                                                           , RustExpressionReference
-                                                                { qualification = [], name = "generated_right" }
-                                                           ]
+                                                             else
+                                                                []
+                                                            )
+                                                                ++ [ RustExpressionReference
+                                                                        { qualification = [], name = "generated_left" }
+                                                                   , RustExpressionReference
+                                                                        { qualification = [], name = "generated_right" }
+                                                                   ]
+                                                        }
                                                 }
-                                        }
-                                }
+                                            )
+                                    }
+                                )
                         )
                         (expressionOperatorToRustFunctionReference
                             { moduleOrigin = operator.moduleOrigin
@@ -7645,6 +7654,7 @@ expression context expressionTypedNode =
                             Nothing
             in
             case asBool of
+                -- TODO I don't think this special casing is necessary anymore
                 Just bool ->
                     Ok bool
 
@@ -7724,44 +7734,38 @@ expression context expressionTypedNode =
                                         )
                                     |> List.foldr
                                         (\parameter resultSoFar ->
-                                            RustExpressionLambda
-                                                { parameters =
-                                                    [ { pattern = RustPatternVariable parameter.pattern
-                                                      , type_ = parameter.type_
-                                                      }
-                                                    ]
-                                                , result = resultSoFar
-                                                }
+                                            rustExpressionAlloc
+                                                (RustExpressionClosure
+                                                    { parameters =
+                                                        [ { pattern = RustPatternVariable parameter.pattern
+                                                          , type_ = parameter.type_
+                                                          }
+                                                        ]
+                                                    , result = resultSoFar
+                                                    }
+                                                )
                                         )
-                                        (RustExpressionCall
-                                            { called =
-                                                if asRustVariant.isReference then
-                                                    RustExpressionCall
-                                                        { called =
-                                                            RustExpressionRecordAccess
-                                                                { record =
+                                        (let
+                                            fullyApplied : RustExpression
+                                            fullyApplied =
+                                                RustExpressionCall
+                                                    { called = rustExpressionVariantValue
+                                                    , arguments =
+                                                        (valueType0 :: valueType1Up)
+                                                            |> List.indexedMap
+                                                                (\valueIndex _ ->
                                                                     RustExpressionReference
                                                                         { qualification = []
-                                                                        , name = generatedAllocatorVariableName
+                                                                        , name = generatedValueParameterName valueIndex
                                                                         }
-                                                                , field = "alloc"
-                                                                }
-                                                        , arguments =
-                                                            [ rustExpressionVariantValue ]
-                                                        }
+                                                                )
+                                                    }
+                                         in
+                                         if asRustVariant.isReference then
+                                            rustExpressionAlloc fullyApplied
 
-                                                else
-                                                    rustExpressionVariantValue
-                                            , arguments =
-                                                (valueType0 :: valueType1Up)
-                                                    |> List.indexedMap
-                                                        (\valueIndex _ ->
-                                                            RustExpressionReference
-                                                                { qualification = []
-                                                                , name = generatedValueParameterName valueIndex
-                                                                }
-                                                        )
-                                            }
+                                         else
+                                            fullyApplied
                                         )
                         )
 
@@ -7821,22 +7825,24 @@ expression context expressionTypedNode =
                                     parameterTypes
                                     |> List.foldr
                                         (\parameter resultSoFar ->
-                                            RustExpressionLambda
-                                                { parameters =
-                                                    [ { pattern = RustPatternVariable parameter.name
-                                                      , type_ =
-                                                            parameter.type_
-                                                                |> type_
-                                                                    { typeAliasesInModule =
-                                                                        \moduleNameToAccess ->
-                                                                            context.moduleInfo
-                                                                                |> FastDict.get moduleNameToAccess
-                                                                                |> Maybe.map .typeAliases
-                                                                    }
-                                                      }
-                                                    ]
-                                                , result = resultSoFar
-                                                }
+                                            rustExpressionAlloc
+                                                (RustExpressionClosure
+                                                    { parameters =
+                                                        [ { pattern = RustPatternVariable parameter.name
+                                                          , type_ =
+                                                                parameter.type_
+                                                                    |> type_
+                                                                        { typeAliasesInModule =
+                                                                            \moduleNameToAccess ->
+                                                                                context.moduleInfo
+                                                                                    |> FastDict.get moduleNameToAccess
+                                                                                    |> Maybe.map .typeAliases
+                                                                        }
+                                                          }
+                                                        ]
+                                                    , result = resultSoFar
+                                                    }
+                                                )
                                         )
                                         (RustExpressionRecord
                                             resultRecordFields
@@ -7912,88 +7918,96 @@ expression context expressionTypedNode =
 
                             Just referenceOriginModuleInfo ->
                                 if referenceOriginModuleInfo.portsOutgoing |> FastSet.member reference.name then
-                                    RustExpressionLambda
-                                        { parameters =
-                                            [ { pattern = RustPatternVariable "generated_value"
-                                              , type_ =
-                                                    RustTypeConstruct
-                                                        { qualification = []
-                                                        , isFunction = False
-                                                        , name = "JsonEncodeValue"
-                                                        , arguments = []
-                                                        , lifetimeArguments = [ generatedLifetimeVariableName ]
-                                                        }
-                                              }
-                                            ]
-                                        , result =
-                                            RustExpressionArrayLiteral
-                                                [ RustExpressionCall
-                                                    { called =
-                                                        RustExpressionVariant
-                                                            { originTypeName = [ "PlatformCmdSingle" ]
-                                                            , name = "PortOutgoing"
-                                                            }
-                                                    , arguments =
-                                                        [ RustExpressionStringLiteral reference.name
-                                                        , RustExpressionReference
+                                    rustExpressionAlloc
+                                        (RustExpressionClosure
+                                            { parameters =
+                                                [ { pattern = RustPatternVariable "generated_value"
+                                                  , type_ =
+                                                        RustTypeConstruct
                                                             { qualification = []
-                                                            , name = "generated_value"
+                                                            , isFunction = False
+                                                            , name = "JsonEncodeValue"
+                                                            , arguments = []
+                                                            , lifetimeArguments = [ generatedLifetimeVariableName ]
                                                             }
-                                                        ]
-                                                    }
+                                                  }
                                                 ]
-                                        }
+                                            , result =
+                                                RustExpressionArrayLiteral
+                                                    [ RustExpressionCall
+                                                        { called =
+                                                            RustExpressionVariant
+                                                                { originTypeName = [ "PlatformCmdSingle" ]
+                                                                , name = "PortOutgoing"
+                                                                }
+                                                        , arguments =
+                                                            [ RustExpressionStringLiteral reference.name
+                                                            , RustExpressionReference
+                                                                { qualification = []
+                                                                , name = "generated_value"
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                            }
+                                        )
 
                                 else if referenceOriginModuleInfo.portsIncoming |> FastSet.member reference.name then
-                                    RustExpressionLambda
-                                        { parameters =
-                                            [ { pattern = RustPatternVariable "generated_onValue"
-                                              , type_ =
-                                                    case expressionTypedNode.type_ of
-                                                        ElmSyntaxTypeInfer.TypeNotVariable (ElmSyntaxTypeInfer.TypeFunction expressionTypeFunction) ->
-                                                            expressionTypeFunction.input
-                                                                |> type_
-                                                                    { typeAliasesInModule =
-                                                                        \moduleName ->
-                                                                            context.moduleInfo
-                                                                                |> FastDict.get moduleName
-                                                                                |> Maybe.map .typeAliases
-                                                                    }
-
-                                                        _ ->
-                                                            -- error?
-                                                            RustTypeFunction
-                                                                { input =
-                                                                    [ RustTypeConstruct
-                                                                        { qualification = []
-                                                                        , isFunction = False
-                                                                        , name = "JsonEncodeValue"
-                                                                        , arguments = []
-                                                                        , lifetimeArguments = [ generatedLifetimeVariableName ]
+                                    rustExpressionAlloc
+                                        (RustExpressionClosure
+                                            { parameters =
+                                                [ { pattern = RustPatternVariable "generated_onValue"
+                                                  , type_ =
+                                                        case expressionTypedNode.type_ of
+                                                            ElmSyntaxTypeInfer.TypeNotVariable (ElmSyntaxTypeInfer.TypeFunction expressionTypeFunction) ->
+                                                                expressionTypeFunction.input
+                                                                    |> type_
+                                                                        { typeAliasesInModule =
+                                                                            \moduleName ->
+                                                                                context.moduleInfo
+                                                                                    |> FastDict.get moduleName
+                                                                                    |> Maybe.map .typeAliases
                                                                         }
-                                                                    ]
-                                                                , output = RustTypeVariable "event"
-                                                                }
-                                              }
-                                            ]
-                                        , result =
-                                            RustExpressionArrayLiteral
-                                                [ RustExpressionCall
-                                                    { called =
-                                                        RustExpressionVariant
-                                                            { originTypeName = [ "PlatformSubSingle" ]
-                                                            , name = "PortIncoming"
-                                                            }
-                                                    , arguments =
-                                                        [ RustExpressionStringLiteral reference.name
-                                                        , RustExpressionReference
-                                                            { qualification = []
-                                                            , name = "generated_onValue"
-                                                            }
-                                                        ]
-                                                    }
+
+                                                            _ ->
+                                                                -- error?
+                                                                RustTypeBorrow
+                                                                    { lifetimeVariable = Just generatedLifetimeVariableName
+                                                                    , type_ =
+                                                                        RustTypeFunction
+                                                                            { input =
+                                                                                [ RustTypeConstruct
+                                                                                    { qualification = []
+                                                                                    , isFunction = False
+                                                                                    , name = "JsonEncodeValue"
+                                                                                    , arguments = []
+                                                                                    , lifetimeArguments = [ generatedLifetimeVariableName ]
+                                                                                    }
+                                                                                ]
+                                                                            , output = RustTypeVariable "event"
+                                                                            }
+                                                                    }
+                                                  }
                                                 ]
-                                        }
+                                            , result =
+                                                RustExpressionArrayLiteral
+                                                    [ RustExpressionCall
+                                                        { called =
+                                                            RustExpressionVariant
+                                                                { originTypeName = [ "PlatformSubSingle" ]
+                                                                , name = "PortIncoming"
+                                                                }
+                                                        , arguments =
+                                                            [ RustExpressionStringLiteral reference.name
+                                                            , RustExpressionReference
+                                                                { qualification = []
+                                                                , name = "generated_onValue"
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                            }
+                                        )
 
                                 else
                                     case
@@ -8383,33 +8397,37 @@ expression context expressionTypedNode =
                                     )
                                 |> List.foldr
                                     (\parameter soFar ->
-                                        RustExpressionLambda
-                                            { parameters =
-                                                [ { pattern = parameter.pattern
-                                                  , type_ =
-                                                        parameter.type_
-                                                            |> type_ { typeAliasesInModule = typeAliasesInModule }
-                                                  }
-                                                ]
-                                            , result = soFar
-                                            }
+                                        rustExpressionAlloc
+                                            (RustExpressionClosure
+                                                { parameters =
+                                                    [ { pattern = parameter.pattern
+                                                      , type_ =
+                                                            parameter.type_
+                                                                |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                                      }
+                                                    ]
+                                                , result = soFar
+                                                }
+                                            )
                                     )
                                     result
                     in
-                    RustExpressionLambda
-                        { parameters =
-                            [ { pattern =
-                                    lambda.parameter0
-                                        |> pattern
-                                        |> .pattern
-                              , type_ =
-                                    lambda.parameter0.type_
-                                        |> type_ { typeAliasesInModule = typeAliasesInModule }
-                              }
-                            ]
-                        , result =
-                            parameter1UpResult
-                        }
+                    rustExpressionAlloc
+                        (RustExpressionClosure
+                            { parameters =
+                                [ { pattern =
+                                        lambda.parameter0
+                                            |> pattern
+                                            |> .pattern
+                                  , type_ =
+                                        lambda.parameter0.type_
+                                            |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                  }
+                                ]
+                            , result =
+                                parameter1UpResult
+                            }
+                        )
                 )
                 (lambda.result
                     |> expression
@@ -8570,6 +8588,28 @@ expression context expressionTypedNode =
                 )
 
 
+rustExpressionAlloc : RustExpression -> RustExpression
+rustExpressionAlloc toAllocate =
+    -- TODO find out in which cases a regular borrow is allowed (e.g. with constants)
+    -- but which closures for example?
+    RustExpressionCall
+        { called = rustExpressionAllocFunction
+        , arguments = [ toAllocate ]
+        }
+
+
+rustExpressionAllocFunction : RustExpression
+rustExpressionAllocFunction =
+    RustExpressionRecordAccess
+        { record =
+            RustExpressionReference
+                { qualification = []
+                , name = generatedAllocatorVariableName
+                }
+        , field = "alloc"
+        }
+
+
 rustExpressionListEmpty : RustExpression
 rustExpressionListEmpty =
     RustExpressionVariant
@@ -8699,21 +8739,23 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
                 |> List.indexedMap Tuple.pair
                 |> List.foldr
                     (\( parameterIndex, parameterInferredType ) resultSoFar ->
-                        RustExpressionLambda
-                            { parameters =
-                                [ { pattern =
-                                        RustPatternVariable
-                                            (generatedParameterNameForIndexAtPath
-                                                parameterIndex
-                                                context.path
-                                            )
-                                  , type_ =
-                                        parameterInferredType
-                                            |> type_ { typeAliasesInModule = typeAliasesInModule }
-                                  }
-                                ]
-                            , result = resultSoFar
-                            }
+                        rustExpressionAlloc
+                            (RustExpressionClosure
+                                { parameters =
+                                    [ { pattern =
+                                            RustPatternVariable
+                                                (generatedParameterNameForIndexAtPath
+                                                    parameterIndex
+                                                    context.path
+                                                )
+                                      , type_ =
+                                            parameterInferredType
+                                                |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                      }
+                                    ]
+                                , result = resultSoFar
+                                }
+                            )
                     )
                     (RustExpressionCall
                         { called =
@@ -8831,8 +8873,8 @@ rustExpressionAlterBindingNames variableNameChange rustExpression =
                 , field = recordAccess.field
                 }
 
-        RustExpressionLambda lambda ->
-            RustExpressionLambda
+        RustExpressionClosure lambda ->
+            RustExpressionClosure
                 { parameters =
                     lambda.parameters
                         |> List.map
@@ -9805,7 +9847,28 @@ rustExpressionCallCondense :
     -> RustExpression
 rustExpressionCallCondense call =
     case call.called of
-        RustExpressionLambda calledLambda ->
+        RustExpressionBorrow borrowed ->
+            rustExpressionCallCondense { called = borrowed, argument = call.argument }
+
+        RustExpressionCall calledCall ->
+            if calledCall.called == rustExpressionAllocFunction then
+                case calledCall.arguments of
+                    allocated :: _ ->
+                        rustExpressionCallCondense { called = allocated, argument = call.argument }
+
+                    [] ->
+                        RustExpressionCall
+                            { called = call.called
+                            , arguments = [ call.argument ]
+                            }
+
+            else
+                RustExpressionCall
+                    { called = call.called
+                    , arguments = [ call.argument ]
+                    }
+
+        RustExpressionClosure calledLambda ->
             case calledLambda.parameters |> List.map .pattern of
                 [ RustPatternVariable parameter ] ->
                     if
@@ -9915,12 +9978,6 @@ rustExpressionCallCondense call =
                 , arguments = [ call.argument ]
                 }
 
-        RustExpressionCall _ ->
-            RustExpressionCall
-                { called = call.called
-                , arguments = [ call.argument ]
-                }
-
         RustExpressionSelf ->
             RustExpressionCall
                 { called = call.called
@@ -9952,12 +10009,6 @@ rustExpressionCallCondense call =
                 }
 
         RustExpressionNegateOperation _ ->
-            RustExpressionCall
-                { called = call.called
-                , arguments = [ call.argument ]
-                }
-
-        RustExpressionBorrow _ ->
             RustExpressionCall
                 { called = call.called
                 , arguments = [ call.argument ]
@@ -10084,7 +10135,7 @@ rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck rustExpressi
                             )
                    )
 
-        RustExpressionLambda lambda ->
+        RustExpressionClosure lambda ->
             (lambda.result |> rustExpressionCountUsesOfReference referenceToCheck)
                 >= 1
 
@@ -10125,7 +10176,7 @@ rustExpressionInnermostLambdaResult :
 rustExpressionInnermostLambdaResult rustExpression =
     -- IGNORE TCO
     case rustExpression of
-        RustExpressionLambda lambda ->
+        RustExpressionClosure lambda ->
             let
                 resultInnermostLambdaResult : { statements : List RustStatement, result : RustExpression }
                 resultInnermostLambdaResult =
@@ -10316,7 +10367,7 @@ rustExpressionIsConstant rustExpression =
         RustExpressionCall _ ->
             False
 
-        RustExpressionLambda _ ->
+        RustExpressionClosure _ ->
             False
 
         RustExpressionIfElse _ ->
@@ -10373,7 +10424,7 @@ rustExpressionCountUsesOfReference referenceToCountUsesOf rustExpression =
         RustExpressionRecordAccess recordAccess ->
             rustExpressionCountUsesOfReference referenceToCountUsesOf recordAccess.record
 
-        RustExpressionLambda lambda ->
+        RustExpressionClosure lambda ->
             rustExpressionCountUsesOfReference referenceToCountUsesOf lambda.result
 
         RustExpressionCall call ->
@@ -10583,8 +10634,8 @@ rustExpressionSubstituteReferences referenceToExpression rustExpression =
                 , field = recordAccess.field
                 }
 
-        RustExpressionLambda lambda ->
-            RustExpressionLambda
+        RustExpressionClosure lambda ->
+            RustExpressionClosure
                 { parameters = lambda.parameters
                 , result =
                     lambda.result
@@ -14010,7 +14061,7 @@ rustExpressionIsSpaceSeparated rustExpression =
         RustExpressionCall _ ->
             False
 
-        RustExpressionLambda _ ->
+        RustExpressionClosure _ ->
             True
 
         RustExpressionAfterStatement _ ->
@@ -14059,8 +14110,8 @@ printRustExpressionNotParenthesized rustExpression =
         RustExpressionTuple parts ->
             printRustExpressionTuple parts
 
-        RustExpressionLambda syntaxLambda ->
-            printRustExpressionLambda syntaxLambda
+        RustExpressionClosure syntaxLambda ->
+            printRustExpressionClosure syntaxLambda
 
         RustExpressionAfterStatement rustExpressionAfterStatement ->
             printRustExpressionAfterStatement rustExpressionAfterStatement
@@ -14322,7 +14373,7 @@ printRustPatternParenthesizedIfSpaceSeparated rustPattern =
         notParenthesizedPrint
 
 
-printRustExpressionLambda :
+printRustExpressionClosure :
     { parameters :
         List
             { pattern : RustPattern
@@ -14331,7 +14382,7 @@ printRustExpressionLambda :
     , result : RustExpression
     }
     -> Print
-printRustExpressionLambda lambda =
+printRustExpressionClosure lambda =
     let
         resultPrint : Print
         resultPrint =
