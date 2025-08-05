@@ -2,7 +2,7 @@
 > I'm also just learning rust so any tips (e.g. in issues) are appreciated
 >
 > TODO
-> - figure out why `alloc(|a| alloc(|b| ...))` fails with `&mut` not allowed, borrow here
+> - figure out why `alloc(|a| alloc(|b| ...))` fails → solution: add result type to closures + append `as _` https://users.rust-lang.org/t/expected-fn-fn-found-closure/95621/2
 > - if lambda is called with a function, always inline that function
 
 Print [`elm-syntax`](https://dark.elm.dmy.fr/packages/stil4m/elm-syntax/latest/) declarations as [rust](https://www.rust-lang.org/) code.
