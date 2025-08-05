@@ -4,6 +4,7 @@
 > TODO
 > - local functions are currently generated as `fn` but should generally be `let =` closure to be able to use outer allocator etc
 > - if lambda is called with a function, always inline that function
+> - recursive let functions don't work (one solution is passing itself when calling, another is explicitly capturing context and using `fn`. Both are somewhat complicated but I prefer the second because it also solves the "introducing new type variables"-problem)
 
 Print [`elm-syntax`](https://dark.elm.dmy.fr/packages/stil4m/elm-syntax/latest/) declarations as [rust](https://www.rust-lang.org/) code.
 To try it out, you can

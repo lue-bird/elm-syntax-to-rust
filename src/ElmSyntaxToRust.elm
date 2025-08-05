@@ -6522,6 +6522,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                         }
 
                                                                     Nothing ->
+                                                                        -- TODO instead still generate as fn(allocator)
                                                                         { typeAliases = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.typeAliases
                                                                         , enumTypes = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.enumTypes
                                                                         , fns = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.fns
@@ -6531,7 +6532,6 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                     rustName
                                                                                     { resultType = rustValueOrFunctionDeclaration.resultType
                                                                                     , result =
-                                                                                        -- TODO is that necessary?
                                                                                         case rustValueOrFunctionDeclaration.result of
                                                                                             RustExpressionAfterStatement _ ->
                                                                                                 RustExpressionCall
@@ -8216,7 +8216,7 @@ expression context expressionTypedNode =
                 (\elements ->
                     case elements of
                         [] ->
-                            rustExpressionListEmpty
+                            rustExpressionBorrowListEmpty
 
                         [ onlyElement ] ->
                             RustExpressionCall
@@ -8610,12 +8610,14 @@ rustExpressionAllocFunction =
         }
 
 
-rustExpressionListEmpty : RustExpression
-rustExpressionListEmpty =
-    RustExpressionVariant
-        { originTypeName = [ "ListListGuts" ]
-        , name = "Empty"
-        }
+rustExpressionBorrowListEmpty : RustExpression
+rustExpressionBorrowListEmpty =
+    RustExpressionBorrow
+        (RustExpressionVariant
+            { originTypeName = [ "ListListGuts" ]
+            , name = "Empty"
+            }
+        )
 
 
 rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary :
@@ -8664,6 +8666,13 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
 
             else
                 parameterCount
+
+        _ =
+            if rustReference.name == "make_independent_seed" then
+                Debug.log "makeIndependentSeed has parameter count " parameterCountIncludingPotentialAllocator
+
+            else
+                0
     in
     case parameterCountIncludingPotentialAllocator of
         1 ->
@@ -8687,6 +8696,28 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
                             }
             in
             if
+                (rustReference.qualification |> List.isEmpty)
+                    && (context.letDeclaredValueAndFunctionTypes
+                            |> FastDict.member rustReference.name
+                       )
+            then
+                if asRustType |> rustTypeIsConcrete then
+                    RustExpressionReference
+                        { qualification = rustReference.qualification
+                        , name = rustReference.name
+                        }
+
+                else
+                    RustExpressionCall
+                        { called =
+                            RustExpressionReference
+                                { qualification = rustReference.qualification
+                                , name = rustReference.name
+                                }
+                        , arguments = []
+                        }
+
+            else if
                 (asRustType |> rustTypeIsConcrete)
                     && (asRustType
                             |> rustTypeUsedLifetimeVariables
@@ -8699,7 +8730,6 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
                     }
 
             else
-                -- TODO not if local fn
                 RustExpressionCall
                     { called =
                         RustExpressionReference
@@ -8707,20 +8737,11 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
                             , name = rustReference.name
                             }
                     , arguments =
-                        if
-                            (rustReference.qualification |> List.isEmpty)
-                                && (context.letDeclaredValueAndFunctionTypes
-                                        |> FastDict.member rustReference.name
-                                   )
-                        then
-                            []
-
-                        else
-                            [ RustExpressionReference
-                                { qualification = []
-                                , name = generatedAllocatorVariableName
-                                }
-                            ]
+                        [ RustExpressionReference
+                            { qualification = []
+                            , name = generatedAllocatorVariableName
+                            }
+                        ]
                     }
 
         _ ->
@@ -11074,21 +11095,25 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
                             syntaxLetDeclarationValueOrFunctionNode.declaration.type_
                                 |> type_ { typeAliasesInModule = typeAliasesInModule }
                     in
-                    if rustResultType |> rustTypeIsConcrete then
-                        RustStatementLetDeclaration
-                            { name = rustName
-                            , resultType = rustResultType
-                            , result = result
-                            }
+                    case introducedTypeParameters of
+                        [] ->
+                            RustStatementLetDeclaration
+                                { name = rustName
+                                , resultType = rustResultType
+                                , result = result
+                                }
 
-                    else
-                        RustStatementFnDeclaration
-                            { name = rustName
-                            , parameters = []
-                            , result = result
-                            , resultType = rustResultType
-                            , introducedTypeParameters = introducedTypeParameters
-                            }
+                        introducedTypeParameter0 :: introducedTypeParameter1Up ->
+                            -- happens with e.g. let empty = Dict.empty
+                            -- does that actually solve it?
+                            RustStatementFnDeclaration
+                                { name = rustName
+                                , parameters = []
+                                , result = result
+                                , resultType = rustResultType
+                                , introducedTypeParameters =
+                                    introducedTypeParameter0 :: introducedTypeParameter1Up
+                                }
                 )
                 (syntaxLetDeclarationValueOrFunctionNode.declaration.result
                     |> expression
@@ -11126,8 +11151,8 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
                                         }
                                     )
 
-                        fullResult : RustExpression
-                        fullResult =
+                        resultWithAdditionalParameters : RustExpression
+                        resultWithAdditionalParameters =
                             additionalGeneratedParameters
                                 |> List.foldl
                                     (\additionalGeneratedParameter soFar ->
@@ -11141,10 +11166,9 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
                                             }
                                     )
                                     result
-                    in
-                    RustStatementFnDeclaration
-                        { name = rustName
-                        , parameters =
+
+                        parameters : List { pattern : RustPattern, type_ : RustType }
+                        parameters =
                             (syntaxLetDeclarationValueOrFunctionNode.declaration.parameters
                                 |> List.map
                                     (\parameter ->
@@ -11164,12 +11188,50 @@ letValueOrFunctionDeclaration context syntaxLetDeclarationValueOrFunctionNode =
                                                 }
                                             )
                                    )
-                        , resultType =
+
+                        resultType : RustType
+                        resultType =
                             rustFullTypeAsFunction.output
                                 |> type_ { typeAliasesInModule = typeAliasesInModule }
-                        , introducedTypeParameters = introducedTypeParameters
-                        , result = fullResult
-                        }
+
+                        closureType : RustType
+                        closureType =
+                            RustTypeBorrow
+                                { lifetimeVariable = Just generatedLifetimeVariableName
+                                , type_ =
+                                    RustTypeFunction
+                                        { input = parameters |> List.map .type_
+                                        , output = resultType
+                                        }
+                                }
+
+                        closure : RustExpression
+                        closure =
+                            rustExpressionAlloc
+                                (RustExpressionClosure
+                                    { parameters = parameters
+                                    , result = resultWithAdditionalParameters
+                                    }
+                                )
+                    in
+                    case introducedTypeParameters of
+                        [] ->
+                            RustStatementLetDeclaration
+                                { name = rustName
+                                , resultType = closureType
+                                , result = closure
+                                }
+
+                        introducedTypeParameter0 :: introducedTypeParameter1Up ->
+                            -- does that actually solve it?
+                            RustStatementFnDeclaration
+                                { name = rustName
+                                , parameters = []
+                                , resultType = closureType
+                                , introducedTypeParameters =
+                                    introducedTypeParameter0 :: introducedTypeParameter1Up
+                                , result = closure
+                                }
                 )
                 (syntaxLetDeclarationValueOrFunctionNode.declaration.result
                     |> expression
