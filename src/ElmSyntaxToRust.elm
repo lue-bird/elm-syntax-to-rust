@@ -7231,10 +7231,7 @@ rustKeywords =
         ]
 
 
-{-| Attention: Use `expressionWrappingInLetIfOrMatchResult`
-instead when rust if/match are not allowed as `.result`
--}
-expression :
+type alias ExpressionToRustContext =
     { variablesFromWithinDeclarationInScope : FastSet.Set String
     , letDeclaredValueAndFunctionTypes : FastDict.Dict String ElmSyntaxTypeInfer.Type
     , moduleInfo :
@@ -7257,6 +7254,13 @@ expression :
             }
     , path : List String
     }
+
+
+{-| Attention: Use `expressionWrappingInLetIfOrMatchResult`
+instead when rust if/match are not allowed as `.result`
+-}
+expression :
+    ExpressionToRustContext
     ->
         ElmSyntaxTypeInfer.TypedNode
             ElmSyntaxTypeInfer.Expression
@@ -8621,27 +8625,7 @@ rustExpressionBorrowListEmpty =
 
 
 rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary :
-    { variablesFromWithinDeclarationInScope : FastSet.Set String
-    , letDeclaredValueAndFunctionTypes : FastDict.Dict String ElmSyntaxTypeInfer.Type
-    , moduleInfo :
-        FastDict.Dict
-            {- module origin -} String
-            { portsIncoming : FastSet.Set String
-            , portsOutgoing : FastSet.Set String
-            , valueAndFunctionAnnotations :
-                FastDict.Dict
-                    String
-                    ElmSyntaxTypeInfer.Type
-            , typeAliases :
-                FastDict.Dict
-                    String
-                    { parameters : List String
-                    , recordFieldOrder : Maybe (List String)
-                    , type_ : ElmSyntaxTypeInfer.Type
-                    }
-            }
-    , path : List String
-    }
+    ExpressionToRustContext
     ->
         { qualification : List String
         , name : String
@@ -10874,27 +10858,7 @@ rustStatementMatchCaseSubstituteReferences referenceToExpression rustCase =
 
 
 case_ :
-    { variablesFromWithinDeclarationInScope : FastSet.Set String
-    , letDeclaredValueAndFunctionTypes : FastDict.Dict String ElmSyntaxTypeInfer.Type
-    , moduleInfo :
-        FastDict.Dict
-            {- module origin -} String
-            { portsIncoming : FastSet.Set String
-            , portsOutgoing : FastSet.Set String
-            , valueAndFunctionAnnotations :
-                FastDict.Dict
-                    String
-                    ElmSyntaxTypeInfer.Type
-            , typeAliases :
-                FastDict.Dict
-                    String
-                    { parameters : List String
-                    , recordFieldOrder : Maybe (List String)
-                    , type_ : ElmSyntaxTypeInfer.Type
-                    }
-            }
-    , path : List String
-    }
+    ExpressionToRustContext
     ->
         { pattern :
             ElmSyntaxTypeInfer.TypedNode
@@ -10941,27 +10905,7 @@ case_ context syntaxCase =
 
 
 letDeclaration :
-    { variablesFromWithinDeclarationInScope : FastSet.Set String
-    , letDeclaredValueAndFunctionTypes : FastDict.Dict String ElmSyntaxTypeInfer.Type
-    , moduleInfo :
-        FastDict.Dict
-            {- module origin -} String
-            { portsIncoming : FastSet.Set String
-            , portsOutgoing : FastSet.Set String
-            , valueAndFunctionAnnotations :
-                FastDict.Dict
-                    String
-                    ElmSyntaxTypeInfer.Type
-            , typeAliases :
-                FastDict.Dict
-                    String
-                    { parameters : List String
-                    , recordFieldOrder : Maybe (List String)
-                    , type_ : ElmSyntaxTypeInfer.Type
-                    }
-            }
-    , path : List String
-    }
+    ExpressionToRustContext
     ->
         { range : Elm.Syntax.Range.Range
         , declaration : ElmSyntaxTypeInfer.LetDeclaration
@@ -11001,27 +10945,7 @@ letDeclaration context syntaxLetDeclarationNode =
 
 
 letValueOrFunctionDeclaration :
-    { variablesFromWithinDeclarationInScope : FastSet.Set String
-    , letDeclaredValueAndFunctionTypes : FastDict.Dict String ElmSyntaxTypeInfer.Type
-    , moduleInfo :
-        FastDict.Dict
-            {- module origin -} String
-            { portsIncoming : FastSet.Set String
-            , portsOutgoing : FastSet.Set String
-            , valueAndFunctionAnnotations :
-                FastDict.Dict
-                    String
-                    ElmSyntaxTypeInfer.Type
-            , typeAliases :
-                FastDict.Dict
-                    String
-                    { parameters : List String
-                    , recordFieldOrder : Maybe (List String)
-                    , type_ : ElmSyntaxTypeInfer.Type
-                    }
-            }
-    , path : List String
-    }
+    ExpressionToRustContext
     ->
         { range : Elm.Syntax.Range.Range
         , declaration :
