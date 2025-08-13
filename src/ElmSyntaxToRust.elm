@@ -1352,8 +1352,7 @@ printRustTypeFunction typeFunction =
 
         outputPrint : Print
         outputPrint =
-            printRustTypeParenthesizedIfSpaceSeparated
-                outputExpanded.output
+            printRustTypeNotParenthesized outputExpanded.output
 
         input1UpPrints : List Print
         input1UpPrints =
@@ -1727,8 +1726,8 @@ printExactlyGreaterThan =
     Print.exactly ">"
 
 
-typeIsSpaceSeparated : RustType -> Bool
-typeIsSpaceSeparated rustType =
+rustTypeIsSpaceSeparated : RustType -> Bool
+rustTypeIsSpaceSeparated rustType =
     case rustType of
         RustTypeUnit ->
             False
@@ -1759,7 +1758,7 @@ printRustTypeParenthesizedIfSpaceSeparated rustType =
         notParenthesizedPrint =
             rustType |> printRustTypeNotParenthesized
     in
-    if rustType |> typeIsSpaceSeparated then
+    if rustType |> rustTypeIsSpaceSeparated then
         printParenthesized notParenthesizedPrint
 
     else
