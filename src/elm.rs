@@ -18,12 +18,12 @@ pub struct ListIterator<'a, A> {
     remaining_list: ListList<'a, A>,
 }
 
-impl<'a, A: Copy> Iterator for ListIterator<'a, A> {
-    type Item = A; // it might be better to return &A
+impl<'a, A> Iterator for ListIterator<'a, A> {
+    type Item = &'a A;
     fn next(&mut self) -> Option<Self::Item> {
         match self.remaining_list {
             &ListListGuts::Empty => Option::None,
-            &ListListGuts::Cons(head, tail) => {
+            &ListListGuts::Cons(ref head, tail) => {
                 self.remaining_list = tail;
                 Option::Some(head)
             }
@@ -38,7 +38,7 @@ impl<'a, A> ListListGuts<'a, A> {
         }
     }
 }
-impl<'a, A: Copy + std::fmt::Debug> std::fmt::Debug for ListListGuts<'a, A> {
+impl<'a, A: Clone + std::fmt::Debug> std::fmt::Debug for ListListGuts<'a, A> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("List[")?;
         let mut is_tail_element: bool = false;
@@ -207,19 +207,19 @@ pub fn bitwise_shift_right_zf_by(positions: f64, n: f64) -> f64 {
     std::ops::Shr::shr(n as u32, positions as u32) as f64
 }
 
-pub fn list_is_empty<A: Copy>(list: ListList<A>) -> bool {
+pub fn list_is_empty<A>(list: ListList<A>) -> bool {
     match list {
         &ListListGuts::Empty => true,
         &ListListGuts::Cons(_, _) => false,
     }
 }
-pub fn list_head<A: Copy>(list: ListList<A>) -> Option<A> {
+pub fn list_head<A: Clone>(list: ListList<A>) -> Option<A> {
     match list {
         &ListListGuts::Empty => Option::None,
-        &ListListGuts::Cons(head, _) => Option::Some(head),
+        &ListListGuts::Cons(ref head, _) => Option::Some(head.clone()),
     }
 }
-pub fn list_tail<A: Copy>(list: ListList<A>) -> Option<ListList<A>> {
+pub fn list_tail<A: Clone>(list: ListList<A>) -> Option<ListList<A>> {
     match list {
         &ListListGuts::Empty => Option::None,
         &ListListGuts::Cons(_, tail) => Option::Some(tail),
@@ -231,24 +231,38 @@ pub fn list_cons<'a, A>(allocator: &'a Bump, head: A, tail: ListList<'a, A>) -> 
 pub fn list_singleton<'a, A>(allocator: &'a Bump, only_element: A) -> ListList<'a, A> {
     list_cons(allocator, only_element, &ListListGuts::Empty)
 }
-pub fn list_repeat<'a, A: Copy>(allocator: &'a Bump, count: f64, element: A) -> ListList<'a, A> {
+pub fn list_repeat<'a, A: Clone>(allocator: &'a Bump, count: f64, element: A) -> ListList<'a, A> {
     double_ended_iterator_to_list(allocator, std::iter::repeat_n(element, count as usize))
 }
 pub fn list_range<'a>(allocator: &'a Bump, min: f64, max: f64) -> ListList<'a, f64> {
     double_ended_iterator_to_list(allocator, ((min as i32)..=(max as i32)).map(|n| n as f64))
 }
-pub fn double_ended_iterator_to_list<'a, A: Copy, AIterator: DoubleEndedIterator<Item = A>>(
+pub fn double_ended_iterator_to_list<'a, A: Clone, AIterator: DoubleEndedIterator<Item = A>>(
     allocator: &'a Bump,
     iterator: AIterator,
 ) -> ListList<'a, A> {
     let mut list_so_far: ListList<A> = &ListListGuts::Empty;
     for element in iterator.rev() {
-        list_so_far = list_cons(allocator, element, list_so_far)
+        list_so_far = list_cons(allocator, element.clone(), list_so_far)
+    }
+    list_so_far
+}
+pub fn double_ended_ref_iterator_to_list<
+    'a,
+    A: Clone,
+    AIterator: DoubleEndedIterator<Item = &'a A>,
+>(
+    allocator: &'a Bump,
+    iterator: AIterator,
+) -> ListList<'a, A> {
+    let mut list_so_far: ListList<A> = &ListListGuts::Empty;
+    for element in iterator.rev() {
+        list_so_far = list_cons(allocator, element.clone(), list_so_far)
     }
     list_so_far
 }
 
-pub fn list_length<A: Copy>(list: ListList<A>) -> f64 {
+pub fn list_length<A>(list: ListList<A>) -> f64 {
     list.iter().count() as f64
 }
 pub fn list_sum(list: ListList<f64>) -> f64 {
@@ -257,39 +271,46 @@ pub fn list_sum(list: ListList<f64>) -> f64 {
 pub fn list_product(list: ListList<f64>) -> f64 {
     list.iter().product()
 }
-pub fn list_all<A: Copy, IsExpected: Fn(A) -> bool>(
+pub fn list_all<A: Clone, IsExpected: Fn(A) -> bool>(
     is_expected: IsExpected,
     list: ListList<A>,
 ) -> bool {
-    list.iter().all(is_expected)
+    list.iter().all(|el| is_expected(el.clone()))
 }
-pub fn list_any<A: Copy, IsNeedle: Fn(A) -> bool>(is_needle: IsNeedle, list: ListList<A>) -> bool {
-    list.iter().any(is_needle)
+pub fn list_any<A: Clone, IsNeedle: Fn(A) -> bool>(is_needle: IsNeedle, list: ListList<A>) -> bool {
+    list.iter().any(|el| is_needle(el.clone()))
 }
-pub fn list_member<A: Copy + PartialEq>(needle: A, list: ListList<A>) -> bool {
-    list.iter().any(|el| el == needle)
+pub fn list_member<A: Clone + PartialEq>(needle: A, list: ListList<A>) -> bool {
+    list.iter().any(|el| el == &needle)
 }
-pub fn list_minimum<A: Copy + PartialOrd>(list: ListList<A>) -> Option<A> {
-    list.iter().min_by(|&l, &r| basics_compare(l, r))
+pub fn list_minimum<A: Clone + PartialOrd>(list: ListList<A>) -> Option<A> {
+    list.iter().min_by(|&l, &r| basics_compare(l, r)).cloned()
 }
-pub fn list_maximum<A: Copy + PartialOrd>(list: ListList<A>) -> Option<A> {
-    list.iter().max_by(|&l, &r| basics_compare(l, r))
+pub fn list_maximum<A: Clone + PartialOrd>(list: ListList<A>) -> Option<A> {
+    list.iter().max_by(|&l, &r| basics_compare(l, r)).cloned()
 }
-pub fn list_take<'a, A: Copy>(
+pub fn list_take<'a, A: Clone>(
     allocator: &'a Bump,
     keep_count: f64,
-    list: ListList<A>,
+    list: ListList<'a, A>,
 ) -> ListList<'a, A> {
-    iterator_to_list(allocator, list.iter().take(keep_count as usize))
+    ref_iterator_to_list(allocator, list.iter().take(keep_count as usize))
 }
 /// prefer `double_ended_iterator_to_list` where possible
-pub fn iterator_to_list<'a, A: Copy, AIterator: Iterator<Item = A>>(
+pub fn iterator_to_list<'a, A: Clone, AIterator: Iterator<Item = A>>(
     allocator: &'a Bump,
     iterator: AIterator,
 ) -> ListList<'a, A> {
     double_ended_iterator_to_list(allocator, iterator.collect::<Vec<A>>().into_iter())
 }
-pub fn list_drop<'a, A: Copy>(skip_count: f64, list: ListList<'a, A>) -> ListList<'a, A> {
+/// prefer `double_ended_ref_iterator_to_list` where possible
+pub fn ref_iterator_to_list<'a, A: Clone, AIterator: Iterator<Item = &'a A>>(
+    allocator: &'a Bump,
+    iterator: AIterator,
+) -> ListList<'a, A> {
+    double_ended_ref_iterator_to_list(allocator, iterator.collect::<Vec<&A>>().into_iter())
+}
+pub fn list_drop<'a, A: Clone>(skip_count: f64, list: ListList<'a, A>) -> ListList<'a, A> {
     let mut iterator = list.iter();
     for () in std::iter::repeat_n((), skip_count as usize) {
         match iterator.next() {
@@ -299,87 +320,97 @@ pub fn list_drop<'a, A: Copy>(skip_count: f64, list: ListList<'a, A>) -> ListLis
     }
     iterator.remaining_list
 }
-pub fn list_intersperse<'a, A: Copy>(
+pub fn list_intersperse<'a, A: Clone>(
     allocator: &'a Bump,
     in_between: A,
     list: ListList<A>,
 ) -> ListList<'a, A> {
     match list {
         &ListListGuts::Empty => &ListListGuts::Empty,
-        &ListListGuts::Cons(head, tail) => list_cons(
+        &ListListGuts::Cons(ref head, tail) => list_cons(
             allocator,
-            head,
+            head.clone(),
             iterator_to_list(
                 allocator,
                 tail.iter().flat_map(|tail_element| {
-                    std::iter::once(in_between).chain(std::iter::once(tail_element))
+                    std::iter::once(in_between.clone()).chain(std::iter::once(tail_element.clone()))
                 }),
             ),
         ),
     }
 }
-pub fn list_concat<'a, A: Copy>(
+pub fn list_concat<'a, A: Clone>(
     allocator: &'a Bump,
-    list: ListList<ListList<A>>,
+    list: ListList<'a, ListList<A>>,
 ) -> ListList<'a, A> {
-    iterator_to_list(allocator, list.iter().flat_map(|inner| inner.iter()))
+    ref_iterator_to_list(allocator, list.iter().flat_map(|inner| inner.iter()))
 }
-pub fn list_concat_map<'a, A: Copy, B: Copy, ElementToList: Fn(A) -> ListList<'a, B>>(
+pub fn list_concat_map<'a, A: Clone, B: Clone, ElementToList: Fn(A) -> ListList<'a, B>>(
     allocator: &'a Bump,
     element_to_list: ElementToList,
     list: ListList<A>,
 ) -> ListList<'a, B> {
-    iterator_to_list(
+    ref_iterator_to_list(
         allocator,
-        list.iter().flat_map(|inner| element_to_list(inner).iter()),
+        list.iter()
+            .flat_map(|inner| element_to_list(inner.clone()).iter()),
     )
 }
-pub fn list_foldl<A: Copy, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) -> State>(
+pub fn list_foldl<A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) -> State>(
     reduce: Reduce,
     initial_state: State,
     list: ListList<A>,
 ) -> State {
-    list.iter()
-        .fold(initial_state, |state, element| reduce(element)(state))
+    list.iter().fold(initial_state, |state, element| {
+        reduce(element.clone())(state)
+    })
 }
-pub fn list_foldr<A: Copy, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) -> State>(
+pub fn list_foldr<A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) -> State>(
     reduce: Reduce,
     initial_state: State,
     list: ListList<A>,
 ) -> State {
     list.iter()
+        .map(|el| el.clone())
         .collect::<Vec<A>>()
-        .iter()
+        .into_iter()
         .rev()
-        .fold(initial_state, |state, &element| reduce(element)(state))
+        .fold(initial_state, |state, element| {
+            reduce(element.clone())(state)
+        })
 }
 
-pub fn list_reverse<'a, A: Copy>(allocator: &'a Bump, list: ListList<A>) -> ListList<'a, A> {
+pub fn list_reverse<'a, A: Clone>(allocator: &'a Bump, list: ListList<A>) -> ListList<'a, A> {
     let mut reverse_list: ListList<A> = &ListListGuts::Empty;
     for new_head in list.iter() {
-        reverse_list = list_cons(allocator, new_head, reverse_list)
+        reverse_list = list_cons(allocator, new_head.clone(), reverse_list)
     }
     reverse_list
 }
-pub fn list_filter<'a, A: Copy, Keep: Fn(A) -> bool>(
+pub fn list_filter<'a, A: Clone, Keep: Fn(A) -> bool>(
     allocator: &'a Bump,
     keep: Keep,
     list: ListList<A>,
 ) -> ListList<'a, A> {
     // can be optimized by just returning list when all elements were kept
-    iterator_to_list(allocator, list.iter().filter(|&element| keep(element)))
+    iterator_to_list(
+        allocator,
+        list.iter()
+            .map(|el| el.clone())
+            .filter(|element| keep(element.clone())),
+    )
 }
-pub fn list_map<'a, A: Copy, B: Copy, ElementChange: Fn(A) -> B>(
+pub fn list_map<'a, A: Clone, B: Clone, ElementChange: Fn(A) -> B>(
     allocator: &'a Bump,
     element_change: ElementChange,
     list: ListList<A>,
 ) -> ListList<'a, B> {
-    iterator_to_list(allocator, list.iter().map(element_change))
+    iterator_to_list(allocator, list.iter().map(|el| element_change(el.clone())))
 }
 pub fn list_indexed_map<
     'a,
-    A: Copy,
-    B: Copy,
+    A: Clone,
+    B: Clone,
     IndexedElementToNew: Fn(f64) -> IndexedElementToNew1,
     IndexedElementToNew1: Fn(A) -> B,
 >(
@@ -391,37 +422,44 @@ pub fn list_indexed_map<
         allocator,
         list.iter()
             .enumerate()
-            .map(|(index, element)| indexed_element_to_new(index as f64)(element)),
+            .map(|(index, element)| indexed_element_to_new(index as f64)(element.clone())),
     )
 }
-pub fn list_filter_map<'a, A: Copy, B: Copy, ElementToMaybe: Fn(A) -> Option<B>>(
+pub fn list_filter_map<'a, A: Clone, B: Clone, ElementToMaybe: Fn(A) -> Option<B>>(
     allocator: &'a Bump,
     element_to_maybe: ElementToMaybe,
     list: ListList<'a, A>,
 ) -> ListList<'a, B> {
-    iterator_to_list(allocator, list.iter().filter_map(element_to_maybe))
+    iterator_to_list(
+        allocator,
+        list.iter().filter_map(|el| element_to_maybe(el.clone())),
+    )
 }
-pub fn list_sort<'a, A: Copy + PartialOrd>(
+pub fn list_sort<'a, A: Clone + PartialOrd>(
     allocator: &'a Bump,
-    list: ListList<A>,
+    list: ListList<'a, A>,
 ) -> ListList<'a, A> {
-    let mut list_copy_as_vec: Vec<A> = list.iter().collect();
+    let mut list_copy_as_vec: Vec<&A> = list.iter().collect();
     list_copy_as_vec.sort_by(|&a, &b| basics_compare(a, b));
-    array_to_list(allocator, &list_copy_as_vec)
+    double_ended_ref_iterator_to_list(allocator, list_copy_as_vec.into_iter())
 }
-pub fn list_sort_by<'a, A: Copy, B: PartialOrd, ElementToComparable: Fn(A) -> B>(
+pub fn list_sort_by<'a, A: Clone, B: PartialOrd, ElementToComparable: Fn(A) -> B>(
     allocator: &'a Bump,
     element_to_comparable: ElementToComparable,
     list: ListList<'a, A>,
 ) -> ListList<'a, A> {
-    let mut list_copy_as_vec: Vec<A> = list.iter().collect();
-    list_copy_as_vec
-        .sort_by(|&a, &b| basics_compare(element_to_comparable(a), element_to_comparable(b)));
-    array_to_list(allocator, &list_copy_as_vec)
+    let mut list_copy_as_vec: Vec<A> = list.iter().map(|el| el.clone()).collect();
+    list_copy_as_vec.sort_by(|a, b| {
+        basics_compare(
+            element_to_comparable(a.clone()),
+            element_to_comparable(b.clone()),
+        )
+    });
+    double_ended_iterator_to_list(allocator, list_copy_as_vec.into_iter())
 }
 pub fn list_sort_with<
     'a,
-    A: Copy,
+    A: Clone,
     ElementCompare: Fn(A) -> ElementCompare1,
     ElementCompare1: Fn(A) -> std::cmp::Ordering,
 >(
@@ -429,57 +467,66 @@ pub fn list_sort_with<
     element_compare: ElementCompare,
     list: ListList<'a, A>,
 ) -> ListList<'a, A> {
-    let mut list_copy_as_vec: Vec<A> = list.iter().collect();
-    list_copy_as_vec.sort_by(|&a, &b| element_compare(a)(b));
-    array_to_list(allocator, &list_copy_as_vec)
+    let mut list_copy_as_vec: Vec<A> = list.iter().map(|el| el.clone()).collect();
+    list_copy_as_vec.sort_by(|a, b| element_compare(a.clone())(b.clone()));
+    double_ended_iterator_to_list(allocator, list_copy_as_vec.into_iter())
 }
-pub fn list_append<'a, A: Copy>(
+pub fn list_append<'a, A: Clone>(
     allocator: &'a Bump,
     left: ListList<A>,
     right: ListList<'a, A>,
 ) -> ListList<'a, A> {
     // can be optimized
     let mut combined_list: ListList<A> = right;
-    for next_right_last_element in left.iter().collect::<Vec<A>>().into_iter().rev() {
-        combined_list = list_cons(allocator, next_right_last_element, combined_list)
+    for next_right_last_element in left.iter().collect::<Vec<&A>>().into_iter().rev() {
+        combined_list = list_cons(allocator, next_right_last_element.clone(), combined_list)
     }
     combined_list
 }
-pub fn list_unzip<'a, A: Copy, B: Copy>(
+pub fn list_unzip<'a, A: Clone, B: Clone>(
     allocator: &'a Bump,
     list: ListList<(A, B)>,
 ) -> (ListList<'a, A>, ListList<'a, B>) {
     let mut a_list: ListList<A> = &ListListGuts::Empty;
     let mut b_list: ListList<B> = &ListListGuts::Empty;
-    for (next_last_a, next_last_b) in list.iter().collect::<Vec<(A, B)>>().into_iter().rev() {
-        a_list = list_cons(allocator, next_last_a, a_list);
-        b_list = list_cons(allocator, next_last_b, b_list)
+    for (next_last_a, next_last_b) in list.iter().collect::<Vec<&(A, B)>>().into_iter().rev() {
+        a_list = list_cons(allocator, next_last_a.clone(), a_list);
+        b_list = list_cons(allocator, next_last_b.clone(), b_list)
     }
     (a_list, b_list)
 }
-pub fn list_partition<'a, A: Copy, Decode: Fn(A) -> bool>(
+pub fn list_partition<'a, A: Clone, Decode: Fn(A) -> bool>(
     allocator: &'a Bump,
     decode: Decode,
     list: ListList<A>,
 ) -> (ListList<'a, A>, ListList<'a, A>) {
-    let (yes, no): (Vec<A>, Vec<A>) = list.iter().partition(|&element| decode(element));
+    let (yes, no): (Vec<A>, Vec<A>) = list
+        .iter()
+        .map(|el| el.clone())
+        .partition(|element| decode(element.clone()));
     (
         iterator_to_list(allocator, yes.into_iter()),
         iterator_to_list(allocator, no.into_iter()),
     )
 }
-pub fn list_zip<'a, A: Copy, B: Copy>(
+pub fn list_zip<'a, A: Clone, B: Clone>(
     allocator: &'a Bump,
     a_list: ListList<A>,
     b_list: ListList<B>,
 ) -> ListList<'a, (A, B)> {
-    iterator_to_list(allocator, std::iter::zip(a_list.iter(), b_list.iter()))
+    iterator_to_list(
+        allocator,
+        std::iter::zip(
+            a_list.iter().map(|el| el.clone()),
+            b_list.iter().map(|el| el.clone()),
+        ),
+    )
 }
 pub fn list_map2<
     'a,
-    A: Copy,
-    B: Copy,
-    Combined: Copy,
+    A: Clone,
+    B: Clone,
+    Combined: Clone,
     Combine: Fn(A) -> Combine1,
     Combine1: Fn(B) -> Combined,
 >(
@@ -490,15 +537,15 @@ pub fn list_map2<
 ) -> ListList<'a, Combined> {
     iterator_to_list(
         allocator,
-        std::iter::zip(a_list.iter(), b_list.iter()).map(|(a, b)| combine(a)(b)),
+        std::iter::zip(a_list.iter(), b_list.iter()).map(|(a, b)| combine(a.clone())(b.clone())),
     )
 }
 pub fn list_map3<
     'a,
-    A: Copy,
-    B: Copy,
-    C: Copy,
-    Combined: Copy,
+    A: Clone,
+    B: Clone,
+    C: Clone,
+    Combined: Clone,
     Combine: Fn(A) -> Combine1,
     Combine1: Fn(B) -> Combine2,
     Combine2: Fn(C) -> Combined,
@@ -515,16 +562,16 @@ pub fn list_map3<
             .iter()
             .zip(b_list.iter())
             .zip(c_list.iter())
-            .map(|((a, b), c)| combine(a)(b)(c)),
+            .map(|((a, b), c)| combine(a.clone())(b.clone())(c.clone())),
     )
 }
 pub fn list_map4<
     'a,
-    A: Copy,
-    B: Copy,
-    C: Copy,
-    D: Copy,
-    Combined: Copy,
+    A: Clone,
+    B: Clone,
+    C: Clone,
+    D: Clone,
+    Combined: Clone,
     Combine: Fn(A) -> Combine1,
     Combine1: Fn(B) -> Combine2,
     Combine2: Fn(C) -> Combine3,
@@ -544,17 +591,17 @@ pub fn list_map4<
             .zip(b_list.iter())
             .zip(c_list.iter())
             .zip(d_list.iter())
-            .map(|(((a, b), c), d)| combine(a)(b)(c)(d)),
+            .map(|(((a, b), c), d)| combine(a.clone())(b.clone())(c.clone())(d.clone())),
     )
 }
 pub fn list_map5<
     'a,
-    A: Copy,
-    B: Copy,
-    C: Copy,
-    D: Copy,
-    E: Copy,
-    Combined: Copy,
+    A: Clone,
+    B: Clone,
+    C: Clone,
+    D: Clone,
+    E: Clone,
+    Combined: Clone,
     Combine: Fn(A) -> Combine1,
     Combine1: Fn(B) -> Combine2,
     Combine2: Fn(C) -> Combine3,
@@ -577,7 +624,9 @@ pub fn list_map5<
             .zip(c_list.iter())
             .zip(d_list.iter())
             .zip(e_list.iter())
-            .map(|((((a, b), c), d), e)| combine(a)(b)(c)(d)(e)),
+            .map(|((((a, b), c), d), e)| {
+                combine(a.clone())(b.clone())(c.clone())(d.clone())(e.clone())
+            }),
     )
 }
 
@@ -586,10 +635,10 @@ pub type ArrayArray<'a, A> = &'a [A];
 pub fn array_empty<'a, A>() -> ArrayArray<'a, A> {
     &[]
 }
-pub fn array_singleton<A>(allocator: &Bump, only_element: A) -> ArrayArray<A> {
+pub fn array_singleton<'a, A>(allocator: &'a Bump, only_element: A) -> ArrayArray<'a, A> {
     allocator.alloc([only_element])
 }
-pub fn array_repeat<'a, A: Copy>(
+pub fn array_repeat<'a, A: Clone>(
     allocator: &'a Bump,
     length: f64,
     element: A,
@@ -613,10 +662,10 @@ pub fn array_is_empty<A>(array: ArrayArray<A>) -> bool {
 pub fn array_length<A>(array: ArrayArray<A>) -> f64 {
     array.len() as f64
 }
-pub fn array_get<A: Copy>(index: f64, array: ArrayArray<A>) -> Option<A> {
-    array.get(index as usize).map(|&element| element)
+pub fn array_get<A: Clone>(index: f64, array: ArrayArray<A>) -> Option<A> {
+    array.get(index as usize).map(|el| el.clone())
 }
-pub fn array_push<'a, A: Copy>(
+pub fn array_push<'a, A: Clone>(
     allocator: &'a Bump,
     new_last_element: A,
     array: ArrayArray<A>,
@@ -625,7 +674,7 @@ pub fn array_push<'a, A: Copy>(
     array_as_vec.push(new_last_element);
     allocator.alloc(array_as_vec)
 }
-pub fn array_set<'a, A: Copy>(
+pub fn array_set<'a, A: Clone>(
     allocator: &'a Bump,
     index: f64,
     new_element: A,
@@ -672,16 +721,16 @@ fn index_from_end_if_negative(index_possibly_negative: f64, full_length: usize) 
         ((full_length as f64 + index_possibly_negative).max(0_f64) as usize).min(full_length)
     }
 }
-pub fn array_from_list<'a, A: Copy>(allocator: &'a Bump, list: ListList<A>) -> ArrayArray<'a, A> {
-    allocator.alloc(list.iter().collect::<Vec<A>>())
+pub fn array_from_list<'a, A: Clone>(allocator: &'a Bump, list: ListList<A>) -> ArrayArray<'a, A> {
+    allocator.alloc(list.iter().map(|el| el.clone()).collect::<Vec<A>>())
 }
 
-pub fn array_reverse<'a, A: Copy>(allocator: &'a Bump, array: ArrayArray<A>) -> ArrayArray<'a, A> {
+pub fn array_reverse<'a, A: Clone>(allocator: &'a Bump, array: ArrayArray<A>) -> ArrayArray<'a, A> {
     let mut array_copy: Vec<A> = array.to_vec();
     array_copy.reverse();
     allocator.alloc(array_copy)
 }
-pub fn array_filter<'a, A: Copy, Keep: Fn(A) -> bool>(
+pub fn array_filter<'a, A: Clone, Keep: Fn(A) -> bool>(
     allocator: &'a Bump,
     keep: Keep,
     array: ArrayArray<'a, A>,
@@ -689,12 +738,12 @@ pub fn array_filter<'a, A: Copy, Keep: Fn(A) -> bool>(
     allocator.alloc(
         array
             .iter()
-            .map(|&element| element)
-            .filter(|&element| keep(element))
+            .map(|element| element.clone())
+            .filter(|element| keep(element.clone()))
             .collect::<Vec<A>>(),
     )
 }
-pub fn array_map<'a, A: Copy, B, ElementChange: Fn(A) -> B>(
+pub fn array_map<'a, A: Clone, B, ElementChange: Fn(A) -> B>(
     allocator: &'a Bump,
     element_change: ElementChange,
     array: ArrayArray<'a, A>,
@@ -702,13 +751,13 @@ pub fn array_map<'a, A: Copy, B, ElementChange: Fn(A) -> B>(
     allocator.alloc(
         array
             .iter()
-            .map(|&element| element_change(element))
+            .map(|element| element_change(element.clone()))
             .collect::<Vec<B>>(),
     )
 }
 pub fn array_indexed_map<
     'a,
-    A: Copy,
+    A: Clone,
     B,
     IndexedElementToNew: Fn(f64) -> IndexedElementToNew1,
     IndexedElementToNew1: Fn(A) -> B,
@@ -721,30 +770,35 @@ pub fn array_indexed_map<
         array
             .iter()
             .enumerate()
-            .map(|(index, &element)| element_change(index as f64)(element))
+            .map(|(index, element)| element_change(index as f64)(element.clone()))
             .collect::<Vec<B>>(),
     )
 }
-pub fn array_sort<'a, A: Copy + PartialOrd>(
+pub fn array_sort<'a, A: Clone + PartialOrd>(
     allocator: &'a Bump,
     array: ArrayArray<A>,
 ) -> ArrayArray<'a, A> {
     let mut array_copy: Vec<A> = array.to_vec();
-    array_copy.sort_by(|&a, &b| basics_compare(a, b));
+    array_copy.sort_by(|a, b| basics_compare(a, b));
     allocator.alloc(array_copy)
 }
-pub fn array_sort_by<'a, A: Copy, B: PartialOrd, ElementToComparable: Fn(A) -> B>(
+pub fn array_sort_by<'a, A: Clone, B: PartialOrd, ElementToComparable: Fn(A) -> B>(
     allocator: &'a Bump,
     element_to_comparable: ElementToComparable,
     array: ArrayArray<'a, A>,
 ) -> ArrayArray<'a, A> {
     let mut array_copy: Vec<A> = array.to_vec();
-    array_copy.sort_by(|&a, &b| basics_compare(element_to_comparable(a), element_to_comparable(b)));
+    array_copy.sort_by(|a, b| {
+        basics_compare(
+            element_to_comparable(a.clone()),
+            element_to_comparable(b.clone()),
+        )
+    });
     allocator.alloc(array_copy)
 }
 pub fn array_sort_with<
     'a,
-    A: Copy,
+    A: Clone,
     ElementCompare: Fn(A) -> ElementCompare1,
     ElementCompare1: Fn(A) -> std::cmp::Ordering,
 >(
@@ -753,14 +807,17 @@ pub fn array_sort_with<
     array: ArrayArray<'a, A>,
 ) -> ArrayArray<'a, A> {
     let mut array_copy: Vec<A> = array.to_vec();
-    array_copy.sort_by(|&a, &b| element_compare(a)(b));
+    array_copy.sort_by(|a, b| element_compare(a.clone())(b.clone()));
     allocator.alloc(array_copy)
 }
 
-pub fn array_to_list<'a, A: Copy>(allocator: &'a Bump, array: ArrayArray<A>) -> ListList<'a, A> {
-    double_ended_iterator_to_list(allocator, array.iter().map(|&e| e))
+pub fn array_to_list<'a, A: Clone>(
+    allocator: &'a Bump,
+    array: ArrayArray<'a, A>,
+) -> ListList<'a, A> {
+    double_ended_ref_iterator_to_list(allocator, array.iter())
 }
-pub fn array_to_indexed_list<'a, A: Copy>(
+pub fn array_to_indexed_list<'a, A: Clone>(
     allocator: &'a Bump,
     array: ArrayArray<A>,
 ) -> ListList<'a, (f64, A)> {
@@ -769,30 +826,29 @@ pub fn array_to_indexed_list<'a, A: Copy>(
         array
             .iter()
             .enumerate()
-            .map(|(index, &element)| (index as f64, element)),
+            .map(|(index, element)| (index as f64, element.clone())),
     )
 }
-pub fn array_foldl<'a, A: Copy, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) -> State>(
+pub fn array_foldl<'a, A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) -> State>(
     reduce: Reduce,
     initial_state: State,
     array: ArrayArray<'a, A>,
 ) -> State {
-    array
-        .iter()
-        .fold(initial_state, |state, &element| reduce(element)(state))
+    array.iter().fold(initial_state, |state, element| {
+        reduce(element.clone())(state)
+    })
 }
-pub fn array_foldr<'a, A: Copy, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) -> State>(
+pub fn array_foldr<'a, A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) -> State>(
     reduce: Reduce,
     initial_state: State,
     array: ArrayArray<'a, A>,
 ) -> State {
-    array
-        .iter()
-        .rev()
-        .fold(initial_state, |state, &element| reduce(element)(state))
+    array.iter().rev().fold(initial_state, |state, element| {
+        reduce(element.clone())(state)
+    })
 }
 
-fn array_append<'a, A: Copy>(
+fn array_append<'a, A: Clone>(
     allocator: &'a Bump,
     left: ArrayArray<A>,
     right: ArrayArray<A>,
