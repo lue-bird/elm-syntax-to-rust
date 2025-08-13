@@ -8601,13 +8601,6 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
 
             else
                 parameterCount
-
-        _ =
-            if rustReference.name == "make_independent_seed" then
-                Debug.log "makeIndependentSeed has parameter count " parameterCountIncludingPotentialAllocator
-
-            else
-                0
     in
     case parameterCountIncludingPotentialAllocator of
         1 ->
