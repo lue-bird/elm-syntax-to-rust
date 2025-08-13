@@ -2,8 +2,10 @@
 > I'm also just learning rust so any tips (e.g. in issues) are appreciated
 >
 > TODO
-> - figure out why `alloc(|a| alloc(|b| ...))` fails → solution: add result type to closures + append `as _` https://users.rust-lang.org/t/expected-fn-fn-found-closure/95621/2
 > - if lambda is called with a function, always inline that function
+> - for nicer variant names, inline `YourType<'a> = &'a YourTypeGuts<'a>` and rename `YourTypeGuts` to `YourType`
+> - prefer value over reference `enum` types wherever possible: first collect all (self/mutually) recursive types (also collect types that use these reference types to find out necessary lifetime parameters), then provide that as config to type_, enum type translation, pattern etc
+> - replace immutable string type by `&mut Cow<str>` to make appending strings not that costly (also consider for array). As a result, when a variable's type contains a string, use `&mut` and `.clone()` every use but the last (unstructured note: represent String and Array as &mut Cow<str> or Cow<[A]> with `alloc(_.clone())` for each use typed String or Array except the last, pattern matched with (Owned("x") | Borrowed("x")), represent String and Array as &mut Cow<str> or Cow<[A]> with alloc(_.clone()) for each use typed String or Array except the last, pattern matched with `(Owned("x") | Borrowed("x"))`)
 
 Print [`elm-syntax`](https://dark.elm.dmy.fr/packages/stil4m/elm-syntax/latest/) declarations as [rust](https://www.rust-lang.org/) code.
 To try it out, you can
