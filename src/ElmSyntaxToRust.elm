@@ -663,11 +663,10 @@ printRustEnumDeclaration :
     }
     -> Print
 printRustEnumDeclaration rustEnumType =
-    -- consider adding Eq if all types are known to be equatable (e.g. not a function or f64)
     Print.exactly
         ("#[derive("
-            ++ ([ Just "Copy"
-                , Just "Clone"
+            ++ ([ Just "Clone"
+                , Just "Copy"
                 , if
                     rustEnumType.variants
                         |> fastDictAll
