@@ -854,7 +854,7 @@ printRustStructDeclaration rustEnumType =
                                                 )
                                             )
                                 )
-                                Print.linebreakIndented
+                                printExactlyCommaLinebreakIndented
                         )
                 )
             )
