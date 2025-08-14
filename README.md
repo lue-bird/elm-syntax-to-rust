@@ -2,6 +2,7 @@
 > I'm also just learning rust so any tips (e.g. in issues) are appreciated
 >
 > TODO
+> - collect which non-(mutually-)recursive mod level fns require an allocator and don't even generate an ignored allocator parameter
 > - constrain type variables as `: Clone` instead of `: Copy` and make `.clone()` explicit. A consequence is that current closure and match-arm pattern variables are prefixed with `ref` (because a closure are otherwise considered FnOnce and a match arm cannot generally move)
 > - replace immutable string type by `&mut Cow<str>` and array by `&mut Cow<[A]>` to make appending strings or setting array elements cheap. As a result, when a variable's type contains a string/array, use `alloc(_.clone())` every use but the last and pattern match with `(Owned("x") | Borrowed("x"))`
 > - optional: if lambda is called with a function, always inline that function
@@ -44,7 +45,7 @@ pub fn sample_plus2<'a>(allocator: &'a Bump, n: f64) -> f64 {
 
 -   not supported are
     -   ports that use non-json values like `port sendMessage : String -> Cmd msg`, glsl
-    -   `elm/file`, `elm/http`, `elm/browser`, `elm-explorations/markdown`, `elm-explorations/webgl`, `elm-explorations/benchmark` (currently also `elm/json`, `elm/random`, `elm/time`, `elm/bytes`, `elm/regex`, `elm/virtual-dom`, `elm-explorations/linear-algebra` TODO)
+    -   `elm/file`, `elm/http`, `elm/browser`, `elm-explorations/markdown`, `elm-explorations/webgl`, `elm-explorations/benchmark` (currently also `elm/json`, `elm/random`, `elm/time`, `Bytes.Encode`, `Bytes.Decode`, `elm/regex`, `elm/virtual-dom`, `elm-explorations/linear-algebra` TODO)
     -   `Task`, `Process`, `Platform.Task`, `Platform.ProcessId`, `Platform.Router`, `Platform.sendToApp`, `Platform.sendToSelf`, `Random.generate`, `Time.now`, `Time.every`, `Time.here`, `Time.getZoneName`, `Bytes.getHostEndianness`
     -   extensible record types outside of module-level value/function declarations. For example, these declarations might not work:
         ```elm
@@ -58,7 +59,7 @@ pub fn sample_plus2<'a>(allocator: &'a Bump, n: f64) -> f64 {
         userId : { u | name : String, server : Domain } -> String
         ```
         In the non-allowed cases listed above, we assume that you intended to use a regular record type with only the extension fields which can lead to rust compile errors if you actually pass in additional fields.
-    - elm's `toLocale[Case]` functions will just behave like `toCase`
+    -   elm's `toLocale[Case]` functions will just behave like `toCase`
 -   dependencies cannot internally use the same module names as the transpiled project
 -   the resulting code might not be readable or even conventionally formatted and comments are not preserved
 

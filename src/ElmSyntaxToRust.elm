@@ -663,9 +663,7 @@ printLifetimeParametersAndTypeParameters lifetimeParameters typeParameters =
 
 
 printRustEnumDeclaration :
-    { -- TODO remove indirect
-      indirect : Bool
-    , name : String
+    { name : String
     , lifetimeParameters : List String
     , parameters : List String
     , variants :
@@ -1428,7 +1426,6 @@ printRustTypeFunction typeFunction =
                                 Print.lineSpread
                     )
     in
-    -- TODO maybe positionOrNothing matters? If not, remove
     (input0Print :: input1UpPrints)
         |> Print.listMapAndIntersperseAndFlatten
             (\typePrint ->
@@ -2278,15 +2275,18 @@ pattern context patternInferred =
             pattern context inParens
 
         ElmSyntaxTypeInfer.PatternTuple parts ->
-            rustPatternVariantTuple
-                (parts.part0 |> pattern context)
-                (parts.part1 |> pattern context)
+            RustPatternTuple
+                { part0 = parts.part0 |> pattern context
+                , part1 = parts.part1 |> pattern context
+                , part2Up = []
+                }
 
         ElmSyntaxTypeInfer.PatternTriple parts ->
-            rustPatternVariantTriple
-                (parts.part0 |> pattern context)
-                (parts.part1 |> pattern context)
-                (parts.part2 |> pattern context)
+            RustPatternTuple
+                { part0 = parts.part0 |> pattern context
+                , part1 = parts.part1 |> pattern context
+                , part2Up = [ parts.part2 |> pattern context ]
+                }
 
         ElmSyntaxTypeInfer.PatternRecord patternFields ->
             let
@@ -2458,44 +2458,6 @@ pattern context patternInferred =
                 { variable = patternAs.variable.value
                 , pattern = patternAs.pattern |> pattern context
                 }
-
-
-rustPatternVariantTuple : RustPattern -> RustPattern -> RustPattern
-rustPatternVariantTuple part0 part1 =
-    RustPatternTuple
-        { part0 = part0
-        , part1 = part1
-        , part2Up = []
-        }
-
-
-rustPatternVariantTriple : RustPattern -> RustPattern -> RustPattern -> RustPattern
-rustPatternVariantTriple part0 part1 part2 =
-    RustPatternTuple
-        { part0 = part0
-        , part1 = part1
-        , part2Up = [ part2 ]
-        }
-
-
-rustExpressionCallTuple : RustExpression -> RustExpression -> RustExpression
-rustExpressionCallTuple part0 part1 =
-    RustExpressionTuple
-        { part0 = part0
-        , part1 = part1
-        , part2Up = []
-        }
-
-
-{-| TODO inline in uses
--}
-rustExpressionCallTriple : RustExpression -> RustExpression -> RustExpression -> RustExpression
-rustExpressionCallTriple part0 part1 part2 =
-    RustExpressionTuple
-        { part0 = part0
-        , part1 = part1
-        , part2Up = [ part2 ]
-        }
 
 
 type ReferenceOrValueType
@@ -8581,7 +8543,11 @@ expression context expressionTypedNode =
         ElmSyntaxTypeInfer.ExpressionTuple parts ->
             Result.map2
                 (\part0 part1 ->
-                    rustExpressionCallTuple part0 part1
+                    RustExpressionTuple
+                        { part0 = part0
+                        , part1 = part1
+                        , part2Up = []
+                        }
                 )
                 (parts.part0
                     |> expression
@@ -8609,10 +8575,11 @@ expression context expressionTypedNode =
         ElmSyntaxTypeInfer.ExpressionTriple parts ->
             Result.map3
                 (\part0 part1 part2 ->
-                    rustExpressionCallTriple
-                        part0
-                        part1
-                        part2
+                    RustExpressionTuple
+                        { part0 = part0
+                        , part1 = part1
+                        , part2Up = [ part2 ]
+                        }
                 )
                 (parts.part0
                     |> expression
@@ -15714,15 +15681,7 @@ use bumpalo::Bump;
 """
         ++ (rustEnumDeclarationList
                 |> Print.listMapAndIntersperseAndFlatten
-                    (\rustEnumTypeDeclaration ->
-                        printRustEnumDeclaration
-                            { indirect = False
-                            , name = rustEnumTypeDeclaration.name
-                            , parameters = rustEnumTypeDeclaration.parameters
-                            , lifetimeParameters = rustEnumTypeDeclaration.lifetimeParameters
-                            , variants = rustEnumTypeDeclaration.variants
-                            }
-                    )
+                    printRustEnumDeclaration
                     printLinebreakLinebreakIndented
                 |> Print.toString
            )
