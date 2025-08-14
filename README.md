@@ -2,12 +2,11 @@
 > I'm also just learning rust so any tips (e.g. in issues) are appreciated
 >
 > TODO
-> - _always_ inline constants including variables in lambda call
-> - if lambda is called with a function, always inline that function
 > - for nicer variant names, inline `YourType<'a> = &'a YourTypeGuts<'a>` and rename `YourTypeGuts` to `YourType`
 > - constrain type variables as `: Clone` instead of `: Copy` and make `.clone()` explicit. A consequence is that current closure and match-arm pattern variables are prefixed with `ref` (because a closure are otherwise considered FnOnce and a match arm cannot generally move)
 > - prefer value over reference `enum` types wherever possible: first collect all (self/mutually) recursive types (also collect types that use these reference types to find out necessary lifetime parameters), then provide that as config to type_, enum type translation, pattern etc
 > - replace immutable string type by `&mut Cow<str>` and array by `&mut Cow<[A]>` to make appending strings or setting array elements cheap. As a result, when a variable's type contains a string/array, use `alloc(_.clone())` every use but the last and pattern match with `(Owned("x") | Borrowed("x"))`
+> - optional: if lambda is called with a function, always inline that function
 
 Print [`elm-syntax`](https://dark.elm.dmy.fr/packages/stil4m/elm-syntax/latest/) declarations as [rust](https://www.rust-lang.org/) code.
 To try it out, you can
