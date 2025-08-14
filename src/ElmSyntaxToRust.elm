@@ -3061,6 +3061,102 @@ variantToCoreRust reference =
                 _ ->
                     Nothing
 
+        "VirtualDom" ->
+            case reference.name of
+                "Normal" ->
+                    Just { originTypeName = [ "VirtualDomHandler" ], name = "Normal", isReference = False }
+
+                "MayStopPropagation" ->
+                    Just { originTypeName = [ "VirtualDomHandler" ], name = "MayStopPropagation", isReference = False }
+
+                "MayPreventDefault" ->
+                    Just { originTypeName = [ "VirtualDomHandler" ], name = "MayPreventDefault", isReference = False }
+
+                "Custom" ->
+                    Just { originTypeName = [ "VirtualDomHandler" ], name = "Custom", isReference = False }
+
+                _ ->
+                    Nothing
+
+        "Bytes.Decode" ->
+            case reference.name of
+                "Loop" ->
+                    Just { originTypeName = [ "BytesDecodeStep" ], name = "Loop", isReference = False }
+
+                "Done" ->
+                    Just { originTypeName = [ "BytesDecodeStep" ], name = "Done", isReference = False }
+
+                _ ->
+                    Nothing
+
+        "Time" ->
+            case reference.name of
+                "Name" ->
+                    Just { originTypeName = [ "TimeZoneName" ], name = "Name", isReference = False }
+
+                "Offset" ->
+                    Just { originTypeName = [ "TimeZoneName" ], name = "Offset", isReference = False }
+
+                "Jan" ->
+                    Just { originTypeName = [ "TimeMonth" ], name = "Jan", isReference = False }
+
+                "Feb" ->
+                    Just { originTypeName = [ "TimeMonth" ], name = "Feb", isReference = False }
+
+                "Mar" ->
+                    Just { originTypeName = [ "TimeMonth" ], name = "Mar", isReference = False }
+
+                "Apr" ->
+                    Just { originTypeName = [ "TimeMonth" ], name = "Apr", isReference = False }
+
+                "May" ->
+                    Just { originTypeName = [ "TimeMonth" ], name = "May", isReference = False }
+
+                "Jun" ->
+                    Just { originTypeName = [ "TimeMonth" ], name = "Jun", isReference = False }
+
+                "Jul" ->
+                    Just { originTypeName = [ "TimeMonth" ], name = "Jul", isReference = False }
+
+                "Aug" ->
+                    Just { originTypeName = [ "TimeMonth" ], name = "Aug", isReference = False }
+
+                "Sep" ->
+                    Just { originTypeName = [ "TimeMonth" ], name = "Sep", isReference = False }
+
+                "Oct" ->
+                    Just { originTypeName = [ "TimeMonth" ], name = "Oct", isReference = False }
+
+                "Nov" ->
+                    Just { originTypeName = [ "TimeMonth" ], name = "Nov", isReference = False }
+
+                "Dec" ->
+                    Just { originTypeName = [ "TimeMonth" ], name = "Dec", isReference = False }
+
+                "Mon" ->
+                    Just { originTypeName = [ "TimeWeekday" ], name = "Mon", isReference = False }
+
+                "Tue" ->
+                    Just { originTypeName = [ "TimeWeekday" ], name = "Tue", isReference = False }
+
+                "Wed" ->
+                    Just { originTypeName = [ "TimeWeekday" ], name = "Wed", isReference = False }
+
+                "Thu" ->
+                    Just { originTypeName = [ "TimeWeekday" ], name = "Thu", isReference = False }
+
+                "Fri" ->
+                    Just { originTypeName = [ "TimeWeekday" ], name = "Fri", isReference = False }
+
+                "Sat" ->
+                    Just { originTypeName = [ "TimeWeekday" ], name = "Sat", isReference = False }
+
+                "Sun" ->
+                    Just { originTypeName = [ "TimeWeekday" ], name = "Sun", isReference = False }
+
+                _ ->
+                    Nothing
+
         _ ->
             Nothing
 
@@ -4288,13 +4384,13 @@ referenceToCoreRust reference =
         "Debug" ->
             case reference.name of
                 "log" ->
-                    Just { qualification = [], name = "Debug_log", requiresAllocator = False }
+                    Just { qualification = [], name = "debug_log", requiresAllocator = False }
 
                 "toString" ->
-                    Just { qualification = [], name = "Debug_to_string", requiresAllocator = True }
+                    Just { qualification = [], name = "debug_to_string", requiresAllocator = True }
 
                 "todo" ->
-                    Just { qualification = [], name = "Debug_todo", requiresAllocator = False }
+                    Just { qualification = [], name = "debug_todo", requiresAllocator = False }
 
                 _ ->
                     Nothing
@@ -4364,10 +4460,10 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "json_decode_dict", requiresAllocator = Debug.todo "" }
 
                 "keyValuePairs" ->
-                    Just { qualification = [], name = "json_decode_keyValuePairs", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_key_value_pairs", requiresAllocator = Debug.todo "" }
 
                 "oneOrMore" ->
-                    Just { qualification = [], name = "json_decode_oneOrMore", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_one_or_more", requiresAllocator = Debug.todo "" }
 
                 "field" ->
                     Just { qualification = [], name = "json_decode_field", requiresAllocator = Debug.todo "" }
@@ -4382,16 +4478,16 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "json_decode_maybe", requiresAllocator = Debug.todo "" }
 
                 "oneOf" ->
-                    Just { qualification = [], name = "json_decode_oneOf", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_one_of", requiresAllocator = Debug.todo "" }
 
                 "decodeString" ->
-                    Just { qualification = [], name = "json_decode_decodeString", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_decode_string", requiresAllocator = Debug.todo "" }
 
                 "decodeValue" ->
-                    Just { qualification = [], name = "json_decode_decodeValue", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_decode_value", requiresAllocator = Debug.todo "" }
 
                 "errorToString" ->
-                    Just { qualification = [], name = "json_decode_errorToString", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_error_to_string", requiresAllocator = Debug.todo "" }
 
                 "map" ->
                     Just { qualification = [], name = "json_decode_map", requiresAllocator = Debug.todo "" }
@@ -4433,7 +4529,7 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "json_decode_fail", requiresAllocator = Debug.todo "" }
 
                 "andThen" ->
-                    Just { qualification = [], name = "json_decode_andThen", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_and_then", requiresAllocator = Debug.todo "" }
 
                 _ ->
                     Nothing
@@ -4441,10 +4537,10 @@ referenceToCoreRust reference =
         "Regex" ->
             case reference.name of
                 "fromString" ->
-                    Just { qualification = [], name = "regex_fromString", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "regex_from_string", requiresAllocator = Debug.todo "" }
 
                 "fromStringWith" ->
-                    Just { qualification = [], name = "regex_fromStringWith", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "regex_from_string_with", requiresAllocator = Debug.todo "" }
 
                 "never" ->
                     Just { qualification = [], name = "regex_never", requiresAllocator = Debug.todo "" }
@@ -4462,13 +4558,13 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "regex_replace", requiresAllocator = Debug.todo "" }
 
                 "splitAtMost" ->
-                    Just { qualification = [], name = "regex_splitAtMost", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "regex_split_at_most", requiresAllocator = Debug.todo "" }
 
                 "findAtMost" ->
-                    Just { qualification = [], name = "regex_findAtMost", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "regex_find_at_most", requiresAllocator = Debug.todo "" }
 
                 "replaceAtMost" ->
-                    Just { qualification = [], name = "regex_replaceAtMost", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "regex_replace_at_most", requiresAllocator = Debug.todo "" }
 
                 _ ->
                     Nothing
@@ -4512,25 +4608,25 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "random_map5", requiresAllocator = Debug.todo "" }
 
                 "andThen" ->
-                    Just { qualification = [], name = "random_andThen", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "random_and_then", requiresAllocator = Debug.todo "" }
 
                 "lazy" ->
                     Just { qualification = [], name = "random_lazy", requiresAllocator = Debug.todo "" }
 
                 "minInt" ->
-                    Just { qualification = [], name = "random_minInt", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "random_min_int", requiresAllocator = Debug.todo "" }
 
                 "maxInt" ->
-                    Just { qualification = [], name = "random_maxInt", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "random_max_int", requiresAllocator = Debug.todo "" }
 
                 "step" ->
                     Just { qualification = [], name = "random_step", requiresAllocator = Debug.todo "" }
 
                 "initialSeed" ->
-                    Just { qualification = [], name = "random_initialSeed", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "random_initial_seed", requiresAllocator = Debug.todo "" }
 
                 "independentSeed" ->
-                    Just { qualification = [], name = "random_independentSeed", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "random_independent_seed", requiresAllocator = Debug.todo "" }
 
                 _ ->
                     Nothing
@@ -4538,40 +4634,40 @@ referenceToCoreRust reference =
         "Time" ->
             case reference.name of
                 "posixToMillis" ->
-                    Just { qualification = [], name = "time_posixToMillis", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "time_posix_to_millis", requiresAllocator = Debug.todo "" }
 
                 "millisToPosix" ->
-                    Just { qualification = [], name = "time_millisToPosix", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "time_millis_to_posix", requiresAllocator = Debug.todo "" }
 
                 "utc" ->
                     Just { qualification = [], name = "time_utc", requiresAllocator = Debug.todo "" }
 
                 "toYear" ->
-                    Just { qualification = [], name = "time_toYear", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "time_to_year", requiresAllocator = Debug.todo "" }
 
                 "toMonth" ->
-                    Just { qualification = [], name = "time_toMonth", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "time_to_month", requiresAllocator = Debug.todo "" }
 
                 "toDay" ->
-                    Just { qualification = [], name = "time_toDay", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "time_to_day", requiresAllocator = Debug.todo "" }
 
                 "toWeekday" ->
-                    Just { qualification = [], name = "time_toWeekday", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "time_to_weekday", requiresAllocator = Debug.todo "" }
 
                 "toHour" ->
-                    Just { qualification = [], name = "time_toHour", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "time_to_hour", requiresAllocator = Debug.todo "" }
 
                 "toMinute" ->
-                    Just { qualification = [], name = "time_toMinute", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "time_to_minute", requiresAllocator = Debug.todo "" }
 
                 "toSecond" ->
-                    Just { qualification = [], name = "time_toSecond", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "time_to_second", requiresAllocator = Debug.todo "" }
 
                 "toMillis" ->
-                    Just { qualification = [], name = "time_toMillis", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "time_to_millis", requiresAllocator = Debug.todo "" }
 
                 "customZone" ->
-                    Just { qualification = [], name = "time_customZone", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "time_custom_zone", requiresAllocator = Debug.todo "" }
 
                 _ ->
                     Nothing
@@ -4579,39 +4675,33 @@ referenceToCoreRust reference =
         "Bytes" ->
             case reference.name of
                 "width" ->
-                    Just { qualification = [], name = "bytes_width", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_width", requiresAllocator = False }
 
                 _ ->
                     Nothing
 
         "Bytes.Decode" ->
             case reference.name of
-                "Loop" ->
-                    Just { qualification = [], name = "bytes_decode_Loop", requiresAllocator = Debug.todo "" }
-
-                "Done" ->
-                    Just { qualification = [], name = "bytes_decode_Done", requiresAllocator = Debug.todo "" }
-
                 "decode" ->
                     Just { qualification = [], name = "bytes_decode_decode", requiresAllocator = Debug.todo "" }
 
                 "signedInt8" ->
-                    Just { qualification = [], name = "bytes_decode_signedInt8", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_decode_signed_int8", requiresAllocator = Debug.todo "" }
 
                 "signedInt16" ->
-                    Just { qualification = [], name = "bytes_decode_signedInt16", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_decode_signed_int16", requiresAllocator = Debug.todo "" }
 
                 "signedInt32" ->
-                    Just { qualification = [], name = "bytes_decode_signedInt32", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_decode_signed_int32", requiresAllocator = Debug.todo "" }
 
                 "unsignedInt8" ->
-                    Just { qualification = [], name = "bytes_decode_unsignedInt8", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_decode_unsigned_int8", requiresAllocator = Debug.todo "" }
 
                 "unsignedInt16" ->
-                    Just { qualification = [], name = "bytes_decode_unsignedInt16", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_decode_unsigned_int16", requiresAllocator = Debug.todo "" }
 
                 "unsignedInt32" ->
-                    Just { qualification = [], name = "bytes_decode_unsignedInt32", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_decode_unsigned_int32", requiresAllocator = Debug.todo "" }
 
                 "float32" ->
                     Just { qualification = [], name = "bytes_decode_float32", requiresAllocator = Debug.todo "" }
@@ -4641,7 +4731,7 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "bytes_decode_map5", requiresAllocator = Debug.todo "" }
 
                 "andThen" ->
-                    Just { qualification = [], name = "bytes_decode_andThen", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_decode_and_then", requiresAllocator = Debug.todo "" }
 
                 "succeed" ->
                     Just { qualification = [], name = "bytes_decode_succeed", requiresAllocator = Debug.todo "" }
@@ -4661,22 +4751,22 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "bytes_encode_encode", requiresAllocator = Debug.todo "" }
 
                 "signedInt8" ->
-                    Just { qualification = [], name = "bytes_encode_signedInt8", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_encode_signed_int8", requiresAllocator = Debug.todo "" }
 
                 "signedInt16" ->
-                    Just { qualification = [], name = "bytes_encode_signedInt16", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_encode_signed_int16", requiresAllocator = Debug.todo "" }
 
                 "signedInt32" ->
-                    Just { qualification = [], name = "bytes_encode_signedInt32", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_encode_signed_int32", requiresAllocator = Debug.todo "" }
 
                 "unsignedInt8" ->
-                    Just { qualification = [], name = "bytes_encode_unsignedInt8", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_encode_unsigned_int8", requiresAllocator = Debug.todo "" }
 
                 "unsignedInt16" ->
-                    Just { qualification = [], name = "bytes_encode_unsignedInt16", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_encode_unsigned_int16", requiresAllocator = Debug.todo "" }
 
                 "unsignedInt32" ->
-                    Just { qualification = [], name = "bytes_encode_unsignedInt32", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_encode_unsigned_int32", requiresAllocator = Debug.todo "" }
 
                 "float32" ->
                     Just { qualification = [], name = "bytes_encode_float32", requiresAllocator = Debug.todo "" }
@@ -4691,7 +4781,7 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "bytes_encode_string", requiresAllocator = Debug.todo "" }
 
                 "getStringWidth" ->
-                    Just { qualification = [], name = "bytes_encode_getStringWidth", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_encode_get_string_width", requiresAllocator = Debug.todo "" }
 
                 "sequence" ->
                     Just { qualification = [], name = "bytes_encode_sequence", requiresAllocator = Debug.todo "" }
@@ -4702,25 +4792,25 @@ referenceToCoreRust reference =
         "Elm.Kernel.Parser" ->
             case reference.name of
                 "isSubString" ->
-                    Just { qualification = [], name = "ElmKernelParser_isSubString", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "elm_kernel_parser_is_sub_string", requiresAllocator = Debug.todo "" }
 
                 "isSubChar" ->
-                    Just { qualification = [], name = "ElmKernelParser_isSubChar", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "elm_kernel_parser_is_sub_char", requiresAllocator = Debug.todo "" }
 
                 "isAsciiCode" ->
-                    Just { qualification = [], name = "ElmKernelParser_isAsciiCode", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "elm_kernel_parser_is_ascii_code", requiresAllocator = Debug.todo "" }
 
                 "chompBase10" ->
-                    Just { qualification = [], name = "ElmKernelParser_chompBase10", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "elm_kernel_parser_chomp_base10", requiresAllocator = Debug.todo "" }
 
                 "consumeBase" ->
-                    Just { qualification = [], name = "ElmKernelParser_consumeBase", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "elm_kernel_parser_consume_base", requiresAllocator = Debug.todo "" }
 
                 "consumeBase16" ->
-                    Just { qualification = [], name = "ElmKernelParser_consumeBase16", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "elm_kernel_parser_consume_base16", requiresAllocator = Debug.todo "" }
 
                 "findSubString" ->
-                    Just { qualification = [], name = "ElmKernelParser_findSubString", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "elm_kernel_parser_find_sub_string", requiresAllocator = Debug.todo "" }
 
                 _ ->
                     Nothing
@@ -4743,28 +4833,16 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "virtual_dom_nodeNS", requiresAllocator = Debug.todo "" }
 
                 "noJavaScriptOrHtmlUri" ->
-                    Just { qualification = [], name = "virtual_dom_noJavaScriptOrHtmlUri", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_no_java_script_or_html_uri", requiresAllocator = Debug.todo "" }
 
                 "noJavaScriptUri" ->
-                    Just { qualification = [], name = "virtual_dom_noJavaScriptUri", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_no_java_script_uri", requiresAllocator = Debug.todo "" }
 
                 _ ->
                     Nothing
 
         "VirtualDom" ->
             case reference.name of
-                "Normal" ->
-                    Just { qualification = [], name = "virtual_dom_Normal", requiresAllocator = Debug.todo "" }
-
-                "MayStopPropagation" ->
-                    Just { qualification = [], name = "virtual_dom_MayStopPropagation", requiresAllocator = Debug.todo "" }
-
-                "MayPreventDefault" ->
-                    Just { qualification = [], name = "virtual_dom_MayPreventDefault", requiresAllocator = Debug.todo "" }
-
-                "Custom" ->
-                    Just { qualification = [], name = "virtual_dom_Custom", requiresAllocator = Debug.todo "" }
-
                 "text" ->
                     Just { qualification = [], name = "virtual_dom_text", requiresAllocator = Debug.todo "" }
 
@@ -4772,7 +4850,7 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "virtual_dom_node", requiresAllocator = Debug.todo "" }
 
                 "nodeNS" ->
-                    Just { qualification = [], name = "virtual_dom_nodeNS", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_node_ns", requiresAllocator = Debug.todo "" }
 
                 "style" ->
                     Just { qualification = [], name = "virtual_dom_style", requiresAllocator = Debug.todo "" }
@@ -4784,7 +4862,7 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "virtual_dom_attribute", requiresAllocator = Debug.todo "" }
 
                 "attributeNS" ->
-                    Just { qualification = [], name = "virtual_dom_attributeNS", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_attribute_ns", requiresAllocator = Debug.todo "" }
 
                 "on" ->
                     Just { qualification = [], name = "virtual_dom_on", requiresAllocator = Debug.todo "" }
@@ -4793,13 +4871,13 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "virtual_dom_map", requiresAllocator = Debug.todo "" }
 
                 "mapAttribute" ->
-                    Just { qualification = [], name = "virtual_dom_mapAttribute", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_map_attribute", requiresAllocator = Debug.todo "" }
 
                 "keyedNode" ->
-                    Just { qualification = [], name = "virtual_dom_keyedNode", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_keyed_node", requiresAllocator = Debug.todo "" }
 
                 "keyedNodeNS" ->
-                    Just { qualification = [], name = "virtual_dom_keyedNodeNS", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_keyed_node_ns", requiresAllocator = Debug.todo "" }
 
                 "lazy" ->
                     Just { qualification = [], name = "virtual_dom_lazy", requiresAllocator = Debug.todo "" }
@@ -4840,25 +4918,25 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "math_vector2_distance", requiresAllocator = Debug.todo "" }
 
                 "distanceSquared" ->
-                    Just { qualification = [], name = "math_vector2_distanceSquared", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector2_distance_squared", requiresAllocator = Debug.todo "" }
 
                 "dot" ->
                     Just { qualification = [], name = "math_vector2_dot", requiresAllocator = Debug.todo "" }
 
                 "fromRecord" ->
-                    Just { qualification = [], name = "math_vector2_fromRecord", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector2_from_record", requiresAllocator = Debug.todo "" }
 
                 "getX" ->
-                    Just { qualification = [], name = "math_vector2_getX", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector2_get_x", requiresAllocator = Debug.todo "" }
 
                 "getY" ->
-                    Just { qualification = [], name = "math_vector2_getY", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector2_get_y", requiresAllocator = Debug.todo "" }
 
                 "length" ->
                     Just { qualification = [], name = "math_vector2_length", requiresAllocator = Debug.todo "" }
 
                 "lengthSquared" ->
-                    Just { qualification = [], name = "math_vector2_lengthSquared", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector2_length_squared", requiresAllocator = Debug.todo "" }
 
                 "negate" ->
                     Just { qualification = [], name = "math_vector2_negate", requiresAllocator = Debug.todo "" }
@@ -4870,16 +4948,16 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "math_vector2_scale", requiresAllocator = Debug.todo "" }
 
                 "setX" ->
-                    Just { qualification = [], name = "math_vector2_setX", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector2_set_x", requiresAllocator = Debug.todo "" }
 
                 "setY" ->
-                    Just { qualification = [], name = "math_vector2_setY", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector2_set_y", requiresAllocator = Debug.todo "" }
 
                 "sub" ->
                     Just { qualification = [], name = "math_vector2_sub", requiresAllocator = Debug.todo "" }
 
                 "toRecord" ->
-                    Just { qualification = [], name = "math_vector2_toRecord", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector2_to_record", requiresAllocator = Debug.todo "" }
 
                 "vec2" ->
                     Just { qualification = [], name = "math_vector2_vec2", requiresAllocator = Debug.todo "" }
@@ -4902,22 +4980,22 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "math_vector3_distance", requiresAllocator = Debug.todo "" }
 
                 "distanceSquared" ->
-                    Just { qualification = [], name = "math_vector3_distanceSquared", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector3_distance_squared", requiresAllocator = Debug.todo "" }
 
                 "dot" ->
                     Just { qualification = [], name = "math_vector3_dot", requiresAllocator = Debug.todo "" }
 
                 "fromRecord" ->
-                    Just { qualification = [], name = "math_vector3_fromRecord", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector3_from_record", requiresAllocator = Debug.todo "" }
 
                 "getX" ->
-                    Just { qualification = [], name = "math_vector3_getX", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector3_get_x", requiresAllocator = Debug.todo "" }
 
                 "getY" ->
-                    Just { qualification = [], name = "math_vector3_getY", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector3_get_y", requiresAllocator = Debug.todo "" }
 
                 "getZ" ->
-                    Just { qualification = [], name = "math_vector3_getZ", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector3_get_z", requiresAllocator = Debug.todo "" }
 
                 "i" ->
                     Just { qualification = [], name = "math_vector3_i", requiresAllocator = Debug.todo "" }
@@ -4932,7 +5010,7 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "math_vector3_length", requiresAllocator = Debug.todo "" }
 
                 "lengthSquared" ->
-                    Just { qualification = [], name = "math_vector3_lengthSquared", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector3_length_squared", requiresAllocator = Debug.todo "" }
 
                 "negate" ->
                     Just { qualification = [], name = "math_vector3_negate", requiresAllocator = Debug.todo "" }
@@ -4944,19 +5022,19 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "math_vector3_scale", requiresAllocator = Debug.todo "" }
 
                 "setX" ->
-                    Just { qualification = [], name = "math_vector3_setX", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector3_set_x", requiresAllocator = Debug.todo "" }
 
                 "setY" ->
-                    Just { qualification = [], name = "math_vector3_setY", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector3_set_y", requiresAllocator = Debug.todo "" }
 
                 "setZ" ->
-                    Just { qualification = [], name = "math_vector3_setZ", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector3_set_z", requiresAllocator = Debug.todo "" }
 
                 "sub" ->
                     Just { qualification = [], name = "math_vector3_sub", requiresAllocator = Debug.todo "" }
 
                 "toRecord" ->
-                    Just { qualification = [], name = "math_vector3_toRecord", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector3_to_record", requiresAllocator = Debug.todo "" }
 
                 "vec3" ->
                     Just { qualification = [], name = "math_vector3_vec3", requiresAllocator = Debug.todo "" }
@@ -4976,31 +5054,31 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "math_vector4_distance", requiresAllocator = Debug.todo "" }
 
                 "distanceSquared" ->
-                    Just { qualification = [], name = "math_vector4_distanceSquared", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector4_distance_squared", requiresAllocator = Debug.todo "" }
 
                 "dot" ->
                     Just { qualification = [], name = "math_vector4_dot", requiresAllocator = Debug.todo "" }
 
                 "fromRecord" ->
-                    Just { qualification = [], name = "math_vector4_fromRecord", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector4_from_record", requiresAllocator = Debug.todo "" }
 
                 "getW" ->
-                    Just { qualification = [], name = "math_vector4_getW", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector4_get_w", requiresAllocator = Debug.todo "" }
 
                 "getX" ->
-                    Just { qualification = [], name = "math_vector4_getX", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector4_get_x", requiresAllocator = Debug.todo "" }
 
                 "getY" ->
-                    Just { qualification = [], name = "math_vector4_getY", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector4_get_y", requiresAllocator = Debug.todo "" }
 
                 "getZ" ->
-                    Just { qualification = [], name = "math_vector4_getZ", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector4_get_z", requiresAllocator = Debug.todo "" }
 
                 "length" ->
                     Just { qualification = [], name = "math_vector4_length", requiresAllocator = Debug.todo "" }
 
                 "lengthSquared" ->
-                    Just { qualification = [], name = "math_vector4_lengthSquared", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector4_length_squared", requiresAllocator = Debug.todo "" }
 
                 "negate" ->
                     Just { qualification = [], name = "math_vector3_negate", requiresAllocator = Debug.todo "" }
@@ -5012,22 +5090,22 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "math_vector4_scale", requiresAllocator = Debug.todo "" }
 
                 "setW" ->
-                    Just { qualification = [], name = "math_vector4_setW", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector4_set_w", requiresAllocator = Debug.todo "" }
 
                 "setX" ->
-                    Just { qualification = [], name = "math_vector4_setX", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector4_set_x", requiresAllocator = Debug.todo "" }
 
                 "setY" ->
-                    Just { qualification = [], name = "math_vector4_setY", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector4_set_y", requiresAllocator = Debug.todo "" }
 
                 "setZ" ->
-                    Just { qualification = [], name = "math_vector4_setZ", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector4_set_z", requiresAllocator = Debug.todo "" }
 
                 "sub" ->
                     Just { qualification = [], name = "math_vector4_sub", requiresAllocator = Debug.todo "" }
 
                 "toRecord" ->
-                    Just { qualification = [], name = "math_vector4_toRecord", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "math_vector4_to_record", requiresAllocator = Debug.todo "" }
 
                 "vec4" ->
                     Just { qualification = [], name = "math_vector4_vec4", requiresAllocator = Debug.todo "" }
@@ -5036,8 +5114,7 @@ referenceToCoreRust reference =
                     Nothing
 
         "Math.Matrix4" ->
-            -- not supported, see readme
-            Nothing
+            Debug.todo ""
 
         "Platform" ->
             case reference.name of
@@ -30620,5 +30697,10 @@ pub fn result_map5<
     Result::Ok(combine(a_result?)(b_result?)(c_result?)(d_result?)(
         e_result?,
     ))
+}
+
+pub type BytesBytes<'a> = &'a [u8];
+pub fn bytes_width(bytes: BytesBytes) -> f64 {
+    bytes.len() as f64
 }
 """

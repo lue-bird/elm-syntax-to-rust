@@ -1440,3 +1440,8 @@ pub fn result_map5<
         e_result?,
     ))
 }
+
+pub type BytesBytes<'a> = &'a [u8];
+pub fn bytes_width(bytes: BytesBytes) -> f64 {
+    bytes.len() as f64
+}
