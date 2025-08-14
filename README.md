@@ -2,9 +2,7 @@
 > I'm also just learning rust so any tips (e.g. in issues) are appreciated
 >
 > TODO
-> - for nicer variant names, inline `YourType<'a> = &'a YourTypeGuts<'a>` and rename `YourTypeGuts` to `YourType`
 > - constrain type variables as `: Clone` instead of `: Copy` and make `.clone()` explicit. A consequence is that current closure and match-arm pattern variables are prefixed with `ref` (because a closure are otherwise considered FnOnce and a match arm cannot generally move)
-> - prefer value over reference `enum` types wherever possible: first collect all (self/mutually) recursive types (also collect types that use these reference types to find out necessary lifetime parameters), then provide that as config to type_, enum type translation, pattern etc
 > - replace immutable string type by `&mut Cow<str>` and array by `&mut Cow<[A]>` to make appending strings or setting array elements cheap. As a result, when a variable's type contains a string/array, use `alloc(_.clone())` every use but the last and pattern match with `(Owned("x") | Borrowed("x"))`
 > - optional: if lambda is called with a function, always inline that function
 
@@ -100,7 +98,7 @@ please [report an issue](https://github.com/lue-bird/elm-syntax-to-rust/issues/n
 
 
 In the transpiled code, you will find these types:
-  - elm `Bool` (`True` or `False`) → rust `bool` (`true` or `false`), `Char` (`'a'`) → `char` (`'a'`), `String` (`"a"`) → `StringString<'a>` (`"a"`), `( Bool, Char )` → `( bool, char )`, `Array Char` (`Array.fromList [ 'a' ]`) → `ArrayArray<'a, char>` (`&['a']`)
+  - elm `Bool` (`True` or `False`) → rust `bool` (`true` or `false`), `Char` (`'a'`) → `char` (`'a'`), `String` (`"a"`) → `&str` (`"a"`), `( Bool, Char )` → `( bool, char )`, `Array Char` (`Array.fromList [ 'a' ]`) → `&[char]` (alias `&ArrayArray<char>`) (`&['a']`)
   - elm `Float`s, `Int`s and `number-` variable typed values will be of type `f64`. Create and match by appending `_f64` to any number literal or using `as f64`.
   - elm records like `{ y : Float, x : Float }` will be of type `elm::GeneratedXY<f64, f64>` with the fields sorted and can be constructed and matched with `elm::GeneratedXY { x: _, y: _ }`. `record.x` access also works
   - a transpiled elm app does not run itself.

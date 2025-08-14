@@ -84,8 +84,8 @@ type RustPattern
     | RustPatternVariant
         { originTypeName : List String
         , name : String
-        , -- &, potentially remove in favor of separate
-          -- RustPatternBorrow
+        , -- &, consider removing in favor of separate RustPatternBorrow,
+          -- otherwise: replace bool by ReferenceOrValueType
           isReference : Bool
         , values : List RustPattern
         }
@@ -525,31 +525,34 @@ syntaxExpressionContainedConstructedRecords syntaxExpressionNode =
 
 
 choiceTypeDeclaration :
-    (String
-     ->
-        Maybe
-            (FastDict.Dict
-                String
-                { parameters : List String
-                , recordFieldOrder : Maybe (List String)
-                , type_ : ElmSyntaxTypeInfer.Type
-                }
-            )
-    )
+    { typeAliasesInModule :
+        String
+        ->
+            Maybe
+                (FastDict.Dict
+                    String
+                    { parameters : List String
+                    , recordFieldOrder : Maybe (List String)
+                    , type_ : ElmSyntaxTypeInfer.Type
+                    }
+                )
+    , rustEnumTypes :
+        FastDict.Dict
+            String
+            { lifetimeParameters : List String
+            , referenceOrValueType : ReferenceOrValueType
+            }
+    }
     ->
-        { name : String
-        , parameters : List String
+        { parameters : List String
         , variants : FastDict.Dict String (List ElmSyntaxTypeInfer.Type)
         }
     ->
-        { name : String
-        , lifetimeParameters : List String
+        { lifetimeParameters : List String
         , parameters : List String
         , variants : FastDict.Dict String (List RustType)
         }
-choiceTypeDeclaration typeAliasesInModule syntaxChoiceType =
-    -- TODO also return associated type alias
-    -- type ActualName<'a, other_params> = &'a ActualNameGuts<['a], other_params>
+choiceTypeDeclaration context syntaxChoiceType =
     let
         rustVariants : FastDict.Dict String (List RustType)
         rustVariants =
@@ -562,16 +565,13 @@ choiceTypeDeclaration typeAliasesInModule syntaxChoiceType =
                                 (variantValues
                                     |> List.map
                                         (\value ->
-                                            value |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                            value |> type_ context
                                         )
                                 )
                     )
                     FastDict.empty
     in
-    { name =
-        (syntaxChoiceType.name ++ "Guts")
-            |> toPascalCaseRustName
-    , parameters =
+    { parameters =
         syntaxChoiceType.parameters
             |> List.map toPascalCaseRustName
     , lifetimeParameters =
@@ -908,99 +908,50 @@ printRustEnumVariantDeclaration rustVariant =
 
 
 typeAliasDeclaration :
-    (String
-     ->
-        Maybe
-            (FastDict.Dict
-                String
-                { parameters : List String
-                , recordFieldOrder : Maybe (List String)
-                , type_ : ElmSyntaxTypeInfer.Type
-                }
-            )
-    )
+    { typeAliasesInModule :
+        String
+        ->
+            Maybe
+                (FastDict.Dict
+                    String
+                    { parameters : List String
+                    , recordFieldOrder : Maybe (List String)
+                    , type_ : ElmSyntaxTypeInfer.Type
+                    }
+                )
+    , rustEnumTypes :
+        FastDict.Dict
+            String
+            { lifetimeParameters : List String
+            , referenceOrValueType : ReferenceOrValueType
+            }
+    }
     ->
-        { name : String
-        , parameters : List String
+        { parameters : List String
         , type_ : ElmSyntaxTypeInfer.Type
         }
     ->
-        { name : String
-        , lifetimeParameters : List String
+        { lifetimeParameters : List String
         , parameters : List String
         , type_ : RustType
         }
-typeAliasDeclaration typeAliasesInModule inferredTypeAlias =
+typeAliasDeclaration context inferredTypeAlias =
     let
         aliasedAsRustType : RustType
         aliasedAsRustType =
             inferredTypeAlias.type_
-                |> inferredTypeExpandInnerAliases typeAliasesInModule
-                |> type_ { typeAliasesInModule = typeAliasesInModule }
+                |> inferredTypeExpandInnerAliases context.typeAliasesInModule
+                |> type_ context
     in
-    { name = inferredTypeAlias.name
-    , parameters =
+    { parameters =
         inferredTypeAlias.parameters
             |> List.map toPascalCaseRustName
     , type_ = aliasedAsRustType
     , lifetimeParameters =
         aliasedAsRustType
-            |> rustTypeUsedLifetimeParameters
+            |> rustTypeUsedLifetimeVariables
             |> FastSet.toList
     }
-
-
-rustTypeUsedLifetimeParameters : RustType -> FastSet.Set String
-rustTypeUsedLifetimeParameters rustType =
-    -- IGNORE TCO
-    case rustType of
-        RustTypeInfer ->
-            FastSet.empty
-
-        RustTypeUnit ->
-            FastSet.empty
-
-        RustTypeVariable _ ->
-            FastSet.empty
-
-        RustTypeConstruct typeConstruct ->
-            typeConstruct.lifetimeArguments
-                |> FastSet.fromList
-                |> FastSet.union
-                    (typeConstruct.arguments
-                        |> listMapToFastSetsAndUnify rustTypeUsedLifetimeParameters
-                    )
-
-        RustTypeTuple typeTuple ->
-            (typeTuple.part0 |> rustTypeUsedLifetimeParameters)
-                |> FastSet.union
-                    (typeTuple.part1 |> rustTypeUsedLifetimeParameters)
-                |> FastSet.union
-                    (typeTuple.part2Up
-                        |> listMapToFastSetsAndUnify rustTypeUsedLifetimeParameters
-                    )
-
-        RustTypeRecord fields ->
-            fields
-                |> FastDict.values
-                |> listMapToFastSetsAndUnify rustTypeUsedLifetimeParameters
-
-        RustTypeFunction typeFunction ->
-            typeFunction.input
-                |> listMapToFastSetsAndUnify rustTypeUsedLifetimeParameters
-                |> FastSet.union
-                    (typeFunction.output |> rustTypeUsedLifetimeParameters)
-
-        RustTypeBorrow typeBorrow ->
-            FastSet.union
-                (case typeBorrow.lifetimeVariable of
-                    Nothing ->
-                        FastSet.empty
-
-                    Just lifetimeVariable ->
-                        FastSet.singleton lifetimeVariable
-                )
-                (typeBorrow.type_ |> rustTypeUsedLifetimeParameters)
 
 
 printRustTypeAliasDeclaration :
@@ -1046,13 +997,15 @@ type_ :
                     , type_ : ElmSyntaxTypeInfer.Type
                     }
                 )
-
-    -- TODO add path : String
+    , rustEnumTypes :
+        FastDict.Dict
+            String
+            { lifetimeParameters : List String
+            , referenceOrValueType : ReferenceOrValueType
+            }
     }
     -> ElmSyntaxTypeInfer.Type
-    ->
-        -- TODO add fnConstraints : List { variable : String, input : RustType, output : RustType }
-        RustType
+    -> RustType
 type_ context inferredType =
     case inferredType of
         ElmSyntaxTypeInfer.TypeVariable variable ->
@@ -1098,13 +1051,15 @@ typeNotVariable :
                     , type_ : ElmSyntaxTypeInfer.Type
                     }
                 )
-
-    -- TODO add path
+    , rustEnumTypes :
+        FastDict.Dict
+            String
+            { lifetimeParameters : List String
+            , referenceOrValueType : ReferenceOrValueType
+            }
     }
     -> ElmSyntaxTypeInfer.TypeNotVariable
-    ->
-        -- TODO add fnConstraints : List { variable : String, input : RustType, output : RustType }
-        RustType
+    -> RustType
 typeNotVariable context inferredTypeNotVariable =
     -- IGNORE TCO
     case inferredTypeNotVariable of
@@ -1118,7 +1073,7 @@ typeNotVariable context inferredTypeNotVariable =
                     typeConstruct.arguments
                         |> List.map
                             (\argument ->
-                                argument |> type_ { typeAliasesInModule = context.typeAliasesInModule }
+                                argument |> type_ context
                             )
             in
             case
@@ -1128,55 +1083,133 @@ typeNotVariable context inferredTypeNotVariable =
                     |> typeConstructReferenceToCoreRust
             of
                 Just coreRust ->
-                    RustTypeConstruct
-                        { arguments = rustArguments
-                        , name = coreRust.name
-                        , qualification = coreRust.qualification
-                        , lifetimeArguments =
-                            if coreRust.hasLifetimeParameter then
-                                [ generatedLifetimeVariableName ]
+                    let
+                        asValueType : RustType
+                        asValueType =
+                            RustTypeConstruct
+                                { arguments = rustArguments
+                                , name = coreRust.name
+                                , qualification = coreRust.qualification
+                                , lifetimeArguments = coreRust.lifetimeParameters
+                                , isFunction =
+                                    -- core elm declarations don't have a function type alias
+                                    False
+                                }
+                    in
+                    case coreRust.referenceOrValueType of
+                        ValueType ->
+                            asValueType
 
-                            else
-                                []
-                        , isFunction =
-                            -- core elm declarations don't have a function type alias
-                            False
-                        }
+                        ReferenceType ->
+                            RustTypeBorrow
+                                { lifetimeVariable = Just generatedLifetimeVariableName
+                                , type_ = asValueType
+                                }
 
                 Nothing ->
-                    RustTypeConstruct
-                        { arguments = rustArguments
-                        , lifetimeArguments = [ generatedLifetimeVariableName ]
-                        , qualification = []
-                        , name =
+                    let
+                        rustName : String
+                        rustName =
                             { moduleOrigin = typeConstruct.moduleOrigin
                             , name = typeConstruct.name
                             }
                                 |> elmReferenceToPascalCaseRustName
-                        , isFunction =
-                            case
-                                inferredTypeConstructToFunction context.typeAliasesInModule
-                                    typeConstruct
-                            of
+
+                        isTypeAlias : Bool
+                        isTypeAlias =
+                            case context.typeAliasesInModule typeConstruct.moduleOrigin of
                                 Nothing ->
                                     False
 
-                                Just _ ->
-                                    True
-                        }
+                                Just inModule ->
+                                    inModule |> FastDict.member typeConstruct.name
+                    in
+                    if isTypeAlias then
+                        let
+                            typeAliasExpanded : ElmSyntaxTypeInfer.Type
+                            typeAliasExpanded =
+                                ElmSyntaxTypeInfer.TypeConstruct typeConstruct
+                                    |> inferredTypeNotVariableExpandInnerAliases
+                                        context.typeAliasesInModule
+                        in
+                        RustTypeConstruct
+                            { arguments = rustArguments
+                            , lifetimeArguments =
+                                typeAliasExpanded
+                                    |> type_ context
+                                    |> rustTypeUsedLifetimeVariables
+                                    |> FastSet.toList
+                            , qualification = []
+                            , name = rustName
+                            , isFunction =
+                                case
+                                    inferredTypeToFunction context.typeAliasesInModule
+                                        typeAliasExpanded
+                                of
+                                    Nothing ->
+                                        False
+
+                                    Just _ ->
+                                        True
+                            }
+
+                    else
+                        case context.rustEnumTypes |> FastDict.get rustName of
+                            -- it's a (mutually) recursive enum, so it must be
+                            -- a reference type (which includes a reference and therefore also has a lifetime parameter)
+                            Nothing ->
+                                RustTypeBorrow
+                                    { lifetimeVariable = Just generatedLifetimeVariableName
+                                    , type_ =
+                                        RustTypeConstruct
+                                            { arguments = rustArguments
+                                            , lifetimeArguments =
+                                                [ generatedLifetimeVariableName ]
+                                            , qualification = []
+                                            , name = rustName
+                                            , isFunction = False
+                                            }
+                                    }
+
+                            Just originRustEnumType ->
+                                let
+                                    asValueType : RustType
+                                    asValueType =
+                                        RustTypeConstruct
+                                            { arguments = rustArguments
+                                            , lifetimeArguments = originRustEnumType.lifetimeParameters
+                                            , qualification = []
+                                            , name = rustName
+                                            , isFunction = False
+                                            }
+                                in
+                                case originRustEnumType.referenceOrValueType of
+                                    ValueType ->
+                                        asValueType
+
+                                    ReferenceType ->
+                                        RustTypeBorrow
+                                            { lifetimeVariable = Just generatedLifetimeVariableName
+                                            , type_ = asValueType
+                                            }
 
         ElmSyntaxTypeInfer.TypeTuple typeTuple ->
             RustTypeTuple
-                { part0 = typeTuple.part0 |> type_ { typeAliasesInModule = context.typeAliasesInModule }
-                , part1 = typeTuple.part1 |> type_ { typeAliasesInModule = context.typeAliasesInModule }
+                { part0 =
+                    typeTuple.part0 |> type_ context
+                , part1 =
+                    typeTuple.part1 |> type_ context
                 , part2Up = []
                 }
 
         ElmSyntaxTypeInfer.TypeTriple typeTriple ->
             RustTypeTuple
-                { part0 = typeTriple.part0 |> type_ { typeAliasesInModule = context.typeAliasesInModule }
-                , part1 = typeTriple.part1 |> type_ { typeAliasesInModule = context.typeAliasesInModule }
-                , part2Up = [ typeTriple.part2 |> type_ { typeAliasesInModule = context.typeAliasesInModule } ]
+                { part0 =
+                    typeTriple.part0 |> type_ context
+                , part1 =
+                    typeTriple.part1 |> type_ context
+                , part2Up =
+                    [ typeTriple.part2 |> type_ context ]
                 }
 
         ElmSyntaxTypeInfer.TypeRecord recordFields ->
@@ -1189,7 +1222,7 @@ typeNotVariable context inferredTypeNotVariable =
                                 soFar
                                     |> FastDict.insert
                                         (name |> toSnakeCaseRustName)
-                                        (valueType |> type_ { typeAliasesInModule = context.typeAliasesInModule })
+                                        (valueType |> type_ context)
                             )
                             FastDict.empty
             in
@@ -1206,8 +1239,8 @@ typeNotVariable context inferredTypeNotVariable =
 
         ElmSyntaxTypeInfer.TypeFunction typeFunction ->
             rustTypeBorrowDynFn
-                { input = [ typeFunction.input |> type_ { typeAliasesInModule = context.typeAliasesInModule } ]
-                , output = typeFunction.output |> type_ { typeAliasesInModule = context.typeAliasesInModule }
+                { input = [ typeFunction.input |> type_ context ]
+                , output = typeFunction.output |> type_ context
                 }
 
         ElmSyntaxTypeInfer.TypeRecordExtension typeRecordExtension ->
@@ -1224,7 +1257,7 @@ typeNotVariable context inferredTypeNotVariable =
                                 soFar
                                     |> FastDict.insert
                                         (name |> toSnakeCaseRustName)
-                                        (valueType |> type_ { typeAliasesInModule = context.typeAliasesInModule })
+                                        (valueType |> type_ context)
                             )
                             FastDict.empty
             in
@@ -2192,7 +2225,7 @@ stringFirstCharToLower string =
 rustPatternListEmpty : RustPattern
 rustPatternListEmpty =
     RustPatternVariant
-        { originTypeName = [ "ListListGuts" ]
+        { originTypeName = [ "ListList" ]
         , name = "Empty"
         , isReference = True
         , values = []
@@ -2202,7 +2235,7 @@ rustPatternListEmpty =
 rustPatternListCons : RustPattern -> RustPattern -> RustPattern
 rustPatternListCons head tail =
     RustPatternVariant
-        { originTypeName = [ "ListListGuts" ]
+        { originTypeName = [ "ListList" ]
         , name = "Cons"
         , isReference = True
         , values = [ head, tail ]
@@ -2210,10 +2243,16 @@ rustPatternListCons head tail =
 
 
 pattern :
-    ElmSyntaxTypeInfer.TypedNode
-        ElmSyntaxTypeInfer.Pattern
+    { rustEnumTypes :
+        FastDict.Dict
+            String
+            { lifetimeParameters : List String
+            , referenceOrValueType : ReferenceOrValueType
+            }
+    }
+    -> ElmSyntaxTypeInfer.TypedNode ElmSyntaxTypeInfer.Pattern
     -> RustPattern
-pattern patternInferred =
+pattern context patternInferred =
     -- IGNORE TCO
     case patternInferred.value of
         ElmSyntaxTypeInfer.PatternIgnored ->
@@ -2236,18 +2275,18 @@ pattern patternInferred =
                 (variableName |> toSnakeCaseRustName)
 
         ElmSyntaxTypeInfer.PatternParenthesized inParens ->
-            pattern inParens
+            pattern context inParens
 
         ElmSyntaxTypeInfer.PatternTuple parts ->
             rustPatternVariantTuple
-                (parts.part0 |> pattern)
-                (parts.part1 |> pattern)
+                (parts.part0 |> pattern context)
+                (parts.part1 |> pattern context)
 
         ElmSyntaxTypeInfer.PatternTriple parts ->
             rustPatternVariantTriple
-                (parts.part0 |> pattern)
-                (parts.part1 |> pattern)
-                (parts.part2 |> pattern)
+                (parts.part0 |> pattern context)
+                (parts.part1 |> pattern context)
+                (parts.part2 |> pattern context)
 
         ElmSyntaxTypeInfer.PatternRecord patternFields ->
             let
@@ -2297,9 +2336,7 @@ pattern patternInferred =
                             in
                             soFar
                                 |> FastDict.insert rustFieldName
-                                    (RustPatternVariable
-                                        rustFieldName
-                                    )
+                                    (RustPatternVariable rustFieldName)
                         )
                         (\fieldName () soFar ->
                             let
@@ -2310,9 +2347,7 @@ pattern patternInferred =
                             soFar
                                 |> FastDict.insert
                                     rustFieldName
-                                    (RustPatternVariable
-                                        rustFieldName
-                                    )
+                                    (RustPatternVariable rustFieldName)
                         )
                         allFields
                         (patternFields
@@ -2328,14 +2363,14 @@ pattern patternInferred =
 
         ElmSyntaxTypeInfer.PatternListCons listCons ->
             rustPatternListCons
-                (listCons.head |> pattern)
-                (listCons.tail |> pattern)
+                (listCons.head |> pattern context)
+                (listCons.tail |> pattern context)
 
         ElmSyntaxTypeInfer.PatternListExact elementPatterns ->
             elementPatterns
                 |> List.foldr
                     (\element soFar ->
-                        rustPatternListCons (element |> pattern) soFar
+                        rustPatternListCons (element |> pattern context) soFar
                     )
                     rustPatternListEmpty
 
@@ -2378,22 +2413,38 @@ pattern patternInferred =
                                     rustReference
 
                                 Nothing ->
-                                    { originTypeName =
-                                        [ ((variant.moduleOrigin |> String.replace "." "")
-                                            ++ variant.choiceTypeName
-                                            ++ "Guts"
-                                          )
-                                            |> toPascalCaseRustName
-                                        ]
-                                    , name =
-                                        toPascalCaseRustName variant.name
-                                    , isReference = True
+                                    let
+                                        originTypeRustName : String
+                                        originTypeRustName =
+                                            { moduleOrigin = variant.moduleOrigin
+                                            , name = variant.choiceTypeName
+                                            }
+                                                |> elmReferenceToPascalCaseRustName
+                                    in
+                                    { originTypeName = [ originTypeRustName ]
+                                    , name = toPascalCaseRustName variant.name
+                                    , isReference =
+                                        case context.rustEnumTypes |> FastDict.get originTypeRustName of
+                                            Nothing ->
+                                                -- error
+                                                False
+
+                                            Just originRustEnumType ->
+                                                case originRustEnumType.referenceOrValueType of
+                                                    ReferenceType ->
+                                                        True
+
+                                                    ValueType ->
+                                                        False
                                     }
 
                         values : List RustPattern
                         values =
                             variant.values
-                                |> List.map pattern
+                                |> List.map
+                                    (\variantValue ->
+                                        variantValue |> pattern context
+                                    )
                     in
                     RustPatternVariant
                         { originTypeName = reference.originTypeName
@@ -2405,7 +2456,7 @@ pattern patternInferred =
         ElmSyntaxTypeInfer.PatternAs patternAs ->
             RustPatternAlias
                 { variable = patternAs.variable.value
-                , pattern = patternAs.pattern |> pattern
+                , pattern = patternAs.pattern |> pattern context
                 }
 
 
@@ -2447,6 +2498,11 @@ rustExpressionCallTriple part0 part1 part2 =
         }
 
 
+type ReferenceOrValueType
+    = ValueType
+    | ReferenceType
+
+
 typeConstructReferenceToCoreRust :
     { moduleOrigin : String
     , name : String
@@ -2455,7 +2511,8 @@ typeConstructReferenceToCoreRust :
         Maybe
             { qualification : List String
             , name : String
-            , hasLifetimeParameter : Bool
+            , referenceOrValueType : ReferenceOrValueType
+            , lifetimeParameters : List String
             }
 typeConstructReferenceToCoreRust reference =
     case reference.moduleOrigin of
@@ -2465,14 +2522,16 @@ typeConstructReferenceToCoreRust reference =
                     Just
                         { qualification = [ "std", "cmp" ]
                         , name = "Ordering"
-                        , hasLifetimeParameter = False
+                        , lifetimeParameters = []
+                        , referenceOrValueType = ValueType
                         }
 
                 "Bool" ->
                     Just
                         { qualification = []
                         , name = "bool"
-                        , hasLifetimeParameter = False
+                        , lifetimeParameters = []
+                        , referenceOrValueType = ValueType
                         }
 
                 "Int" ->
@@ -2486,7 +2545,8 @@ typeConstructReferenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "BasicsNever"
-                        , hasLifetimeParameter = False
+                        , lifetimeParameters = []
+                        , referenceOrValueType = ValueType
                         }
 
                 _ ->
@@ -2494,7 +2554,7 @@ typeConstructReferenceToCoreRust reference =
 
         "String" ->
             -- "String" is the only possible reference.name
-            justRustReferenceStringString
+            justRustReferenceStr
 
         "Char" ->
             -- "Char" is the only possible reference.name
@@ -2509,7 +2569,8 @@ typeConstructReferenceToCoreRust reference =
             Just
                 { qualification = []
                 , name = "ArrayArray"
-                , hasLifetimeParameter = True
+                , lifetimeParameters = []
+                , referenceOrValueType = ReferenceType
                 }
 
         "Maybe" ->
@@ -2525,7 +2586,8 @@ typeConstructReferenceToCoreRust reference =
             Just
                 { qualification = []
                 , name = "JsonEncodeValue"
-                , hasLifetimeParameter = True
+                , lifetimeParameters = [ generatedLifetimeVariableName ]
+                , referenceOrValueType = ValueType
                 }
 
         "Json.Decode" ->
@@ -2534,21 +2596,24 @@ typeConstructReferenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "JsonDecodeValue"
-                        , hasLifetimeParameter = True
+                        , lifetimeParameters = [ generatedLifetimeVariableName ]
+                        , referenceOrValueType = ValueType
                         }
 
                 "Decoder" ->
                     Just
                         { qualification = []
                         , name = "JsonDecodeDecoder"
-                        , hasLifetimeParameter = True
+                        , lifetimeParameters = [ generatedLifetimeVariableName ]
+                        , referenceOrValueType = ValueType
                         }
 
                 "Error" ->
                     Just
                         { qualification = []
                         , name = "JsonDecodeError"
-                        , hasLifetimeParameter = True
+                        , lifetimeParameters = [ generatedLifetimeVariableName ]
+                        , referenceOrValueType = ReferenceType
                         }
 
                 _ ->
@@ -2560,21 +2625,24 @@ typeConstructReferenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "RegexRegex"
-                        , hasLifetimeParameter = True
+                        , lifetimeParameters = [ generatedLifetimeVariableName ]
+                        , referenceOrValueType = ValueType
                         }
 
                 "Options" ->
                     Just
                         { qualification = []
                         , name = "RegexOptions"
-                        , hasLifetimeParameter = False
+                        , lifetimeParameters = []
+                        , referenceOrValueType = ValueType
                         }
 
                 "Match" ->
                     Just
                         { qualification = []
                         , name = "RegexMatch"
-                        , hasLifetimeParameter = False
+                        , lifetimeParameters = []
+                        , referenceOrValueType = ValueType
                         }
 
                 _ ->
@@ -2586,14 +2654,16 @@ typeConstructReferenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "RandomSeed"
-                        , hasLifetimeParameter = False
+                        , lifetimeParameters = []
+                        , referenceOrValueType = ValueType
                         }
 
                 "Generator" ->
                     Just
                         { qualification = []
                         , name = "RandomGenerator"
-                        , hasLifetimeParameter = True
+                        , lifetimeParameters = [ generatedLifetimeVariableName ]
+                        , referenceOrValueType = ValueType
                         }
 
                 _ ->
@@ -2605,35 +2675,40 @@ typeConstructReferenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "TimePosix"
-                        , hasLifetimeParameter = False
+                        , lifetimeParameters = []
+                        , referenceOrValueType = ValueType
                         }
 
                 "Zone" ->
                     Just
                         { qualification = []
                         , name = "TimeZone"
-                        , hasLifetimeParameter = False
+                        , lifetimeParameters = []
+                        , referenceOrValueType = ValueType
                         }
 
                 "Month" ->
                     Just
                         { qualification = []
                         , name = "TimeMonth"
-                        , hasLifetimeParameter = False
+                        , lifetimeParameters = []
+                        , referenceOrValueType = ValueType
                         }
 
                 "Weekday" ->
                     Just
                         { qualification = []
                         , name = "TimeWeekday"
-                        , hasLifetimeParameter = False
+                        , lifetimeParameters = []
+                        , referenceOrValueType = ValueType
                         }
 
                 "TimeZoneName" ->
                     Just
                         { qualification = []
                         , name = "TimeZoneName"
-                        , hasLifetimeParameter = False
+                        , lifetimeParameters = []
+                        , referenceOrValueType = ValueType
                         }
 
                 _ ->
@@ -2645,14 +2720,16 @@ typeConstructReferenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "BytesEndianness"
-                        , hasLifetimeParameter = False
+                        , lifetimeParameters = []
+                        , referenceOrValueType = ValueType
                         }
 
                 "Bytes" ->
                     Just
                         { qualification = []
                         , name = "BytesBytes"
-                        , hasLifetimeParameter = True
+                        , lifetimeParameters = [ generatedLifetimeVariableName ]
+                        , referenceOrValueType = ValueType
                         }
 
                 _ ->
@@ -2664,14 +2741,16 @@ typeConstructReferenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "BytesDecodeDecoder"
-                        , hasLifetimeParameter = True
+                        , lifetimeParameters = [ generatedLifetimeVariableName ]
+                        , referenceOrValueType = ValueType
                         }
 
                 "Step" ->
                     Just
                         { qualification = []
                         , name = "BytesDecodeStep"
-                        , hasLifetimeParameter = False
+                        , lifetimeParameters = []
+                        , referenceOrValueType = ValueType
                         }
 
                 _ ->
@@ -2682,7 +2761,8 @@ typeConstructReferenceToCoreRust reference =
             Just
                 { qualification = []
                 , name = "BytesEncodeEncoder"
-                , hasLifetimeParameter = True
+                , lifetimeParameters = [ generatedLifetimeVariableName ]
+                , referenceOrValueType = ReferenceType
                 }
 
         "VirtualDom" ->
@@ -2691,21 +2771,24 @@ typeConstructReferenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "VirtualDomNode"
-                        , hasLifetimeParameter = True
+                        , lifetimeParameters = [ generatedLifetimeVariableName ]
+                        , referenceOrValueType = ReferenceType
                         }
 
                 "Attribute" ->
                     Just
                         { qualification = []
                         , name = "VirtualDomAttribute"
-                        , hasLifetimeParameter = True
+                        , lifetimeParameters = [ generatedLifetimeVariableName ]
+                        , referenceOrValueType = ValueType
                         }
 
                 "Handler" ->
                     Just
                         { qualification = []
                         , name = "VirtualDomHandler"
-                        , hasLifetimeParameter = True
+                        , lifetimeParameters = [ generatedLifetimeVariableName ]
+                        , referenceOrValueType = ValueType
                         }
 
                 _ ->
@@ -2717,7 +2800,8 @@ typeConstructReferenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "MathVector2Vec2"
-                        , hasLifetimeParameter = False
+                        , lifetimeParameters = []
+                        , referenceOrValueType = ValueType
                         }
 
                 _ ->
@@ -2729,7 +2813,8 @@ typeConstructReferenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "MathVector3Vec3"
-                        , hasLifetimeParameter = False
+                        , lifetimeParameters = []
+                        , referenceOrValueType = ValueType
                         }
 
                 _ ->
@@ -2741,7 +2826,8 @@ typeConstructReferenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "MathVector4Vec4"
-                        , hasLifetimeParameter = False
+                        , lifetimeParameters = []
+                        , referenceOrValueType = ValueType
                         }
 
                 _ ->
@@ -2757,7 +2843,8 @@ typeConstructReferenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "PlatformProgram"
-                        , hasLifetimeParameter = True
+                        , lifetimeParameters = [ generatedLifetimeVariableName ]
+                        , referenceOrValueType = ValueType
                         }
 
                 -- "Task" | "ProcessId" | "Router"
@@ -2769,7 +2856,8 @@ typeConstructReferenceToCoreRust reference =
             Just
                 { qualification = []
                 , name = "PlatformCmdCmd"
-                , hasLifetimeParameter = True
+                , lifetimeParameters = []
+                , referenceOrValueType = ValueType
                 }
 
         "Platform.Sub" ->
@@ -2777,7 +2865,8 @@ typeConstructReferenceToCoreRust reference =
             Just
                 { qualification = []
                 , name = "PlatformSubSub"
-                , hasLifetimeParameter = True
+                , lifetimeParameters = [ generatedLifetimeVariableName ]
+                , referenceOrValueType = ValueType
                 }
 
         _ ->
@@ -2788,7 +2877,8 @@ justRustReferenceF64 :
     Maybe
         { qualification : List String
         , name : String
-        , hasLifetimeParameter : Bool
+        , lifetimeParameters : List String
+        , referenceOrValueType : ReferenceOrValueType
         }
 justRustReferenceF64 =
     Just rustReferenceF64
@@ -2797,60 +2887,95 @@ justRustReferenceF64 =
 rustReferenceF64 :
     { qualification : List String
     , name : String
-    , hasLifetimeParameter : Bool
+    , lifetimeParameters : List String
+    , referenceOrValueType : ReferenceOrValueType
     }
 rustReferenceF64 =
-    { qualification = [], name = "f64", hasLifetimeParameter = False }
+    { qualification = []
+    , name = "f64"
+    , lifetimeParameters = []
+    , referenceOrValueType = ValueType
+    }
 
 
-justRustReferenceStringString :
+justRustReferenceStr :
     Maybe
         { qualification : List String
         , name : String
-        , hasLifetimeParameter : Bool
+        , lifetimeParameters : List String
+        , referenceOrValueType : ReferenceOrValueType
         }
-justRustReferenceStringString =
-    Just { qualification = [], name = "StringString", hasLifetimeParameter = True }
+justRustReferenceStr =
+    Just
+        { qualification = []
+        , name = "str"
+        , lifetimeParameters = []
+        , referenceOrValueType = ReferenceType
+        }
 
 
 justRustReferenceChar :
     Maybe
         { qualification : List String
         , name : String
-        , hasLifetimeParameter : Bool
+        , lifetimeParameters : List String
+        , referenceOrValueType : ReferenceOrValueType
         }
 justRustReferenceChar =
-    Just { qualification = [], name = "char", hasLifetimeParameter = False }
+    Just
+        { qualification = []
+        , name = "char"
+        , lifetimeParameters = []
+        , referenceOrValueType = ValueType
+        }
 
 
 justRustReferenceListList :
     Maybe
         { qualification : List String
         , name : String
-        , hasLifetimeParameter : Bool
+        , lifetimeParameters : List String
+        , referenceOrValueType : ReferenceOrValueType
         }
 justRustReferenceListList =
-    Just { qualification = [], name = "ListList", hasLifetimeParameter = True }
+    Just
+        { qualification = []
+        , name = "ListList"
+        , lifetimeParameters = [ generatedLifetimeVariableName ]
+        , referenceOrValueType = ReferenceType
+        }
 
 
 justRustReferenceOption :
     Maybe
         { qualification : List String
         , name : String
-        , hasLifetimeParameter : Bool
+        , lifetimeParameters : List String
+        , referenceOrValueType : ReferenceOrValueType
         }
 justRustReferenceOption =
-    Just { qualification = [], name = "Option", hasLifetimeParameter = False }
+    Just
+        { qualification = []
+        , name = "Option"
+        , lifetimeParameters = []
+        , referenceOrValueType = ValueType
+        }
 
 
 justRustReferenceResultResult :
     Maybe
         { qualification : List String
         , name : String
-        , hasLifetimeParameter : Bool
+        , lifetimeParameters : List String
+        , referenceOrValueType : ReferenceOrValueType
         }
 justRustReferenceResultResult =
-    Just { qualification = [], name = "ResultResult", hasLifetimeParameter = False }
+    Just
+        { qualification = []
+        , name = "ResultResult"
+        , lifetimeParameters = []
+        , referenceOrValueType = ValueType
+        }
 
 
 variantToCoreRust :
@@ -2911,16 +3036,16 @@ variantToCoreRust reference =
         "Json.Decode" ->
             case reference.name of
                 "Field" ->
-                    Just { originTypeName = [ "JsonDecodeErrorGuts" ], name = "Field", isReference = True }
+                    Just { originTypeName = [ "JsonDecodeError" ], name = "Field", isReference = True }
 
                 "Index" ->
-                    Just { originTypeName = [ "JsonDecodeErrorGuts" ], name = "Index", isReference = True }
+                    Just { originTypeName = [ "JsonDecodeError" ], name = "Index", isReference = True }
 
                 "OneOf" ->
-                    Just { originTypeName = [ "JsonDecodeErrorGuts" ], name = "OneOf", isReference = True }
+                    Just { originTypeName = [ "JsonDecodeError" ], name = "OneOf", isReference = True }
 
                 "Failure" ->
-                    Just { originTypeName = [ "JsonDecodeErrorGuts" ], name = "Failure", isReference = True }
+                    Just { originTypeName = [ "JsonDecodeError" ], name = "Failure", isReference = True }
 
                 _ ->
                     Nothing
@@ -6043,8 +6168,20 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                             )
                             FastDict.empty
 
+                typeAliasesInModule : String -> Maybe (FastDict.Dict String { parameters : List String, type_ : ElmSyntaxTypeInfer.Type, recordFieldOrder : Maybe (List String) })
+                typeAliasesInModule moduleNameToAccess =
+                    modulesInferred.types
+                        |> FastDict.get moduleNameToAccess
+                        |> Maybe.map .typeAliases
+
                 transpiledRustDeclarations :
                     { errors : List String
+                    , rustEnumTypes :
+                        FastDict.Dict
+                            String
+                            { lifetimeParameters : List String
+                            , referenceOrValueType : ReferenceOrValueType
+                            }
                     , declarations :
                         { fns :
                             FastDict.Dict
@@ -6078,7 +6215,8 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                     }
                 transpiledRustDeclarations =
                     modulesInferred.inferred
-                        |> List.foldr
+                        |> -- from most to least depended on
+                           List.foldr
                             (\moduleInferred soFarAcrossModules ->
                                 let
                                     moduleName : String
@@ -6120,266 +6258,425 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                 , valueAndFunctionAnnotations =
                                                     modulesInferred.valueAndFunctionAnnotations
                                                 }
-                                in
-                                moduleInferred.module_.declarations
-                                    |> List.foldr
-                                        (\(Elm.Syntax.Node.Node _ declaration) soFar ->
-                                            case declaration of
-                                                Elm.Syntax.Declaration.FunctionDeclaration _ ->
-                                                    -- handled below
-                                                    soFar
 
-                                                Elm.Syntax.Declaration.AliasDeclaration syntaxTypeAliasDeclaration ->
-                                                    let
-                                                        typeAliasName : String
-                                                        typeAliasName =
-                                                            syntaxTypeAliasDeclaration.name |> Elm.Syntax.Node.value
-                                                    in
-                                                    case moduleInferred.declarationTypes.typeAliases |> FastDict.get typeAliasName of
-                                                        Nothing ->
-                                                            { declarations = soFar.declarations
-                                                            , errors =
-                                                                ("bug in elm-syntax-to-rust: failed to find transformed type alias declaration "
-                                                                    ++ moduleName
-                                                                    ++ "."
-                                                                    ++ typeAliasName
-                                                                )
-                                                                    :: soFar.errors
-                                                            }
+                                    moduleDeclaredInferredTypeAliasesAndChoiceTypes :
+                                        { typeAliasDeclarations :
+                                            List
+                                                { name : String
+                                                , parameters : List String
+                                                , type_ : ElmSyntaxTypeInfer.Type
+                                                }
+                                        , choiceTypeDeclarations :
+                                            List
+                                                { name : String
+                                                , parameters : List String
+                                                , variants :
+                                                    FastDict.Dict String (List ElmSyntaxTypeInfer.Type)
+                                                }
+                                        , errors : List String
+                                        }
+                                    moduleDeclaredInferredTypeAliasesAndChoiceTypes =
+                                        moduleInferred.module_.declarations
+                                            |> List.foldl
+                                                (\(Elm.Syntax.Node.Node _ declaration) soFar ->
+                                                    case declaration of
+                                                        Elm.Syntax.Declaration.FunctionDeclaration _ ->
+                                                            soFar
 
-                                                        Just inferredTypeAliasDeclaration ->
-                                                            if
-                                                                inferredTypeAliasDeclaration.type_
-                                                                    |> inferredTypeExpandInnerAliases
-                                                                        (\moduleNameToAccess ->
-                                                                            modulesInferred.types
-                                                                                |> FastDict.get moduleNameToAccess
-                                                                                |> Maybe.map .typeAliases
+                                                        Elm.Syntax.Declaration.PortDeclaration _ ->
+                                                            soFar
+
+                                                        Elm.Syntax.Declaration.InfixDeclaration _ ->
+                                                            soFar
+
+                                                        Elm.Syntax.Declaration.Destructuring _ _ ->
+                                                            soFar
+
+                                                        Elm.Syntax.Declaration.AliasDeclaration syntaxTypeAliasDeclaration ->
+                                                            let
+                                                                typeAliasName : String
+                                                                typeAliasName =
+                                                                    syntaxTypeAliasDeclaration.name |> Elm.Syntax.Node.value
+                                                            in
+                                                            case moduleInferred.declarationTypes.typeAliases |> FastDict.get typeAliasName of
+                                                                Nothing ->
+                                                                    { typeAliasDeclarations = soFar.typeAliasDeclarations
+                                                                    , choiceTypeDeclarations = soFar.choiceTypeDeclarations
+                                                                    , errors =
+                                                                        ("bug in elm-syntax-to-rust: failed to find transformed type alias declaration "
+                                                                            ++ moduleName
+                                                                            ++ "."
+                                                                            ++ typeAliasName
                                                                         )
-                                                                    |> inferredTypeContainsExtensibleRecord
-                                                            then
-                                                                soFar
+                                                                            :: soFar.errors
+                                                                    }
 
-                                                            else
-                                                                let
-                                                                    rustTypeAliasDeclaration :
-                                                                        { name : String
-                                                                        , lifetimeParameters : List String
-                                                                        , parameters : List String
-                                                                        , type_ : RustType
-                                                                        }
-                                                                    rustTypeAliasDeclaration =
-                                                                        typeAliasDeclaration
-                                                                            (\moduleNameToAccess ->
-                                                                                modulesInferred.types
-                                                                                    |> FastDict.get moduleNameToAccess
-                                                                                    |> Maybe.map .typeAliases
-                                                                            )
+                                                                Just inferredTypeAliasDeclaration ->
+                                                                    let
+                                                                        inferredAliasedTypeWithExpandedAliases : ElmSyntaxTypeInfer.Type
+                                                                        inferredAliasedTypeWithExpandedAliases =
+                                                                            inferredTypeAliasDeclaration.type_
+                                                                                |> inferredTypeExpandInnerAliases typeAliasesInModule
+                                                                    in
+                                                                    if inferredAliasedTypeWithExpandedAliases |> inferredTypeContainsExtensibleRecord then
+                                                                        soFar
+
+                                                                    else
+                                                                        { errors = soFar.errors
+                                                                        , choiceTypeDeclarations = soFar.choiceTypeDeclarations
+                                                                        , typeAliasDeclarations =
                                                                             { name = typeAliasName
                                                                             , parameters = inferredTypeAliasDeclaration.parameters
-                                                                            , type_ = inferredTypeAliasDeclaration.type_
+                                                                            , type_ = inferredAliasedTypeWithExpandedAliases
                                                                             }
-                                                                in
-                                                                { errors = soFar.errors
-                                                                , declarations =
-                                                                    { lets = soFar.declarations.lets
-                                                                    , fns = soFar.declarations.fns
-                                                                    , enumTypes = soFar.declarations.enumTypes
-                                                                    , typeAliases =
-                                                                        soFar.declarations.typeAliases
-                                                                            |> FastDict.insert
-                                                                                ({ moduleOrigin = moduleName
-                                                                                 , name = rustTypeAliasDeclaration.name
-                                                                                 }
-                                                                                    |> elmReferenceToPascalCaseRustName
-                                                                                )
-                                                                                { lifetimeParameters =
-                                                                                    rustTypeAliasDeclaration.lifetimeParameters
-                                                                                , parameters = rustTypeAliasDeclaration.parameters
-                                                                                , type_ = rustTypeAliasDeclaration.type_
-                                                                                }
-                                                                    }
-                                                                }
+                                                                                :: soFar.typeAliasDeclarations
+                                                                        }
 
-                                                Elm.Syntax.Declaration.CustomTypeDeclaration syntaxChoiceTypeDeclaration ->
-                                                    let
-                                                        choiceTypeName : String
-                                                        choiceTypeName =
-                                                            syntaxChoiceTypeDeclaration.name |> Elm.Syntax.Node.value
-                                                    in
-                                                    case moduleInferred.declarationTypes.choiceTypes |> FastDict.get choiceTypeName of
-                                                        Nothing ->
-                                                            { declarations = soFar.declarations
-                                                            , errors =
-                                                                ("bug in elm-syntax-to-rust: failed to find transformed choice type declaration "
-                                                                    ++ moduleName
-                                                                    ++ "."
-                                                                    ++ choiceTypeName
-                                                                )
-                                                                    :: soFar.errors
-                                                            }
-
-                                                        Just inferredChoiceAliasDeclaration ->
+                                                        Elm.Syntax.Declaration.CustomTypeDeclaration syntaxChoiceTypeDeclaration ->
                                                             let
-                                                                rustEnumDeclaration :
-                                                                    { name : String
-                                                                    , parameters : List String
-                                                                    , lifetimeParameters : List String
-                                                                    , variants : FastDict.Dict String (List RustType)
-                                                                    }
-                                                                rustEnumDeclaration =
-                                                                    choiceTypeDeclaration
-                                                                        (\moduleNameToAccess ->
-                                                                            modulesInferred.types
-                                                                                |> FastDict.get moduleNameToAccess
-                                                                                |> Maybe.map .typeAliases
+                                                                choiceTypeName : String
+                                                                choiceTypeName =
+                                                                    syntaxChoiceTypeDeclaration.name |> Elm.Syntax.Node.value
+                                                            in
+                                                            case moduleInferred.declarationTypes.choiceTypes |> FastDict.get choiceTypeName of
+                                                                Nothing ->
+                                                                    { choiceTypeDeclarations = soFar.choiceTypeDeclarations
+                                                                    , typeAliasDeclarations = soFar.typeAliasDeclarations
+                                                                    , errors =
+                                                                        ("bug in elm-syntax-to-rust: failed to find transformed choice type declaration "
+                                                                            ++ moduleName
+                                                                            ++ "."
+                                                                            ++ choiceTypeName
                                                                         )
-                                                                        { name = choiceTypeName
-                                                                        , parameters = inferredChoiceAliasDeclaration.parameters
-                                                                        , variants = inferredChoiceAliasDeclaration.variants
-                                                                        }
-
-                                                                fullRustEnumGutsTypeName : String
-                                                                fullRustEnumGutsTypeName =
-                                                                    { moduleOrigin = moduleName
-                                                                    , name = rustEnumDeclaration.name
+                                                                            :: soFar.errors
                                                                     }
-                                                                        |> elmReferenceToPascalCaseRustName
-                                                            in
-                                                            { errors = soFar.errors
-                                                            , declarations =
-                                                                { lets = soFar.declarations.lets
-                                                                , fns = soFar.declarations.fns
-                                                                , enumTypes =
-                                                                    soFar.declarations.enumTypes
-                                                                        |> FastDict.insert fullRustEnumGutsTypeName
-                                                                            { parameters = rustEnumDeclaration.parameters
-                                                                            , lifetimeParameters = rustEnumDeclaration.lifetimeParameters
-                                                                            , variants = rustEnumDeclaration.variants
-                                                                            }
-                                                                , typeAliases =
-                                                                    soFar.declarations.typeAliases
-                                                                        |> FastDict.insert
-                                                                            ({ moduleOrigin = moduleName
-                                                                             , name = choiceTypeName
-                                                                             }
-                                                                                |> elmReferenceToPascalCaseRustName
-                                                                            )
-                                                                            { lifetimeParameters =
-                                                                                (generatedLifetimeVariableName :: rustEnumDeclaration.lifetimeParameters)
-                                                                                    |> -- TODO optimize to sort |> unique
-                                                                                       FastSet.fromList
-                                                                                    |> FastSet.toList
-                                                                            , parameters = rustEnumDeclaration.parameters
-                                                                            , type_ =
-                                                                                RustTypeBorrow
-                                                                                    { lifetimeVariable = Just generatedLifetimeVariableName
-                                                                                    , type_ =
-                                                                                        RustTypeConstruct
-                                                                                            { qualification = []
-                                                                                            , lifetimeArguments =
-                                                                                                rustEnumDeclaration.lifetimeParameters
-                                                                                            , name = fullRustEnumGutsTypeName
-                                                                                            , arguments =
-                                                                                                rustEnumDeclaration.parameters
-                                                                                                    |> List.map RustTypeVariable
-                                                                                            , isFunction = False
+
+                                                                Just inferredChoiceTypeDeclaration ->
+                                                                    { errors = soFar.errors
+                                                                    , typeAliasDeclarations = soFar.typeAliasDeclarations
+                                                                    , choiceTypeDeclarations =
+                                                                        { name = choiceTypeName
+                                                                        , parameters = inferredChoiceTypeDeclaration.parameters
+                                                                        , variants = inferredChoiceTypeDeclaration.variants
+                                                                        }
+                                                                            :: soFar.choiceTypeDeclarations
+                                                                    }
+                                                )
+                                                { choiceTypeDeclarations = []
+                                                , typeAliasDeclarations = []
+                                                , errors = []
+                                                }
+
+                                    inferredTypeDeclarationsMostToLeastDependedOn : List (Graph.SCC InferredChoiceTypeOrTypeAliasDeclaration)
+                                    inferredTypeDeclarationsMostToLeastDependedOn =
+                                        inferredTypeDeclarationsToMostToLeastDependedOn
+                                            { moduleOrigin = moduleName
+                                            , typeAliases = moduleDeclaredInferredTypeAliasesAndChoiceTypes.typeAliasDeclarations
+                                            , choiceTypes = moduleDeclaredInferredTypeAliasesAndChoiceTypes.choiceTypeDeclarations
+                                            }
+
+                                    transpiledModuleDeclaredRustTypes :
+                                        { rustEnumDeclarations :
+                                            List
+                                                { name : String
+                                                , parameters : List String
+                                                , lifetimeParameters : List String
+                                                , variants : FastDict.Dict String (List RustType)
+                                                }
+                                        , rustTypeAliasDeclarations :
+                                            List
+                                                { name : String
+                                                , lifetimeParameters : List String
+                                                , parameters : List String
+                                                , type_ : RustType
+                                                }
+                                        , rustEnumTypes :
+                                            FastDict.Dict
+                                                String
+                                                { lifetimeParameters : List String
+                                                , referenceOrValueType : ReferenceOrValueType
+                                                }
+                                        }
+                                    transpiledModuleDeclaredRustTypes =
+                                        inferredTypeDeclarationsMostToLeastDependedOn
+                                            |> List.foldl
+                                                (\inferredTypeDeclarationComponent soFar ->
+                                                    case inferredTypeDeclarationComponent of
+                                                        Graph.CyclicSCC inferredTypeDeclarationCycle ->
+                                                            inferredTypeDeclarationCycle
+                                                                |> List.foldl
+                                                                    (\inferredTypeDeclaration withCycleDeclarationsSoFar ->
+                                                                        case inferredTypeDeclaration of
+                                                                            InferredTypeAliasDeclaration inferredTypeAliasDeclaration ->
+                                                                                let
+                                                                                    rustTypeAliasDeclaration :
+                                                                                        { lifetimeParameters : List String
+                                                                                        , parameters : List String
+                                                                                        , type_ : RustType
+                                                                                        }
+                                                                                    rustTypeAliasDeclaration =
+                                                                                        typeAliasDeclaration
+                                                                                            { typeAliasesInModule = typeAliasesInModule
+                                                                                            , rustEnumTypes =
+                                                                                                -- same effect as withCycleDeclarationsSoFar.rustEnumTypes
+                                                                                                soFar.rustEnumTypes
                                                                                             }
+                                                                                            { parameters = inferredTypeAliasDeclaration.parameters
+                                                                                            , type_ = inferredTypeAliasDeclaration.type_
+                                                                                            }
+                                                                                in
+                                                                                { rustEnumTypes = withCycleDeclarationsSoFar.rustEnumTypes
+                                                                                , rustEnumDeclarations = withCycleDeclarationsSoFar.rustEnumDeclarations
+                                                                                , rustTypeAliasDeclarations =
+                                                                                    { name =
+                                                                                        { moduleOrigin = moduleName
+                                                                                        , name = inferredTypeAliasDeclaration.name
+                                                                                        }
+                                                                                            |> elmReferenceToPascalCaseRustName
+                                                                                    , lifetimeParameters = rustTypeAliasDeclaration.lifetimeParameters
+                                                                                    , parameters = rustTypeAliasDeclaration.parameters
+                                                                                    , type_ = rustTypeAliasDeclaration.type_
                                                                                     }
+                                                                                        :: withCycleDeclarationsSoFar.rustTypeAliasDeclarations
+                                                                                }
+
+                                                                            InferredChoiceTypeDeclaration inferredChoiceAliasDeclaration ->
+                                                                                let
+                                                                                    rustName : String
+                                                                                    rustName =
+                                                                                        { moduleOrigin = moduleName
+                                                                                        , name = inferredChoiceAliasDeclaration.name
+                                                                                        }
+                                                                                            |> elmReferenceToPascalCaseRustName
+
+                                                                                    rustEnumDeclaration :
+                                                                                        { parameters : List String
+                                                                                        , lifetimeParameters : List String
+                                                                                        , variants : FastDict.Dict String (List RustType)
+                                                                                        }
+                                                                                    rustEnumDeclaration =
+                                                                                        choiceTypeDeclaration
+                                                                                            { typeAliasesInModule = typeAliasesInModule
+                                                                                            , rustEnumTypes = withCycleDeclarationsSoFar.rustEnumTypes
+                                                                                            }
+                                                                                            { parameters = inferredChoiceAliasDeclaration.parameters
+                                                                                            , variants = inferredChoiceAliasDeclaration.variants
+                                                                                            }
+                                                                                in
+                                                                                { rustTypeAliasDeclarations = withCycleDeclarationsSoFar.rustTypeAliasDeclarations
+                                                                                , rustEnumTypes =
+                                                                                    withCycleDeclarationsSoFar.rustEnumTypes
+                                                                                        |> FastDict.insert rustName
+                                                                                            { lifetimeParameters = rustEnumDeclaration.lifetimeParameters
+                                                                                            , referenceOrValueType = ReferenceType
+                                                                                            }
+                                                                                , rustEnumDeclarations =
+                                                                                    { name = rustName
+                                                                                    , parameters = rustEnumDeclaration.parameters
+                                                                                    , lifetimeParameters = rustEnumDeclaration.lifetimeParameters
+                                                                                    , variants = rustEnumDeclaration.variants
+                                                                                    }
+                                                                                        :: withCycleDeclarationsSoFar.rustEnumDeclarations
+                                                                                }
+                                                                    )
+                                                                    soFar
+
+                                                        Graph.AcyclicSCC inferredTypeDeclaration ->
+                                                            case inferredTypeDeclaration of
+                                                                InferredTypeAliasDeclaration inferredTypeAliasDeclaration ->
+                                                                    let
+                                                                        rustTypeAliasDeclaration :
+                                                                            { lifetimeParameters : List String
+                                                                            , parameters : List String
+                                                                            , type_ : RustType
+                                                                            }
+                                                                        rustTypeAliasDeclaration =
+                                                                            typeAliasDeclaration
+                                                                                { typeAliasesInModule = typeAliasesInModule
+                                                                                , rustEnumTypes = soFar.rustEnumTypes
+                                                                                }
+                                                                                { parameters = inferredTypeAliasDeclaration.parameters
+                                                                                , type_ = inferredTypeAliasDeclaration.type_
+                                                                                }
+                                                                    in
+                                                                    { rustEnumTypes = soFar.rustEnumTypes
+                                                                    , rustEnumDeclarations = soFar.rustEnumDeclarations
+                                                                    , rustTypeAliasDeclarations =
+                                                                        { name =
+                                                                            { moduleOrigin = moduleName
+                                                                            , name = inferredTypeAliasDeclaration.name
+                                                                            }
+                                                                                |> elmReferenceToPascalCaseRustName
+                                                                        , lifetimeParameters = rustTypeAliasDeclaration.lifetimeParameters
+                                                                        , parameters = rustTypeAliasDeclaration.parameters
+                                                                        , type_ = rustTypeAliasDeclaration.type_
+                                                                        }
+                                                                            :: soFar.rustTypeAliasDeclarations
+                                                                    }
+
+                                                                InferredChoiceTypeDeclaration inferredChoiceAliasDeclaration ->
+                                                                    let
+                                                                        rustName : String
+                                                                        rustName =
+                                                                            { moduleOrigin = moduleName
+                                                                            , name = inferredChoiceAliasDeclaration.name
+                                                                            }
+                                                                                |> elmReferenceToPascalCaseRustName
+
+                                                                        rustEnumDeclaration :
+                                                                            { parameters : List String
+                                                                            , lifetimeParameters : List String
+                                                                            , variants : FastDict.Dict String (List RustType)
+                                                                            }
+                                                                        rustEnumDeclaration =
+                                                                            choiceTypeDeclaration
+                                                                                { typeAliasesInModule = typeAliasesInModule
+                                                                                , rustEnumTypes = soFar.rustEnumTypes
+                                                                                }
+                                                                                { parameters = inferredChoiceAliasDeclaration.parameters
+                                                                                , variants = inferredChoiceAliasDeclaration.variants
+                                                                                }
+                                                                    in
+                                                                    { rustTypeAliasDeclarations = soFar.rustTypeAliasDeclarations
+                                                                    , rustEnumTypes =
+                                                                        soFar.rustEnumTypes
+                                                                            |> FastDict.insert rustName
+                                                                                { lifetimeParameters = rustEnumDeclaration.lifetimeParameters
+                                                                                , referenceOrValueType = ValueType
+                                                                                }
+                                                                    , rustEnumDeclarations =
+                                                                        { name = rustName
+                                                                        , parameters = rustEnumDeclaration.parameters
+                                                                        , lifetimeParameters = rustEnumDeclaration.lifetimeParameters
+                                                                        , variants = rustEnumDeclaration.variants
+                                                                        }
+                                                                            :: soFar.rustEnumDeclarations
+                                                                    }
+                                                )
+                                                { rustEnumDeclarations = []
+                                                , rustTypeAliasDeclarations = []
+                                                , rustEnumTypes = soFarAcrossModules.rustEnumTypes
+                                                }
+                                in
+                                moduleInferred.declarationsInferred
+                                    |> List.foldl
+                                        (\valueOrFunctionDeclarationInferred soFarAcrossModulesWithInferredValeAndFunctionDeclarations ->
+                                            case
+                                                valueOrFunctionDeclarationInferred
+                                                    |> valueOrFunctionDeclaration
+                                                        { moduleInfo = createdModuleContext
+                                                        , rustEnumTypes =
+                                                            transpiledModuleDeclaredRustTypes.rustEnumTypes
+                                                        }
+                                            of
+                                                Ok rustValueOrFunctionDeclaration ->
+                                                    let
+                                                        rustName : String
+                                                        rustName =
+                                                            { moduleOrigin = moduleName
+                                                            , name = valueOrFunctionDeclarationInferred.name
+                                                            }
+                                                                |> elmReferenceToSnakeCaseRustName
+                                                    in
+                                                    { errors = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.errors
+                                                    , rustEnumTypes = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.rustEnumTypes
+                                                    , declarations =
+                                                        case rustValueOrFunctionDeclaration.parameters of
+                                                            Just parameters ->
+                                                                { typeAliases = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.typeAliases
+                                                                , enumTypes = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.enumTypes
+                                                                , lets = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.lets
+                                                                , fns =
+                                                                    soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.fns
+                                                                        |> FastDict.insert
+                                                                            rustName
+                                                                            { parameters = parameters
+                                                                            , resultType = rustValueOrFunctionDeclaration.resultType
+                                                                            , result = rustValueOrFunctionDeclaration.result
+                                                                            , lifetimeParameters =
+                                                                                rustValueOrFunctionDeclaration.lifetimeParameters
                                                                             }
                                                                 }
-                                                            }
 
-                                                Elm.Syntax.Declaration.PortDeclaration _ ->
-                                                    soFar
-
-                                                Elm.Syntax.Declaration.InfixDeclaration _ ->
-                                                    soFar
-
-                                                Elm.Syntax.Declaration.Destructuring _ _ ->
-                                                    soFar
-                                        )
-                                        (moduleInferred.declarationsInferred
-                                            |> List.foldl
-                                                (\valueOrFunctionDeclarationInferred soFarAcrossModulesWithInferredValeAndFunctionDeclarations ->
-                                                    case
-                                                        valueOrFunctionDeclarationInferred
-                                                            |> valueOrFunctionDeclaration createdModuleContext
-                                                    of
-                                                        Ok rustValueOrFunctionDeclaration ->
-                                                            let
-                                                                rustName : String
-                                                                rustName =
-                                                                    { moduleOrigin = moduleName
-                                                                    , name = valueOrFunctionDeclarationInferred.name
-                                                                    }
-                                                                        |> elmReferenceToSnakeCaseRustName
-                                                            in
-                                                            { errors = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.errors
-                                                            , declarations =
-                                                                case rustValueOrFunctionDeclaration.parameters of
-                                                                    Just parameters ->
-                                                                        { typeAliases = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.typeAliases
-                                                                        , enumTypes = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.enumTypes
-                                                                        , lets = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.lets
-                                                                        , fns =
-                                                                            soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.fns
-                                                                                |> FastDict.insert
-                                                                                    rustName
-                                                                                    { parameters = parameters
-                                                                                    , resultType = rustValueOrFunctionDeclaration.resultType
-                                                                                    , result = rustValueOrFunctionDeclaration.result
-                                                                                    , lifetimeParameters =
-                                                                                        rustValueOrFunctionDeclaration.lifetimeParameters
-                                                                                    }
-                                                                        }
-
-                                                                    Nothing ->
-                                                                        -- TODO instead still generate as fn(allocator)
-                                                                        { typeAliases = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.typeAliases
-                                                                        , enumTypes = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.enumTypes
-                                                                        , fns = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.fns
-                                                                        , lets =
-                                                                            soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.lets
-                                                                                |> FastDict.insert
-                                                                                    rustName
-                                                                                    { resultType = rustValueOrFunctionDeclaration.resultType
-                                                                                    , result =
-                                                                                        case rustValueOrFunctionDeclaration.result of
-                                                                                            RustExpressionAfterStatement _ ->
-                                                                                                RustExpressionCall
-                                                                                                    { called =
-                                                                                                        RustExpressionClosure
-                                                                                                            { parameters = []
-                                                                                                            , resultType = Just rustValueOrFunctionDeclaration.resultType
-                                                                                                            , result = rustValueOrFunctionDeclaration.result
-                                                                                                            }
-                                                                                                    , arguments = []
+                                                            Nothing ->
+                                                                -- TODO instead still generate as fn(allocator)
+                                                                { typeAliases = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.typeAliases
+                                                                , enumTypes = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.enumTypes
+                                                                , fns = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.fns
+                                                                , lets =
+                                                                    soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.lets
+                                                                        |> FastDict.insert
+                                                                            rustName
+                                                                            { resultType = rustValueOrFunctionDeclaration.resultType
+                                                                            , result =
+                                                                                case rustValueOrFunctionDeclaration.result of
+                                                                                    RustExpressionAfterStatement _ ->
+                                                                                        RustExpressionCall
+                                                                                            { called =
+                                                                                                RustExpressionClosure
+                                                                                                    { parameters = []
+                                                                                                    , resultType = Just rustValueOrFunctionDeclaration.resultType
+                                                                                                    , result = rustValueOrFunctionDeclaration.result
                                                                                                     }
+                                                                                            , arguments = []
+                                                                                            }
 
-                                                                                            _ ->
-                                                                                                rustValueOrFunctionDeclaration.result
-                                                                                    }
-                                                                        }
-                                                            }
+                                                                                    _ ->
+                                                                                        rustValueOrFunctionDeclaration.result
+                                                                            }
+                                                                }
+                                                    }
 
-                                                        Err error ->
-                                                            { declarations = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations
-                                                            , errors =
-                                                                ("in value/function declaration "
-                                                                    ++ moduleName
-                                                                    ++ "."
-                                                                    ++ valueOrFunctionDeclarationInferred.name
-                                                                    ++ ": "
-                                                                    ++ error
-                                                                )
-                                                                    :: soFarAcrossModulesWithInferredValeAndFunctionDeclarations.errors
-                                                            }
-                                                )
-                                                soFarAcrossModules
+                                                Err error ->
+                                                    { declarations = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations
+                                                    , rustEnumTypes = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.rustEnumTypes
+                                                    , errors =
+                                                        ("in value/function declaration "
+                                                            ++ moduleName
+                                                            ++ "."
+                                                            ++ valueOrFunctionDeclarationInferred.name
+                                                            ++ ": "
+                                                            ++ error
+                                                        )
+                                                            :: soFarAcrossModulesWithInferredValeAndFunctionDeclarations.errors
+                                                    }
                                         )
+                                        { errors =
+                                            moduleDeclaredInferredTypeAliasesAndChoiceTypes.errors
+                                                ++ soFarAcrossModules.errors
+                                        , rustEnumTypes = soFarAcrossModules.rustEnumTypes
+                                        , declarations =
+                                            { fns = soFarAcrossModules.declarations.fns
+                                            , lets = soFarAcrossModules.declarations.lets
+                                            , typeAliases =
+                                                transpiledModuleDeclaredRustTypes.rustTypeAliasDeclarations
+                                                    |> List.foldl
+                                                        (\transpiledDeclaration withModuleDeclaredSoFar ->
+                                                            withModuleDeclaredSoFar
+                                                                |> FastDict.insert transpiledDeclaration.name
+                                                                    { lifetimeParameters = transpiledDeclaration.lifetimeParameters
+                                                                    , parameters = transpiledDeclaration.parameters
+                                                                    , type_ = transpiledDeclaration.type_
+                                                                    }
+                                                        )
+                                                        soFarAcrossModules.declarations.typeAliases
+                                            , enumTypes =
+                                                transpiledModuleDeclaredRustTypes.rustEnumDeclarations
+                                                    |> List.foldl
+                                                        (\transpiledDeclaration withModuleDeclaredSoFar ->
+                                                            withModuleDeclaredSoFar
+                                                                |> FastDict.insert transpiledDeclaration.name
+                                                                    { lifetimeParameters = transpiledDeclaration.lifetimeParameters
+                                                                    , parameters = transpiledDeclaration.parameters
+                                                                    , variants = transpiledDeclaration.variants
+                                                                    }
+                                                        )
+                                                        soFarAcrossModules.declarations.enumTypes
+                                            }
+                                        }
                             )
                             { errors = []
+                            , rustEnumTypes = FastDict.empty
                             , declarations =
                                 { lets = FastDict.empty
                                 , fns = FastDict.empty
@@ -6719,22 +7016,30 @@ type alias InferredValueOrFunctionDeclaration =
 
 
 valueOrFunctionDeclaration :
-    FastDict.Dict
-        {- module origin -} String
-        { portsIncoming : FastSet.Set String
-        , portsOutgoing : FastSet.Set String
-        , valueAndFunctionAnnotations :
-            FastDict.Dict
-                String
-                ElmSyntaxTypeInfer.Type
-        , typeAliases :
-            FastDict.Dict
-                String
-                { parameters : List String
-                , recordFieldOrder : Maybe (List String)
-                , type_ : ElmSyntaxTypeInfer.Type
-                }
-        }
+    { moduleInfo :
+        FastDict.Dict
+            {- module origin -} String
+            { portsIncoming : FastSet.Set String
+            , portsOutgoing : FastSet.Set String
+            , valueAndFunctionAnnotations :
+                FastDict.Dict
+                    String
+                    ElmSyntaxTypeInfer.Type
+            , typeAliases :
+                FastDict.Dict
+                    String
+                    { parameters : List String
+                    , recordFieldOrder : Maybe (List String)
+                    , type_ : ElmSyntaxTypeInfer.Type
+                    }
+            }
+    , rustEnumTypes :
+        FastDict.Dict
+            String
+            { lifetimeParameters : List String
+            , referenceOrValueType : ReferenceOrValueType
+            }
+    }
     -> InferredValueOrFunctionDeclaration
     ->
         Result
@@ -6744,11 +7049,11 @@ valueOrFunctionDeclaration :
             , resultType : RustType
             , lifetimeParameters : List String
             }
-valueOrFunctionDeclaration moduleContext syntaxDeclarationValueOrFunction =
+valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
     let
         typeAliasesInModule : String -> Maybe (FastDict.Dict String { parameters : List String, recordFieldOrder : Maybe (List String), type_ : ElmSyntaxTypeInfer.Type })
         typeAliasesInModule moduleNameToAccess =
-            moduleContext
+            context.moduleInfo
                 |> FastDict.get moduleNameToAccess
                 |> Maybe.map .typeAliases
 
@@ -6773,7 +7078,10 @@ valueOrFunctionDeclaration moduleContext syntaxDeclarationValueOrFunction =
                         rustResultType : RustType
                         rustResultType =
                             syntaxDeclarationValueOrFunction.type_
-                                |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                |> type_
+                                    { typeAliasesInModule = typeAliasesInModule
+                                    , rustEnumTypes = context.rustEnumTypes
+                                    }
                     in
                     if
                         (rustResultType |> rustTypeIsConcrete)
@@ -6819,7 +7127,8 @@ valueOrFunctionDeclaration moduleContext syntaxDeclarationValueOrFunction =
                 )
                 (syntaxDeclarationValueOrFunction.result
                     |> expression
-                        { moduleInfo = moduleContext
+                        { moduleInfo = context.moduleInfo
+                        , rustEnumTypes = context.rustEnumTypes
                         , variablesFromWithinDeclarationInScope = FastDict.empty
                         , letDeclaredValueAndFunctionTypes = FastDict.empty
                         , path = []
@@ -6846,7 +7155,10 @@ valueOrFunctionDeclaration moduleContext syntaxDeclarationValueOrFunction =
                                                 (syntaxParameterCount + additionalParameterIndex)
                                         , type_ =
                                             additionalParameterInferredType
-                                                |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                                |> type_
+                                                    { typeAliasesInModule = typeAliasesInModule
+                                                    , rustEnumTypes = context.rustEnumTypes
+                                                    }
                                         }
                                     )
 
@@ -6889,10 +7201,15 @@ valueOrFunctionDeclaration moduleContext syntaxDeclarationValueOrFunction =
                                 :: (syntaxDeclarationValueOrFunction.parameters
                                         |> List.map
                                             (\parameter ->
-                                                { pattern = parameter |> pattern
+                                                { pattern =
+                                                    parameter
+                                                        |> pattern { rustEnumTypes = context.rustEnumTypes }
                                                 , type_ =
                                                     parameter.type_
-                                                        |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                                        |> type_
+                                                            { typeAliasesInModule = typeAliasesInModule
+                                                            , rustEnumTypes = context.rustEnumTypes
+                                                            }
                                                 }
                                             )
                                    )
@@ -6907,19 +7224,23 @@ valueOrFunctionDeclaration moduleContext syntaxDeclarationValueOrFunction =
                             )
                     , resultType =
                         rustFullTypeAsFunction.output
-                            |> type_ { typeAliasesInModule = typeAliasesInModule }
+                            |> type_
+                                { typeAliasesInModule = typeAliasesInModule
+                                , rustEnumTypes = context.rustEnumTypes
+                                }
                     , result = fullResult
                     , lifetimeParameters = [ generatedLifetimeVariableName ]
                     }
                 )
                 (syntaxDeclarationValueOrFunction.result
                     |> expression
-                        { moduleInfo = moduleContext
+                        { moduleInfo = context.moduleInfo
                         , variablesFromWithinDeclarationInScope =
                             syntaxDeclarationValueOrFunction.parameters
                                 |> listMapToFastDictsAndUnify
                                     patternTypedNodeIntroducedVariables
                         , letDeclaredValueAndFunctionTypes = FastDict.empty
+                        , rustEnumTypes = context.rustEnumTypes
                         , path = [ "result" ]
                         }
                 )
@@ -7061,6 +7382,12 @@ type alias ExpressionToRustContext =
                     , type_ : ElmSyntaxTypeInfer.Type
                     }
             }
+    , rustEnumTypes :
+        FastDict.Dict
+            String
+            { lifetimeParameters : List String
+            , referenceOrValueType : ReferenceOrValueType
+            }
     , path : List String
     }
 
@@ -7100,9 +7427,7 @@ instead when rust if/match are not allowed as `.result`
 -}
 expression :
     ExpressionToRustContext
-    ->
-        ElmSyntaxTypeInfer.TypedNode
-            ElmSyntaxTypeInfer.Expression
+    -> ElmSyntaxTypeInfer.TypedNode ElmSyntaxTypeInfer.Expression
     -> Result String RustExpression
 expression context expressionTypedNode =
     -- IGNORE TCO
@@ -7130,6 +7455,13 @@ expression context expressionTypedNode =
         ElmSyntaxTypeInfer.ExpressionRecordAccessFunction fieldName ->
             case expressionTypedNode.type_ of
                 ElmSyntaxTypeInfer.TypeNotVariable (ElmSyntaxTypeInfer.TypeFunction typeFunction) ->
+                    let
+                        typeAliasesInModule : String -> Maybe (FastDict.Dict String { parameters : List String, recordFieldOrder : Maybe (List String), type_ : ElmSyntaxTypeInfer.Type })
+                        typeAliasesInModule moduleNameToAccess =
+                            context.moduleInfo
+                                |> FastDict.get moduleNameToAccess
+                                |> Maybe.map .typeAliases
+                    in
                     Ok
                         (rustExpressionClosureReference
                             { parameters =
@@ -7138,11 +7470,8 @@ expression context expressionTypedNode =
                                   , type_ =
                                         typeFunction.input
                                             |> type_
-                                                { typeAliasesInModule =
-                                                    \moduleNameToAccess ->
-                                                        context.moduleInfo
-                                                            |> FastDict.get moduleNameToAccess
-                                                            |> Maybe.map .typeAliases
+                                                { typeAliasesInModule = typeAliasesInModule
+                                                , rustEnumTypes = context.rustEnumTypes
                                                 }
                                             |> Just
                                   }
@@ -7151,11 +7480,8 @@ expression context expressionTypedNode =
                                 Just
                                     (expressionTypedNode.type_
                                         |> type_
-                                            { typeAliasesInModule =
-                                                \moduleNameToAccess ->
-                                                    context.moduleInfo
-                                                        |> FastDict.get moduleNameToAccess
-                                                        |> Maybe.map .typeAliases
+                                            { typeAliasesInModule = typeAliasesInModule
+                                            , rustEnumTypes = context.rustEnumTypes
                                             }
                                     )
                             , result =
@@ -7199,19 +7525,28 @@ expression context expressionTypedNode =
                                     inferredTypeFunctionCreate
                                         inputsAfterRight
                                         inferredTypeAsFunction.output
-                                        |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                        |> type_
+                                            { typeAliasesInModule = typeAliasesInModule
+                                            , rustEnumTypes = context.rustEnumTypes
+                                            }
 
                                 rightRustType : RustType
                                 rightRustType =
                                     rightInferredType
-                                        |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                        |> type_
+                                            { typeAliasesInModule = typeAliasesInModule
+                                            , rustEnumTypes = context.rustEnumTypes
+                                            }
                             in
                             rustExpressionClosureReference
                                 { parameters =
                                     [ { pattern = RustPatternVariable "generated_left"
                                       , type_ =
                                             leftInferredType
-                                                |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                                |> type_
+                                                    { typeAliasesInModule = typeAliasesInModule
+                                                    , rustEnumTypes = context.rustEnumTypes
+                                                    }
                                                 |> Just
                                       }
                                     ]
@@ -7293,6 +7628,7 @@ expression context expressionTypedNode =
                             context.variablesFromWithinDeclarationInScope
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
+                        , rustEnumTypes = context.rustEnumTypes
                         , path = "called" :: context.path
                         }
                 )
@@ -7303,6 +7639,7 @@ expression context expressionTypedNode =
                             context.variablesFromWithinDeclarationInScope
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
+                        , rustEnumTypes = context.rustEnumTypes
                         , path = "argument0" :: context.path
                         }
                 )
@@ -7317,6 +7654,7 @@ expression context expressionTypedNode =
                                         context.variablesFromWithinDeclarationInScope
                                     , letDeclaredValueAndFunctionTypes =
                                         context.letDeclaredValueAndFunctionTypes
+                                    , rustEnumTypes = context.rustEnumTypes
                                     , path =
                                         ("argument" ++ (argumentIndex |> String.fromInt))
                                             :: context.path
@@ -7341,6 +7679,7 @@ expression context expressionTypedNode =
                                     context.variablesFromWithinDeclarationInScope
                                 , letDeclaredValueAndFunctionTypes =
                                     context.letDeclaredValueAndFunctionTypes
+                                , rustEnumTypes = context.rustEnumTypes
                                 , path = "left" :: context.path
                                 }
                         )
@@ -7351,6 +7690,7 @@ expression context expressionTypedNode =
                                     context.variablesFromWithinDeclarationInScope
                                 , letDeclaredValueAndFunctionTypes =
                                     context.letDeclaredValueAndFunctionTypes
+                                , rustEnumTypes = context.rustEnumTypes
                                 , path = "right" :: context.path
                                 }
                         )
@@ -7370,6 +7710,7 @@ expression context expressionTypedNode =
                                     context.variablesFromWithinDeclarationInScope
                                 , letDeclaredValueAndFunctionTypes =
                                     context.letDeclaredValueAndFunctionTypes
+                                , rustEnumTypes = context.rustEnumTypes
                                 , path = "left" :: context.path
                                 }
                         )
@@ -7380,6 +7721,7 @@ expression context expressionTypedNode =
                                     context.variablesFromWithinDeclarationInScope
                                 , letDeclaredValueAndFunctionTypes =
                                     context.letDeclaredValueAndFunctionTypes
+                                , rustEnumTypes = context.rustEnumTypes
                                 , path = "right" :: context.path
                                 }
                         )
@@ -7435,6 +7777,7 @@ expression context expressionTypedNode =
                                     context.variablesFromWithinDeclarationInScope
                                 , letDeclaredValueAndFunctionTypes =
                                     context.letDeclaredValueAndFunctionTypes
+                                , rustEnumTypes = context.rustEnumTypes
                                 , path = "left" :: context.path
                                 }
                         )
@@ -7445,6 +7788,7 @@ expression context expressionTypedNode =
                                     context.variablesFromWithinDeclarationInScope
                                 , letDeclaredValueAndFunctionTypes =
                                     context.letDeclaredValueAndFunctionTypes
+                                , rustEnumTypes = context.rustEnumTypes
                                 , path = "right" :: context.path
                                 }
                         )
@@ -7484,6 +7828,7 @@ expression context expressionTypedNode =
                                     context.variablesFromWithinDeclarationInScope
                                 , letDeclaredValueAndFunctionTypes =
                                     context.letDeclaredValueAndFunctionTypes
+                                , rustEnumTypes = context.rustEnumTypes
                                 , path = "left" :: context.path
                                 }
                         )
@@ -7494,6 +7839,7 @@ expression context expressionTypedNode =
                                     context.variablesFromWithinDeclarationInScope
                                 , letDeclaredValueAndFunctionTypes =
                                     context.letDeclaredValueAndFunctionTypes
+                                , rustEnumTypes = context.rustEnumTypes
                                 , path = "right" :: context.path
                                 }
                         )
@@ -7547,17 +7893,29 @@ expression context expressionTypedNode =
                                     rustCoreReference
 
                                 Nothing ->
-                                    { name =
-                                        reference.name
-                                            |> toPascalCaseRustName
-                                    , originTypeName =
-                                        [ ((reference.moduleOrigin |> String.replace "." "")
-                                            ++ reference.choiceTypeName
-                                            ++ "Guts"
-                                          )
-                                            |> toPascalCaseRustName
-                                        ]
-                                    , isReference = True
+                                    let
+                                        originTypeRustName : String
+                                        originTypeRustName =
+                                            { moduleOrigin = reference.moduleOrigin
+                                            , name = reference.choiceTypeName
+                                            }
+                                                |> elmReferenceToPascalCaseRustName
+                                    in
+                                    { name = reference.name |> toPascalCaseRustName
+                                    , originTypeName = [ originTypeRustName ]
+                                    , isReference =
+                                        case context.rustEnumTypes |> FastDict.get originTypeRustName of
+                                            Nothing ->
+                                                -- error
+                                                False
+
+                                            Just originRustEnumType ->
+                                                case originRustEnumType.referenceOrValueType of
+                                                    ReferenceType ->
+                                                        True
+
+                                                    ValueType ->
+                                                        False
                                     }
 
                         rustExpressionVariantValue : RustExpression
@@ -7611,7 +7969,10 @@ expression context expressionTypedNode =
                                             { pattern = generatedValueParameterName valueIndex
                                             , type_ =
                                                 valueType
-                                                    |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                                    |> type_
+                                                        { typeAliasesInModule = typeAliasesInModule
+                                                        , rustEnumTypes = context.rustEnumTypes
+                                                        }
                                             }
                                         )
                                     |> List.foldr
@@ -7652,7 +8013,9 @@ expression context expressionTypedNode =
                                          { type_ =
                                             variantReferenceTypeExpandedAsFunction.output
                                                 |> type_
-                                                    { typeAliasesInModule = typeAliasesInModule }
+                                                    { typeAliasesInModule = typeAliasesInModule
+                                                    , rustEnumTypes = context.rustEnumTypes
+                                                    }
                                          , expression =
                                             if asRustVariant.isReference then
                                                 rustExpressionAlloc fullyApplied
@@ -7741,7 +8104,9 @@ expression context expressionTypedNode =
                                                 parameterType =
                                                     parameter.type_
                                                         |> type_
-                                                            { typeAliasesInModule = typeAliasesInModule }
+                                                            { typeAliasesInModule = typeAliasesInModule
+                                                            , rustEnumTypes = context.rustEnumTypes
+                                                            }
                                             in
                                             { expression =
                                                 rustExpressionClosureReference
@@ -7763,11 +8128,8 @@ expression context expressionTypedNode =
                                         { type_ =
                                             expressionTypedNode.type_
                                                 |> type_
-                                                    { typeAliasesInModule =
-                                                        \moduleNameToAccess ->
-                                                            context.moduleInfo
-                                                                |> FastDict.get moduleNameToAccess
-                                                                |> Maybe.map .typeAliases
+                                                    { typeAliasesInModule = typeAliasesInModule
+                                                    , rustEnumTypes = context.rustEnumTypes
                                                     }
                                         , expression =
                                             RustExpressionRecord resultRecordFields
@@ -7841,7 +8203,10 @@ expression context expressionTypedNode =
                                                     generatedParameterNameForIndexAtPath parameterIndex context.path
                                                 , type_ =
                                                     inferredParameterType
-                                                        |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                                        |> type_
+                                                            { typeAliasesInModule = typeAliasesInModule
+                                                            , rustEnumTypes = context.rustEnumTypes
+                                                            }
                                                 }
                                             )
                                         |> List.foldr
@@ -7866,7 +8231,10 @@ expression context expressionTypedNode =
                                             )
                                             { type_ =
                                                 inferredReferenceTypeAsFunction.output
-                                                    |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                                    |> type_
+                                                        { typeAliasesInModule = typeAliasesInModule
+                                                        , rustEnumTypes = context.rustEnumTypes
+                                                        }
                                             , expression =
                                                 RustExpressionCall
                                                     { called = rustExpressionReference
@@ -7964,6 +8332,7 @@ expression context expressionTypedNode =
                                                                         context.moduleInfo
                                                                             |> FastDict.get moduleName
                                                                             |> Maybe.map .typeAliases
+                                                                , rustEnumTypes = context.rustEnumTypes
                                                                 }
                                                             |> Just
 
@@ -8081,6 +8450,7 @@ expression context expressionTypedNode =
                             context.variablesFromWithinDeclarationInScope
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
+                        , rustEnumTypes = context.rustEnumTypes
                         , path = "condition" :: context.path
                         }
                 )
@@ -8091,6 +8461,7 @@ expression context expressionTypedNode =
                             context.variablesFromWithinDeclarationInScope
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
+                        , rustEnumTypes = context.rustEnumTypes
                         , path = "on_true" :: context.path
                         }
                 )
@@ -8101,6 +8472,7 @@ expression context expressionTypedNode =
                             context.variablesFromWithinDeclarationInScope
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
+                        , rustEnumTypes = context.rustEnumTypes
                         , path = "on_false" :: context.path
                         }
                 )
@@ -8141,6 +8513,7 @@ expression context expressionTypedNode =
                             context.variablesFromWithinDeclarationInScope
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
+                        , rustEnumTypes = context.rustEnumTypes
                         , path = "part0" :: context.path
                         }
                 )
@@ -8151,6 +8524,7 @@ expression context expressionTypedNode =
                             context.variablesFromWithinDeclarationInScope
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
+                        , rustEnumTypes = context.rustEnumTypes
                         , path = "part1" :: context.path
                         }
                 )
@@ -8170,6 +8544,7 @@ expression context expressionTypedNode =
                             context.variablesFromWithinDeclarationInScope
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
+                        , rustEnumTypes = context.rustEnumTypes
                         , path = "part0" :: context.path
                         }
                 )
@@ -8180,6 +8555,7 @@ expression context expressionTypedNode =
                             context.variablesFromWithinDeclarationInScope
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
+                        , rustEnumTypes = context.rustEnumTypes
                         , path = "part1" :: context.path
                         }
                 )
@@ -8190,6 +8566,7 @@ expression context expressionTypedNode =
                             context.variablesFromWithinDeclarationInScope
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
+                        , rustEnumTypes = context.rustEnumTypes
                         , path = "part2" :: context.path
                         }
                 )
@@ -8236,6 +8613,7 @@ expression context expressionTypedNode =
                                         context.variablesFromWithinDeclarationInScope
                                     , letDeclaredValueAndFunctionTypes =
                                         context.letDeclaredValueAndFunctionTypes
+                                    , rustEnumTypes = context.rustEnumTypes
                                     , path = (elementIndex |> String.fromInt) :: context.path
                                     }
                         )
@@ -8274,6 +8652,7 @@ expression context expressionTypedNode =
                                             context.variablesFromWithinDeclarationInScope
                                         , letDeclaredValueAndFunctionTypes =
                                             context.letDeclaredValueAndFunctionTypes
+                                        , rustEnumTypes = context.rustEnumTypes
                                         , path =
                                             (field.name |> toSnakeCaseRustName)
                                                 :: context.path
@@ -8343,6 +8722,7 @@ expression context expressionTypedNode =
                                                     context.variablesFromWithinDeclarationInScope
                                                 , letDeclaredValueAndFunctionTypes =
                                                     context.letDeclaredValueAndFunctionTypes
+                                                , rustEnumTypes = context.rustEnumTypes
                                                 , path =
                                                     (field.name |> toSnakeCaseRustName)
                                                         :: context.path
@@ -8375,12 +8755,17 @@ expression context expressionTypedNode =
                                     parameterType : RustType
                                     parameterType =
                                         parameter.type_
-                                            |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                            |> type_
+                                                { typeAliasesInModule = typeAliasesInModule
+                                                , rustEnumTypes = context.rustEnumTypes
+                                                }
                                 in
                                 { expression =
                                     rustExpressionClosureReference
                                         { parameters =
-                                            [ { pattern = parameter |> pattern
+                                            [ { pattern =
+                                                    parameter
+                                                        |> pattern { rustEnumTypes = context.rustEnumTypes }
                                               , type_ = Just parameterType
                                               }
                                             ]
@@ -8397,7 +8782,10 @@ expression context expressionTypedNode =
                             { expression = result
                             , type_ =
                                 lambda.result.type_
-                                    |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                    |> type_
+                                        { typeAliasesInModule = typeAliasesInModule
+                                        , rustEnumTypes = context.rustEnumTypes
+                                        }
                             }
                         |> .expression
                 )
@@ -8413,6 +8801,7 @@ expression context expressionTypedNode =
                                     )
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
+                        , rustEnumTypes = context.rustEnumTypes
                         , path = "result" :: context.path
                         }
                 )
@@ -8443,6 +8832,7 @@ expression context expressionTypedNode =
                             context.variablesFromWithinDeclarationInScope
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
+                        , rustEnumTypes = context.rustEnumTypes
                         , path = "matched" :: context.path
                         }
                 )
@@ -8453,6 +8843,7 @@ expression context expressionTypedNode =
                             context.variablesFromWithinDeclarationInScope
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
+                        , rustEnumTypes = context.rustEnumTypes
                         , path = "case0" :: context.path
                         }
                 )
@@ -8470,6 +8861,7 @@ expression context expressionTypedNode =
                                         context.variablesFromWithinDeclarationInScope
                                     , letDeclaredValueAndFunctionTypes =
                                         context.letDeclaredValueAndFunctionTypes
+                                    , rustEnumTypes = context.rustEnumTypes
                                     , path =
                                         ("case" ++ (caseIndex |> String.fromInt))
                                             :: context.path
@@ -8562,10 +8954,10 @@ expression context expressionTypedNode =
                                     { moduleInfo = context.moduleInfo
                                     , variablesFromWithinDeclarationInScope =
                                         context.variablesFromWithinDeclarationInScope
-                                            |> FastDict.union
-                                                letIntroducedBindings
+                                            |> FastDict.union letIntroducedBindings
                                     , letDeclaredValueAndFunctionTypes =
                                         letDeclaredValueAndFunctionTypesIncludingFromContext
+                                    , rustEnumTypes = context.rustEnumTypes
                                     , path =
                                         ("let_declaration" ++ (letDeclarationIndex |> String.fromInt))
                                             :: context.path
@@ -8577,10 +8969,10 @@ expression context expressionTypedNode =
                         { moduleInfo = context.moduleInfo
                         , variablesFromWithinDeclarationInScope =
                             context.variablesFromWithinDeclarationInScope
-                                |> FastDict.union
-                                    letIntroducedBindings
+                                |> FastDict.union letIntroducedBindings
                         , letDeclaredValueAndFunctionTypes =
                             letDeclaredValueAndFunctionTypesIncludingFromContext
+                        , rustEnumTypes = context.rustEnumTypes
                         , path = "let_result" :: context.path
                         }
                 )
@@ -8612,7 +9004,7 @@ rustExpressionBorrowListEmpty : RustExpression
 rustExpressionBorrowListEmpty =
     RustExpressionBorrow
         (RustExpressionVariant
-            { originTypeName = [ "ListListGuts" ]
+            { originTypeName = [ "ListList" ]
             , name = "Empty"
             }
         )
@@ -8664,6 +9056,7 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
                                     context.moduleInfo
                                         |> FastDict.get moduleNameToAccess
                                         |> Maybe.map .typeAliases
+                            , rustEnumTypes = context.rustEnumTypes
                             }
             in
             if
@@ -8738,7 +9131,10 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
                             parameterType : RustType
                             parameterType =
                                 parameterInferredType
-                                    |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                    |> type_
+                                        { typeAliasesInModule = typeAliasesInModule
+                                        , rustEnumTypes = context.rustEnumTypes
+                                        }
                         in
                         { expression =
                             rustExpressionClosureReference
@@ -8764,7 +9160,10 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
                     )
                     { type_ =
                         inferredTypeExpandedAsFunction.output
-                            |> type_ { typeAliasesInModule = typeAliasesInModule }
+                            |> type_
+                                { typeAliasesInModule = typeAliasesInModule
+                                , rustEnumTypes = context.rustEnumTypes
+                                }
                     , expression =
                         RustExpressionCall
                             { called =
@@ -10876,7 +11275,9 @@ case_ :
 case_ context syntaxCase =
     Result.map
         (\result ->
-            { pattern = syntaxCase.pattern |> pattern
+            { pattern =
+                syntaxCase.pattern
+                    |> pattern { rustEnumTypes = context.rustEnumTypes }
             , result = result
             }
         )
@@ -10889,6 +11290,7 @@ case_ context syntaxCase =
                             (syntaxCase.pattern |> patternTypedNodeIntroducedVariables)
                 , letDeclaredValueAndFunctionTypes =
                     context.letDeclaredValueAndFunctionTypes
+                , rustEnumTypes = context.rustEnumTypes
                 , path =
                     -- intentional as there is only one sub-expression
                     context.path
@@ -10910,7 +11312,8 @@ letDeclaration context syntaxLetDeclarationNode =
                 (\destructuredExpression ->
                     RustStatementLetDestructuring
                         { pattern =
-                            letDestructuring.pattern |> pattern
+                            letDestructuring.pattern
+                                |> pattern { rustEnumTypes = context.rustEnumTypes }
                         , expression = destructuredExpression
                         }
                 )
@@ -10921,6 +11324,7 @@ letDeclaration context syntaxLetDeclarationNode =
                             context.variablesFromWithinDeclarationInScope
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
+                        , rustEnumTypes = context.rustEnumTypes
                         , path =
                             -- intentional as there is only one sub-expression
                             context.path
@@ -11151,7 +11555,10 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                     { name = rustName
                     , resultType =
                         inferredLetDeclarationValueOrFunctionNode.declaration.type_
-                            |> type_ { typeAliasesInModule = typeAliasesInModule }
+                            |> type_
+                                { typeAliasesInModule = typeAliasesInModule
+                                , rustEnumTypes = context.rustEnumTypes
+                                }
                     , result = result
                     }
             )
@@ -11163,6 +11570,7 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                         context.letDeclaredValueAndFunctionTypes
                     , variablesFromWithinDeclarationInScope =
                         context.variablesFromWithinDeclarationInScope
+                    , rustEnumTypes = context.rustEnumTypes
                     }
             )
 
@@ -11187,7 +11595,10 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                                             context.path
                                     , type_ =
                                         additionalParameterInferredType
-                                            |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                            |> type_
+                                                { typeAliasesInModule = typeAliasesInModule
+                                                , rustEnumTypes = context.rustEnumTypes
+                                                }
                                     }
                                 )
 
@@ -11245,17 +11656,25 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                                                     )
                                             , type_ =
                                                 parameter.type_
-                                                    |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                                    |> type_
+                                                        { typeAliasesInModule = typeAliasesInModule
+                                                        , rustEnumTypes = context.rustEnumTypes
+                                                        }
                                             }
                                         )
                                )
                             ++ (inferredLetDeclarationValueOrFunctionNode.declaration.parameters
                                     |> List.map
                                         (\parameter ->
-                                            { pattern = pattern parameter
+                                            { pattern =
+                                                parameter
+                                                    |> pattern { rustEnumTypes = context.rustEnumTypes }
                                             , type_ =
                                                 parameter.type_
-                                                    |> type_ { typeAliasesInModule = typeAliasesInModule }
+                                                    |> type_
+                                                        { typeAliasesInModule = typeAliasesInModule
+                                                        , rustEnumTypes = context.rustEnumTypes
+                                                        }
                                             }
                                         )
                                )
@@ -11272,7 +11691,10 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                     resultType : RustType
                     resultType =
                         rustFullTypeAsFunction.output
-                            |> type_ { typeAliasesInModule = typeAliasesInModule }
+                            |> type_
+                                { typeAliasesInModule = typeAliasesInModule
+                                , rustEnumTypes = context.rustEnumTypes
+                                }
                 in
                 RustStatementFnDeclaration
                     { name = rustName
@@ -11304,6 +11726,7 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                                 )
                     , letDeclaredValueAndFunctionTypes =
                         context.letDeclaredValueAndFunctionTypes
+                    , rustEnumTypes = context.rustEnumTypes
                     , path = "result" :: context.path
                     }
             )
@@ -12366,138 +12789,129 @@ printExactlySpaceMinusGreaterThanSpace =
     Print.exactly " -> "
 
 
-type RustEnumTypeOrTypeAliasDeclaration
-    = RustEnumTypeDeclaration
+type InferredChoiceTypeOrTypeAliasDeclaration
+    = InferredChoiceTypeDeclaration
         { name : String
         , parameters : List String
-        , lifetimeParameters : List String
         , variants :
-            FastDict.Dict String (List RustType)
+            FastDict.Dict String (List ElmSyntaxTypeInfer.Type)
         }
-    | RustTypeAliasDeclaration
+    | InferredTypeAliasDeclaration
         { name : String
-        , lifetimeParameters : List String
         , parameters : List String
-        , type_ : RustType
+        , type_ : ElmSyntaxTypeInfer.Type
         }
 
 
-rustTypeDeclarationsGroupByDependencies :
-    { typeAliases :
+inferredTypeDeclarationsToMostToLeastDependedOn :
+    { moduleOrigin : String
+    , typeAliases :
         List
             { name : String
-            , lifetimeParameters : List String
             , parameters : List String
-            , type_ : RustType
+            , type_ : ElmSyntaxTypeInfer.Type
             }
-    , enums :
+    , choiceTypes :
         List
             { name : String
             , parameters : List String
-            , lifetimeParameters : List String
             , variants :
-                FastDict.Dict String (List RustType)
+                FastDict.Dict String (List ElmSyntaxTypeInfer.Type)
             }
     }
-    ->
-        { mostToLeastDependedOn :
-            List
-                (Graph.SCC
-                    RustEnumTypeOrTypeAliasDeclaration
+    -> List (Graph.SCC InferredChoiceTypeOrTypeAliasDeclaration)
+inferredTypeDeclarationsToMostToLeastDependedOn rustTypeDeclarations =
+    rustTypeDeclarations.typeAliases
+        |> List.foldl
+            (\aliasDeclaration soFar ->
+                ( InferredTypeAliasDeclaration aliasDeclaration
+                , ( rustTypeDeclarations.moduleOrigin, aliasDeclaration.name )
+                , aliasDeclaration.type_
+                    |> inferredTypeContainedLocallyDeclaredReferences
+                    |> FastSet.toList
                 )
-        }
-rustTypeDeclarationsGroupByDependencies rustTypeDeclarations =
-    { mostToLeastDependedOn =
-        rustTypeDeclarations.typeAliases
-            |> List.foldl
-                (\aliasDeclaration soFar ->
-                    ( RustTypeAliasDeclaration aliasDeclaration
-                    , aliasDeclaration.name
-                    , aliasDeclaration.type_
-                        |> rustTypeContainedReferences
-                        |> FastSet.toList
-                    )
-                        :: soFar
-                )
-                (rustTypeDeclarations.enums
-                    |> List.map
-                        (\enumDeclaration ->
-                            ( RustEnumTypeDeclaration enumDeclaration
-                            , enumDeclaration.name
-                            , enumDeclaration.variants
-                                |> FastDict.foldl
-                                    (\_ variantValues soFar ->
-                                        FastSet.union soFar
-                                            (variantValues
-                                                |> listMapToFastSetsAndUnify
-                                                    (\variantValue ->
-                                                        variantValue
-                                                            |> rustTypeContainedReferences
-                                                    )
-                                            )
-                                    )
-                                    FastSet.empty
-                                |> FastSet.toList
-                            )
+                    :: soFar
+            )
+            (rustTypeDeclarations.choiceTypes
+                |> List.map
+                    (\enumDeclaration ->
+                        ( InferredChoiceTypeDeclaration enumDeclaration
+                        , ( rustTypeDeclarations.moduleOrigin, enumDeclaration.name )
+                        , enumDeclaration.variants
+                            |> FastDict.foldl
+                                (\_ variantValues soFar ->
+                                    FastSet.union soFar
+                                        (variantValues
+                                            |> listMapToFastSetsAndUnify
+                                                inferredTypeContainedLocallyDeclaredReferences
+                                        )
+                                )
+                                FastSet.empty
+                            |> FastSet.toList
                         )
-                )
-            |> Graph.stronglyConnComponents
-    }
-
-
-rustTypeContainedReferences : RustType -> FastSet.Set String
-rustTypeContainedReferences rustType =
-    -- IGNORE TCO
-    case rustType of
-        RustTypeInfer ->
-            -- hmm
-            FastSet.empty
-
-        RustTypeUnit ->
-            FastSet.empty
-
-        RustTypeVariable _ ->
-            FastSet.empty
-
-        RustTypeBorrow borrow ->
-            rustTypeContainedReferences borrow.type_
-
-        RustTypeTuple parts ->
-            parts.part0
-                |> rustTypeContainedReferences
-                |> FastSet.union
-                    (parts.part1 |> rustTypeContainedReferences)
-                |> FastSet.union
-                    (parts.part2Up
-                        |> listMapToFastSetsAndUnify
-                            rustTypeContainedReferences
                     )
+            )
+        |> Graph.stronglyConnComponents
 
-        RustTypeRecord fields ->
+
+inferredTypeContainedLocallyDeclaredReferences :
+    ElmSyntaxTypeInfer.Type
+    -> FastSet.Set ( {- module origin -} String, String )
+inferredTypeContainedLocallyDeclaredReferences inferredType =
+    -- IGNORE TCO
+    case inferredType of
+        ElmSyntaxTypeInfer.TypeVariable _ ->
+            FastSet.empty
+
+        ElmSyntaxTypeInfer.TypeNotVariable inferredTypeNotVariable ->
+            inferredTypeNotVariableContainedLocallyDeclaredReferences inferredTypeNotVariable
+
+
+inferredTypeNotVariableContainedLocallyDeclaredReferences :
+    ElmSyntaxTypeInfer.TypeNotVariable
+    -> FastSet.Set ( {- module origin -} String, String )
+inferredTypeNotVariableContainedLocallyDeclaredReferences inferredTypeNotVariable =
+    case inferredTypeNotVariable of
+        ElmSyntaxTypeInfer.TypeUnit ->
+            FastSet.empty
+
+        ElmSyntaxTypeInfer.TypeConstruct typeConstruct ->
+            FastSet.insert
+                ( typeConstruct.moduleOrigin, typeConstruct.name )
+                (typeConstruct.arguments
+                    |> listMapToFastSetsAndUnify inferredTypeContainedLocallyDeclaredReferences
+                )
+
+        ElmSyntaxTypeInfer.TypeFunction typeFunction ->
+            FastSet.union
+                (typeFunction.input |> inferredTypeContainedLocallyDeclaredReferences)
+                (typeFunction.output |> inferredTypeContainedLocallyDeclaredReferences)
+
+        ElmSyntaxTypeInfer.TypeTuple parts ->
+            parts.part0
+                |> inferredTypeContainedLocallyDeclaredReferences
+                |> FastSet.union
+                    (parts.part1 |> inferredTypeContainedLocallyDeclaredReferences)
+
+        ElmSyntaxTypeInfer.TypeTriple parts ->
+            parts.part0
+                |> inferredTypeContainedLocallyDeclaredReferences
+                |> FastSet.union
+                    (parts.part1 |> inferredTypeContainedLocallyDeclaredReferences)
+                |> FastSet.union
+                    (parts.part2 |> inferredTypeContainedLocallyDeclaredReferences)
+
+        ElmSyntaxTypeInfer.TypeRecordExtension inferredRecordExtension ->
+            inferredRecordExtension.fields
+                |> FastDict.values
+                |> listMapToFastSetsAndUnify
+                    inferredTypeContainedLocallyDeclaredReferences
+
+        ElmSyntaxTypeInfer.TypeRecord fields ->
             fields
                 |> FastDict.values
                 |> listMapToFastSetsAndUnify
-                    rustTypeContainedReferences
-
-        RustTypeConstruct typeConstruct ->
-            FastSet.union
-                (case typeConstruct.qualification of
-                    [] ->
-                        FastSet.singleton typeConstruct.name
-
-                    _ :: _ ->
-                        FastSet.empty
-                )
-                (typeConstruct.arguments
-                    |> listMapToFastSetsAndUnify rustTypeContainedReferences
-                )
-
-        RustTypeFunction typeFunction ->
-            FastSet.union
-                (typeFunction.input
-                    |> listMapToFastSetsAndUnify rustTypeContainedReferences
-                )
-                (typeFunction.output |> rustTypeContainedReferences)
+                    inferredTypeContainedLocallyDeclaredReferences
 
 
 {-| Choose one element in the list for each key.
@@ -15175,27 +15589,23 @@ rustDeclarationsToModuleString rustDeclarations =
                         }
                     )
 
-        typeDeclarationsOrdered :
-            { mostToLeastDependedOn :
-                List
-                    (Graph.SCC
-                        RustEnumTypeOrTypeAliasDeclaration
-                    )
-            }
-        typeDeclarationsOrdered =
-            rustTypeDeclarationsGroupByDependencies
-                { typeAliases =
-                    rustDeclarations.typeAliases
-                        |> fastDictMapAndToList
-                            (\name info ->
-                                { name = name
-                                , lifetimeParameters = info.lifetimeParameters
-                                , parameters = info.parameters
-                                , type_ = info.type_
-                                }
-                            )
-                , enums = rustEnumDeclarationList
+        rustTypeAliasDeclarationList :
+            List
+                { name : String
+                , lifetimeParameters : List String
+                , parameters : List String
+                , type_ : RustType
                 }
+        rustTypeAliasDeclarationList =
+            rustDeclarations.typeAliases
+                |> fastDictMapAndToList
+                    (\name info ->
+                        { name = name
+                        , lifetimeParameters = info.lifetimeParameters
+                        , parameters = info.parameters
+                        , type_ = info.type_
+                        }
+                    )
     in
     """#![allow(dead_code)]
 #![allow(non_shorthand_field_patterns)]
@@ -15225,66 +15635,26 @@ use bumpalo::Bump;
         ++ """
 
 """
-        ++ (typeDeclarationsOrdered.mostToLeastDependedOn
+        ++ (rustEnumDeclarationList
                 |> Print.listMapAndIntersperseAndFlatten
-                    (\typeAliasDeclarationGroup ->
-                        case typeAliasDeclarationGroup of
-                            Graph.AcyclicSCC single ->
-                                case single of
-                                    RustEnumTypeDeclaration rustEnumTypeDeclaration ->
-                                        printRustEnumDeclaration
-                                            { indirect = False
-                                            , name = rustEnumTypeDeclaration.name
-                                            , parameters = rustEnumTypeDeclaration.parameters
-                                            , lifetimeParameters = rustEnumTypeDeclaration.lifetimeParameters
-                                            , variants = rustEnumTypeDeclaration.variants
-                                            }
-
-                                    RustTypeAliasDeclaration aliasDeclaration ->
-                                        printRustTypeAliasDeclaration aliasDeclaration
-
-                            Graph.CyclicSCC recursiveBucket ->
-                                case recursiveBucket of
-                                    [] ->
-                                        Print.empty
-
-                                    recursiveBucketMember0 :: recursiveBucketMember1Up ->
-                                        (case recursiveBucketMember0 of
-                                            RustEnumTypeDeclaration rustEnumTypeDeclaration ->
-                                                printRustEnumDeclaration
-                                                    { indirect = True
-                                                    , name = rustEnumTypeDeclaration.name
-                                                    , parameters = rustEnumTypeDeclaration.parameters
-                                                    , lifetimeParameters = rustEnumTypeDeclaration.lifetimeParameters
-                                                    , variants = rustEnumTypeDeclaration.variants
-                                                    }
-
-                                            RustTypeAliasDeclaration aliasDeclaration ->
-                                                printRustTypeAliasDeclaration aliasDeclaration
-                                        )
-                                            |> Print.followedBy
-                                                (recursiveBucketMember1Up
-                                                    |> Print.listMapAndIntersperseAndFlatten
-                                                        (\typeDeclaration ->
-                                                            printLinebreakLinebreakIndented
-                                                                |> Print.followedBy
-                                                                    (case typeDeclaration of
-                                                                        RustEnumTypeDeclaration rustEnumTypeDeclaration ->
-                                                                            printRustEnumDeclaration
-                                                                                { indirect = True
-                                                                                , name = rustEnumTypeDeclaration.name
-                                                                                , parameters = rustEnumTypeDeclaration.parameters
-                                                                                , lifetimeParameters = rustEnumTypeDeclaration.lifetimeParameters
-                                                                                , variants = rustEnumTypeDeclaration.variants
-                                                                                }
-
-                                                                        RustTypeAliasDeclaration aliasDeclaration ->
-                                                                            printRustTypeAliasDeclaration aliasDeclaration
-                                                                    )
-                                                        )
-                                                        Print.empty
-                                                )
+                    (\rustEnumTypeDeclaration ->
+                        printRustEnumDeclaration
+                            { indirect = False
+                            , name = rustEnumTypeDeclaration.name
+                            , parameters = rustEnumTypeDeclaration.parameters
+                            , lifetimeParameters = rustEnumTypeDeclaration.lifetimeParameters
+                            , variants = rustEnumTypeDeclaration.variants
+                            }
                     )
+                    printLinebreakLinebreakIndented
+                |> Print.toString
+           )
+        ++ """
+
+"""
+        ++ (rustTypeAliasDeclarationList
+                |> Print.listMapAndIntersperseAndFlatten
+                    printRustTypeAliasDeclaration
                     printLinebreakLinebreakIndented
                 |> Print.toString
            )
@@ -28816,25 +29186,22 @@ defaultDeclarations =
     """
 pub type ResultResult<X, A> = Result<A, X>;
 
-pub type StringString<'a> = &'a str;
-
 #[derive(Copy, Clone /*, Debug is implemented below */, Eq, PartialEq, Hash, PartialOrd, Ord)]
-pub enum ListListGuts<'a, A> {
+pub enum ListList<'a, A> {
     Empty,
-    Cons(A, ListList<'a, A>),
+    Cons(A, &'a ListList<'a, A>),
 }
-pub type ListList<'a, A> = &'a ListListGuts<'a, A>;
 
 pub struct ListIterator<'a, A> {
-    remaining_list: ListList<'a, A>,
+    remaining_list: &'a ListList<'a, A>,
 }
 
 impl<'a, A> Iterator for ListIterator<'a, A> {
     type Item = &'a A;
     fn next(&mut self) -> Option<Self::Item> {
         match self.remaining_list {
-            &ListListGuts::Empty => Option::None,
-            &ListListGuts::Cons(ref head, tail) => {
+            ListList::Empty => Option::None,
+            ListList::Cons(head, tail) => {
                 self.remaining_list = tail;
                 Option::Some(head)
             }
@@ -28842,14 +29209,14 @@ impl<'a, A> Iterator for ListIterator<'a, A> {
     }
 }
 
-impl<'a, A> ListListGuts<'a, A> {
+impl<'a, A> ListList<'a, A> {
     fn iter(&self) -> ListIterator<'_, A> {
         ListIterator {
             remaining_list: self,
         }
     }
 }
-impl<'a, A: Clone + std::fmt::Debug> std::fmt::Debug for ListListGuts<'a, A> {
+impl<'a, A: Clone + std::fmt::Debug> std::fmt::Debug for ListList<'a, A> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("List[")?;
         let mut is_tail_element: bool = false;
@@ -29018,41 +29385,49 @@ pub fn bitwise_shift_right_zf_by(positions: f64, n: f64) -> f64 {
     std::ops::Shr::shr(n as u32, positions as u32) as f64
 }
 
-pub fn list_is_empty<A>(list: ListList<A>) -> bool {
+pub fn list_is_empty<A>(list: &ListList<A>) -> bool {
     match list {
-        &ListListGuts::Empty => true,
-        &ListListGuts::Cons(_, _) => false,
+        &ListList::Empty => true,
+        &ListList::Cons(_, _) => false,
     }
 }
-pub fn list_head<A: Clone>(list: ListList<A>) -> Option<A> {
+pub fn list_head<A: Clone>(list: &ListList<A>) -> Option<A> {
     match list {
-        &ListListGuts::Empty => Option::None,
-        &ListListGuts::Cons(ref head, _) => Option::Some(head.clone()),
+        ListList::Empty => Option::None,
+        ListList::Cons(head, _) => Option::Some(head.clone()),
     }
 }
-pub fn list_tail<A: Clone>(list: ListList<A>) -> Option<ListList<A>> {
+pub fn list_tail<'a, A: Clone>(list: &'a ListList<A>) -> Option<&'a ListList<'a, A>> {
     match list {
-        &ListListGuts::Empty => Option::None,
-        &ListListGuts::Cons(_, tail) => Option::Some(tail),
+        ListList::Empty => Option::None,
+        ListList::Cons(_, tail) => Option::Some(tail),
     }
 }
-pub fn list_cons<'a, A>(allocator: &'a Bump, head: A, tail: ListList<'a, A>) -> ListList<'a, A> {
-    allocator.alloc(ListListGuts::Cons(head, tail))
+pub fn list_cons<'a, A>(
+    allocator: &'a Bump,
+    head: A,
+    tail: &'a ListList<'a, A>,
+) -> &'a ListList<'a, A> {
+    allocator.alloc(ListList::Cons(head, tail))
 }
-pub fn list_singleton<'a, A>(allocator: &'a Bump, only_element: A) -> ListList<'a, A> {
-    list_cons(allocator, only_element, &ListListGuts::Empty)
+pub fn list_singleton<'a, A>(allocator: &'a Bump, only_element: A) -> &'a ListList<'a, A> {
+    list_cons(allocator, only_element, &ListList::Empty)
 }
-pub fn list_repeat<'a, A: Clone>(allocator: &'a Bump, count: f64, element: A) -> ListList<'a, A> {
+pub fn list_repeat<'a, A: Clone>(
+    allocator: &'a Bump,
+    count: f64,
+    element: A,
+) -> &'a ListList<'a, A> {
     double_ended_iterator_to_list(allocator, std::iter::repeat_n(element, count as usize))
 }
-pub fn list_range<'a>(allocator: &'a Bump, min: f64, max: f64) -> ListList<'a, f64> {
+pub fn list_range<'a>(allocator: &'a Bump, min: f64, max: f64) -> &'a ListList<'a, f64> {
     double_ended_iterator_to_list(allocator, ((min as i32)..=(max as i32)).map(|n| n as f64))
 }
 pub fn double_ended_iterator_to_list<'a, A: Clone, AIterator: DoubleEndedIterator<Item = A>>(
     allocator: &'a Bump,
     iterator: AIterator,
-) -> ListList<'a, A> {
-    let mut list_so_far: ListList<A> = &ListListGuts::Empty;
+) -> &'a ListList<'a, A> {
+    let mut list_so_far: &ListList<A> = &ListList::Empty;
     for element in iterator.rev() {
         list_so_far = list_cons(allocator, element.clone(), list_so_far)
     }
@@ -29065,67 +29440,70 @@ pub fn double_ended_ref_iterator_to_list<
 >(
     allocator: &'a Bump,
     iterator: AIterator,
-) -> ListList<'a, A> {
-    let mut list_so_far: ListList<A> = &ListListGuts::Empty;
+) -> &'a ListList<'a, A> {
+    let mut list_so_far: &ListList<A> = &ListList::Empty;
     for element in iterator.rev() {
         list_so_far = list_cons(allocator, element.clone(), list_so_far)
     }
     list_so_far
 }
 
-pub fn list_length<A>(list: ListList<A>) -> f64 {
+pub fn list_length<A>(list: &ListList<A>) -> f64 {
     list.iter().count() as f64
 }
-pub fn list_sum(list: ListList<f64>) -> f64 {
+pub fn list_sum(list: &ListList<f64>) -> f64 {
     list.iter().sum()
 }
-pub fn list_product(list: ListList<f64>) -> f64 {
+pub fn list_product(list: &ListList<f64>) -> f64 {
     list.iter().product()
 }
 pub fn list_all<A: Clone, IsExpected: Fn(A) -> bool>(
     is_expected: IsExpected,
-    list: ListList<A>,
+    list: &ListList<A>,
 ) -> bool {
     list.iter().all(|el| is_expected(el.clone()))
 }
-pub fn list_any<A: Clone, IsNeedle: Fn(A) -> bool>(is_needle: IsNeedle, list: ListList<A>) -> bool {
+pub fn list_any<A: Clone, IsNeedle: Fn(A) -> bool>(
+    is_needle: IsNeedle,
+    list: &ListList<A>,
+) -> bool {
     list.iter().any(|el| is_needle(el.clone()))
 }
-pub fn list_member<A: Clone + PartialEq>(needle: A, list: ListList<A>) -> bool {
+pub fn list_member<A: Clone + PartialEq>(needle: A, list: &ListList<A>) -> bool {
     list.iter().any(|el| el == &needle)
 }
-pub fn list_minimum<A: Clone + PartialOrd>(list: ListList<A>) -> Option<A> {
+pub fn list_minimum<A: Clone + PartialOrd>(list: &ListList<A>) -> Option<A> {
     list.iter().min_by(|&l, &r| basics_compare(l, r)).cloned()
 }
-pub fn list_maximum<A: Clone + PartialOrd>(list: ListList<A>) -> Option<A> {
+pub fn list_maximum<A: Clone + PartialOrd>(list: &ListList<A>) -> Option<A> {
     list.iter().max_by(|&l, &r| basics_compare(l, r)).cloned()
 }
 pub fn list_take<'a, A: Clone>(
     allocator: &'a Bump,
     keep_count: f64,
-    list: ListList<'a, A>,
-) -> ListList<'a, A> {
+    list: &'a ListList<'a, A>,
+) -> &'a ListList<'a, A> {
     ref_iterator_to_list(allocator, list.iter().take(keep_count as usize))
 }
 /// prefer `double_ended_iterator_to_list` where possible
 pub fn iterator_to_list<'a, A: Clone, AIterator: Iterator<Item = A>>(
     allocator: &'a Bump,
     iterator: AIterator,
-) -> ListList<'a, A> {
+) -> &'a ListList<'a, A> {
     double_ended_iterator_to_list(allocator, iterator.collect::<Vec<A>>().into_iter())
 }
 /// prefer `double_ended_ref_iterator_to_list` where possible
 pub fn ref_iterator_to_list<'a, A: Clone, AIterator: Iterator<Item = &'a A>>(
     allocator: &'a Bump,
     iterator: AIterator,
-) -> ListList<'a, A> {
+) -> &'a ListList<'a, A> {
     double_ended_ref_iterator_to_list(allocator, iterator.collect::<Vec<&A>>().into_iter())
 }
-pub fn list_drop<'a, A: Clone>(skip_count: f64, list: ListList<'a, A>) -> ListList<'a, A> {
+pub fn list_drop<'a, A: Clone>(skip_count: f64, list: &'a ListList<'a, A>) -> &'a ListList<'a, A> {
     let mut iterator = list.iter();
     for () in std::iter::repeat_n((), skip_count as usize) {
         match iterator.next() {
-            None => return &ListListGuts::Empty,
+            None => return &ListList::Empty,
             Some(_) => {}
         }
     }
@@ -29134,11 +29512,11 @@ pub fn list_drop<'a, A: Clone>(skip_count: f64, list: ListList<'a, A>) -> ListLi
 pub fn list_intersperse<'a, A: Clone>(
     allocator: &'a Bump,
     in_between: A,
-    list: ListList<A>,
-) -> ListList<'a, A> {
+    list: &ListList<A>,
+) -> &'a ListList<'a, A> {
     match list {
-        &ListListGuts::Empty => &ListListGuts::Empty,
-        &ListListGuts::Cons(ref head, tail) => list_cons(
+        ListList::Empty => &ListList::Empty,
+        ListList::Cons(head, tail) => list_cons(
             allocator,
             head.clone(),
             iterator_to_list(
@@ -29152,15 +29530,15 @@ pub fn list_intersperse<'a, A: Clone>(
 }
 pub fn list_concat<'a, A: Clone>(
     allocator: &'a Bump,
-    list: ListList<'a, ListList<A>>,
-) -> ListList<'a, A> {
+    list: &'a ListList<'a, ListList<A>>,
+) -> &'a ListList<'a, A> {
     ref_iterator_to_list(allocator, list.iter().flat_map(|inner| inner.iter()))
 }
-pub fn list_concat_map<'a, A: Clone, B: Clone, ElementToList: Fn(A) -> ListList<'a, B>>(
+pub fn list_concat_map<'a, A: Clone, B: Clone, ElementToList: Fn(A) -> &'a ListList<'a, B>>(
     allocator: &'a Bump,
     element_to_list: ElementToList,
-    list: ListList<A>,
-) -> ListList<'a, B> {
+    list: &'a ListList<A>,
+) -> &'a ListList<'a, B> {
     ref_iterator_to_list(
         allocator,
         list.iter()
@@ -29170,7 +29548,7 @@ pub fn list_concat_map<'a, A: Clone, B: Clone, ElementToList: Fn(A) -> ListList<
 pub fn list_foldl<A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) -> State>(
     reduce: Reduce,
     initial_state: State,
-    list: ListList<A>,
+    list: &ListList<A>,
 ) -> State {
     list.iter().fold(initial_state, |state, element| {
         reduce(element.clone())(state)
@@ -29179,7 +29557,7 @@ pub fn list_foldl<A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) 
 pub fn list_foldr<A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) -> State>(
     reduce: Reduce,
     initial_state: State,
-    list: ListList<A>,
+    list: &ListList<A>,
 ) -> State {
     list.iter()
         .map(|el| el.clone())
@@ -29191,8 +29569,8 @@ pub fn list_foldr<A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) 
         })
 }
 
-pub fn list_reverse<'a, A: Clone>(allocator: &'a Bump, list: ListList<A>) -> ListList<'a, A> {
-    let mut reverse_list: ListList<A> = &ListListGuts::Empty;
+pub fn list_reverse<'a, A: Clone>(allocator: &'a Bump, list: &ListList<A>) -> &'a ListList<'a, A> {
+    let mut reverse_list: &ListList<A> = &ListList::Empty;
     for new_head in list.iter() {
         reverse_list = list_cons(allocator, new_head.clone(), reverse_list)
     }
@@ -29201,8 +29579,8 @@ pub fn list_reverse<'a, A: Clone>(allocator: &'a Bump, list: ListList<A>) -> Lis
 pub fn list_filter<'a, A: Clone, Keep: Fn(A) -> bool>(
     allocator: &'a Bump,
     keep: Keep,
-    list: ListList<A>,
-) -> ListList<'a, A> {
+    list: &ListList<A>,
+) -> &'a ListList<'a, A> {
     // can be optimized by just returning list when all elements were kept
     iterator_to_list(
         allocator,
@@ -29214,8 +29592,8 @@ pub fn list_filter<'a, A: Clone, Keep: Fn(A) -> bool>(
 pub fn list_map<'a, A: Clone, B: Clone, ElementChange: Fn(A) -> B>(
     allocator: &'a Bump,
     element_change: ElementChange,
-    list: ListList<A>,
-) -> ListList<'a, B> {
+    list: &ListList<A>,
+) -> &'a ListList<'a, B> {
     iterator_to_list(allocator, list.iter().map(|el| element_change(el.clone())))
 }
 pub fn list_indexed_map<
@@ -29227,8 +29605,8 @@ pub fn list_indexed_map<
 >(
     allocator: &'a Bump,
     indexed_element_to_new: IndexedElementToNew,
-    list: ListList<A>,
-) -> ListList<'a, B> {
+    list: &ListList<A>,
+) -> &'a ListList<'a, B> {
     iterator_to_list(
         allocator,
         list.iter()
@@ -29239,8 +29617,8 @@ pub fn list_indexed_map<
 pub fn list_filter_map<'a, A: Clone, B: Clone, ElementToMaybe: Fn(A) -> Option<B>>(
     allocator: &'a Bump,
     element_to_maybe: ElementToMaybe,
-    list: ListList<'a, A>,
-) -> ListList<'a, B> {
+    list: &ListList<'a, A>,
+) -> &'a ListList<'a, B> {
     iterator_to_list(
         allocator,
         list.iter().filter_map(|el| element_to_maybe(el.clone())),
@@ -29248,8 +29626,8 @@ pub fn list_filter_map<'a, A: Clone, B: Clone, ElementToMaybe: Fn(A) -> Option<B
 }
 pub fn list_sort<'a, A: Clone + PartialOrd>(
     allocator: &'a Bump,
-    list: ListList<'a, A>,
-) -> ListList<'a, A> {
+    list: &'a ListList<'a, A>,
+) -> &'a ListList<'a, A> {
     let mut list_copy_as_vec: Vec<&A> = list.iter().collect();
     list_copy_as_vec.sort_by(|&a, &b| basics_compare(a, b));
     double_ended_ref_iterator_to_list(allocator, list_copy_as_vec.into_iter())
@@ -29257,8 +29635,8 @@ pub fn list_sort<'a, A: Clone + PartialOrd>(
 pub fn list_sort_by<'a, A: Clone, B: PartialOrd, ElementToComparable: Fn(A) -> B>(
     allocator: &'a Bump,
     element_to_comparable: ElementToComparable,
-    list: ListList<'a, A>,
-) -> ListList<'a, A> {
+    list: &ListList<'a, A>,
+) -> &'a ListList<'a, A> {
     let mut list_copy_as_vec: Vec<A> = list.iter().map(|el| el.clone()).collect();
     list_copy_as_vec.sort_by(|a, b| {
         basics_compare(
@@ -29276,19 +29654,19 @@ pub fn list_sort_with<
 >(
     allocator: &'a Bump,
     element_compare: ElementCompare,
-    list: ListList<'a, A>,
-) -> ListList<'a, A> {
+    list: &ListList<'a, A>,
+) -> &'a ListList<'a, A> {
     let mut list_copy_as_vec: Vec<A> = list.iter().map(|el| el.clone()).collect();
     list_copy_as_vec.sort_by(|a, b| element_compare(a.clone())(b.clone()));
     double_ended_iterator_to_list(allocator, list_copy_as_vec.into_iter())
 }
 pub fn list_append<'a, A: Clone>(
     allocator: &'a Bump,
-    left: ListList<A>,
-    right: ListList<'a, A>,
-) -> ListList<'a, A> {
+    left: &ListList<A>,
+    right: &'a ListList<'a, A>,
+) -> &'a ListList<'a, A> {
     // can be optimized
-    let mut combined_list: ListList<A> = right;
+    let mut combined_list: &ListList<A> = right;
     for next_right_last_element in left.iter().collect::<Vec<&A>>().into_iter().rev() {
         combined_list = list_cons(allocator, next_right_last_element.clone(), combined_list)
     }
@@ -29296,10 +29674,10 @@ pub fn list_append<'a, A: Clone>(
 }
 pub fn list_unzip<'a, A: Clone, B: Clone>(
     allocator: &'a Bump,
-    list: ListList<(A, B)>,
-) -> (ListList<'a, A>, ListList<'a, B>) {
-    let mut a_list: ListList<A> = &ListListGuts::Empty;
-    let mut b_list: ListList<B> = &ListListGuts::Empty;
+    list: &ListList<(A, B)>,
+) -> (&'a ListList<'a, A>, &'a ListList<'a, B>) {
+    let mut a_list: &ListList<A> = &ListList::Empty;
+    let mut b_list: &ListList<B> = &ListList::Empty;
     for (next_last_a, next_last_b) in list.iter().collect::<Vec<&(A, B)>>().into_iter().rev() {
         a_list = list_cons(allocator, next_last_a.clone(), a_list);
         b_list = list_cons(allocator, next_last_b.clone(), b_list)
@@ -29309,8 +29687,8 @@ pub fn list_unzip<'a, A: Clone, B: Clone>(
 pub fn list_partition<'a, A: Clone, Decode: Fn(A) -> bool>(
     allocator: &'a Bump,
     decode: Decode,
-    list: ListList<A>,
-) -> (ListList<'a, A>, ListList<'a, A>) {
+    list: &ListList<A>,
+) -> (&'a ListList<'a, A>, &'a ListList<'a, A>) {
     let (yes, no): (Vec<A>, Vec<A>) = list
         .iter()
         .map(|el| el.clone())
@@ -29322,9 +29700,9 @@ pub fn list_partition<'a, A: Clone, Decode: Fn(A) -> bool>(
 }
 pub fn list_zip<'a, A: Clone, B: Clone>(
     allocator: &'a Bump,
-    a_list: ListList<A>,
-    b_list: ListList<B>,
-) -> ListList<'a, (A, B)> {
+    a_list: &ListList<A>,
+    b_list: &ListList<B>,
+) -> &'a ListList<'a, (A, B)> {
     iterator_to_list(
         allocator,
         std::iter::zip(
@@ -29343,9 +29721,9 @@ pub fn list_map2<
 >(
     allocator: &'a Bump,
     combine: Combine,
-    a_list: ListList<A>,
-    b_list: ListList<B>,
-) -> ListList<'a, Combined> {
+    a_list: &ListList<A>,
+    b_list: &ListList<B>,
+) -> &'a ListList<'a, Combined> {
     iterator_to_list(
         allocator,
         std::iter::zip(a_list.iter(), b_list.iter()).map(|(a, b)| combine(a.clone())(b.clone())),
@@ -29363,10 +29741,10 @@ pub fn list_map3<
 >(
     allocator: &'a Bump,
     combine: Combine,
-    a_list: ListList<A>,
-    b_list: ListList<B>,
-    c_list: ListList<C>,
-) -> ListList<'a, Combined> {
+    a_list: &ListList<A>,
+    b_list: &ListList<B>,
+    c_list: &ListList<C>,
+) -> &'a ListList<'a, Combined> {
     iterator_to_list(
         allocator,
         a_list
@@ -29390,11 +29768,11 @@ pub fn list_map4<
 >(
     allocator: &'a Bump,
     combine: Combine,
-    a_list: ListList<A>,
-    b_list: ListList<B>,
-    c_list: ListList<C>,
-    d_list: ListList<D>,
-) -> ListList<'a, Combined> {
+    a_list: &ListList<A>,
+    b_list: &ListList<B>,
+    c_list: &ListList<C>,
+    d_list: &ListList<D>,
+) -> &'a ListList<'a, Combined> {
     iterator_to_list(
         allocator,
         a_list
@@ -29421,12 +29799,12 @@ pub fn list_map5<
 >(
     allocator: &'a Bump,
     combine: Combine,
-    a_list: ListList<A>,
-    b_list: ListList<B>,
-    c_list: ListList<C>,
-    d_list: ListList<D>,
-    e_list: ListList<E>,
-) -> ListList<'a, Combined> {
+    a_list: &ListList<A>,
+    b_list: &ListList<B>,
+    c_list: &ListList<C>,
+    d_list: &ListList<D>,
+    e_list: &ListList<E>,
+) -> &'a ListList<'a, Combined> {
     iterator_to_list(
         allocator,
         a_list
@@ -29441,46 +29819,46 @@ pub fn list_map5<
     )
 }
 
-pub type ArrayArray<'a, A> = &'a [A];
+pub type ArrayArray<A> = [A];
 
-pub fn array_empty<'a, A>() -> ArrayArray<'a, A> {
+pub fn array_empty<'a, A>() -> &'a ArrayArray<A> {
     &[]
 }
-pub fn array_singleton<'a, A>(allocator: &'a Bump, only_element: A) -> ArrayArray<'a, A> {
+pub fn array_singleton<'a, A>(allocator: &'a Bump, only_element: A) -> &'a ArrayArray<A> {
     allocator.alloc([only_element])
 }
 pub fn array_repeat<'a, A: Clone>(
     allocator: &'a Bump,
     length: f64,
     element: A,
-) -> ArrayArray<'a, A> {
+) -> &'a ArrayArray<A> {
     allocator.alloc(std::vec::from_elem(element, length as usize))
 }
 pub fn array_initialize<'a, A, IndexToElement: Fn(f64) -> A>(
     allocator: &'a Bump,
     length: f64,
     index_to_element: IndexToElement,
-) -> ArrayArray<'a, A> {
+) -> &'a ArrayArray<A> {
     allocator.alloc(
         (0..(length as i64))
             .map(|i| index_to_element(i as f64))
             .collect::<Vec<A>>(),
     )
 }
-pub fn array_is_empty<A>(array: ArrayArray<A>) -> bool {
+pub fn array_is_empty<A>(array: &ArrayArray<A>) -> bool {
     array.is_empty()
 }
-pub fn array_length<A>(array: ArrayArray<A>) -> f64 {
+pub fn array_length<A>(array: &ArrayArray<A>) -> f64 {
     array.len() as f64
 }
-pub fn array_get<A: Clone>(index: f64, array: ArrayArray<A>) -> Option<A> {
+pub fn array_get<A: Clone>(index: f64, array: &ArrayArray<A>) -> Option<A> {
     array.get(index as usize).map(|el| el.clone())
 }
 pub fn array_push<'a, A: Clone>(
     allocator: &'a Bump,
     new_last_element: A,
-    array: ArrayArray<A>,
-) -> ArrayArray<'a, A> {
+    array: &ArrayArray<A>,
+) -> &'a ArrayArray<A> {
     let mut array_as_vec: Vec<A> = array.to_vec();
     array_as_vec.push(new_last_element);
     allocator.alloc(array_as_vec)
@@ -29489,8 +29867,8 @@ pub fn array_set<'a, A: Clone>(
     allocator: &'a Bump,
     index: f64,
     new_element: A,
-    array: ArrayArray<'a, A>,
-) -> ArrayArray<'a, A> {
+    array: &'a ArrayArray<A>,
+) -> &'a ArrayArray<A> {
     if index < 0_f64 {
         array
     } else {
@@ -29511,8 +29889,8 @@ pub fn array_set<'a, A: Clone>(
 pub fn array_slice<'a, A>(
     start_inclusive_possibly_negative: f64,
     end_exclusive_possibly_negative: f64,
-    array: ArrayArray<'a, A>,
-) -> ArrayArray<'a, A> {
+    array: &'a ArrayArray<A>,
+) -> &'a ArrayArray<A> {
     let start_inclusive: usize =
         index_from_end_if_negative(start_inclusive_possibly_negative, array.len());
     let end_exclusive: usize =
@@ -29532,11 +29910,14 @@ fn index_from_end_if_negative(index_possibly_negative: f64, full_length: usize) 
         ((full_length as f64 + index_possibly_negative).max(0_f64) as usize).min(full_length)
     }
 }
-pub fn array_from_list<'a, A: Clone>(allocator: &'a Bump, list: ListList<A>) -> ArrayArray<'a, A> {
+pub fn array_from_list<'a, A: Clone>(allocator: &'a Bump, list: &ListList<A>) -> &'a ArrayArray<A> {
     allocator.alloc(list.iter().map(|el| el.clone()).collect::<Vec<A>>())
 }
 
-pub fn array_reverse<'a, A: Clone>(allocator: &'a Bump, array: ArrayArray<A>) -> ArrayArray<'a, A> {
+pub fn array_reverse<'a, A: Clone>(
+    allocator: &'a Bump,
+    array: &ArrayArray<A>,
+) -> &'a ArrayArray<A> {
     let mut array_copy: Vec<A> = array.to_vec();
     array_copy.reverse();
     allocator.alloc(array_copy)
@@ -29544,8 +29925,8 @@ pub fn array_reverse<'a, A: Clone>(allocator: &'a Bump, array: ArrayArray<A>) ->
 pub fn array_filter<'a, A: Clone, Keep: Fn(A) -> bool>(
     allocator: &'a Bump,
     keep: Keep,
-    array: ArrayArray<'a, A>,
-) -> ArrayArray<'a, A> {
+    array: &'a ArrayArray<A>,
+) -> &'a ArrayArray<A> {
     allocator.alloc(
         array
             .iter()
@@ -29557,8 +29938,8 @@ pub fn array_filter<'a, A: Clone, Keep: Fn(A) -> bool>(
 pub fn array_map<'a, A: Clone, B, ElementChange: Fn(A) -> B>(
     allocator: &'a Bump,
     element_change: ElementChange,
-    array: ArrayArray<'a, A>,
-) -> ArrayArray<'a, B> {
+    array: &'a ArrayArray<A>,
+) -> &'a ArrayArray<B> {
     allocator.alloc(
         array
             .iter()
@@ -29575,8 +29956,8 @@ pub fn array_indexed_map<
 >(
     allocator: &'a Bump,
     element_change: IndexedElementToNew,
-    array: ArrayArray<'a, A>,
-) -> ArrayArray<'a, B> {
+    array: &'a ArrayArray<A>,
+) -> &'a ArrayArray<B> {
     allocator.alloc(
         array
             .iter()
@@ -29587,8 +29968,8 @@ pub fn array_indexed_map<
 }
 pub fn array_sort<'a, A: Clone + PartialOrd>(
     allocator: &'a Bump,
-    array: ArrayArray<A>,
-) -> ArrayArray<'a, A> {
+    array: &ArrayArray<A>,
+) -> &'a ArrayArray<A> {
     let mut array_copy: Vec<A> = array.to_vec();
     array_copy.sort_by(|a, b| basics_compare(a, b));
     allocator.alloc(array_copy)
@@ -29596,8 +29977,8 @@ pub fn array_sort<'a, A: Clone + PartialOrd>(
 pub fn array_sort_by<'a, A: Clone, B: PartialOrd, ElementToComparable: Fn(A) -> B>(
     allocator: &'a Bump,
     element_to_comparable: ElementToComparable,
-    array: ArrayArray<'a, A>,
-) -> ArrayArray<'a, A> {
+    array: &'a ArrayArray<A>,
+) -> &'a ArrayArray<A> {
     let mut array_copy: Vec<A> = array.to_vec();
     array_copy.sort_by(|a, b| {
         basics_compare(
@@ -29615,8 +29996,8 @@ pub fn array_sort_with<
 >(
     allocator: &'a Bump,
     element_compare: ElementCompare,
-    array: ArrayArray<'a, A>,
-) -> ArrayArray<'a, A> {
+    array: &'a ArrayArray<A>,
+) -> &'a ArrayArray<A> {
     let mut array_copy: Vec<A> = array.to_vec();
     array_copy.sort_by(|a, b| element_compare(a.clone())(b.clone()));
     allocator.alloc(array_copy)
@@ -29624,14 +30005,14 @@ pub fn array_sort_with<
 
 pub fn array_to_list<'a, A: Clone>(
     allocator: &'a Bump,
-    array: ArrayArray<'a, A>,
-) -> ListList<'a, A> {
+    array: &'a ArrayArray<A>,
+) -> &'a ListList<'a, A> {
     double_ended_ref_iterator_to_list(allocator, array.iter())
 }
 pub fn array_to_indexed_list<'a, A: Clone>(
     allocator: &'a Bump,
-    array: ArrayArray<A>,
-) -> ListList<'a, (f64, A)> {
+    array: &ArrayArray<A>,
+) -> &'a ListList<'a, (f64, A)> {
     double_ended_iterator_to_list(
         allocator,
         array
@@ -29643,7 +30024,7 @@ pub fn array_to_indexed_list<'a, A: Clone>(
 pub fn array_foldl<'a, A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) -> State>(
     reduce: Reduce,
     initial_state: State,
-    array: ArrayArray<'a, A>,
+    array: &'a ArrayArray<A>,
 ) -> State {
     array.iter().fold(initial_state, |state, element| {
         reduce(element.clone())(state)
@@ -29652,7 +30033,7 @@ pub fn array_foldl<'a, A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(St
 pub fn array_foldr<'a, A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) -> State>(
     reduce: Reduce,
     initial_state: State,
-    array: ArrayArray<'a, A>,
+    array: &'a ArrayArray<A>,
 ) -> State {
     array.iter().rev().fold(initial_state, |state, element| {
         reduce(element.clone())(state)
@@ -29661,9 +30042,9 @@ pub fn array_foldr<'a, A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(St
 
 fn array_append<'a, A: Clone>(
     allocator: &'a Bump,
-    left: ArrayArray<A>,
-    right: ArrayArray<A>,
-) -> ArrayArray<'a, A> {
+    left: &ArrayArray<A>,
+    right: &ArrayArray<A>,
+) -> &'a ArrayArray<A> {
     let mut left_as_vec: Vec<A> = left.to_vec();
     left_as_vec.extend_from_slice(right);
     allocator.alloc(left_as_vec)
@@ -29712,55 +30093,44 @@ pub fn char_from_code(code: f64) -> char {
     char::from_u32(code as u32).unwrap_or('\\0')
 }
 
-pub fn string_is_empty(string: StringString) -> bool {
+pub fn string_is_empty(string: &str) -> bool {
     string.is_empty()
 }
-pub fn string_length(string: StringString) -> f64 {
+pub fn string_length(string: &str) -> f64 {
     string.chars().count() as f64
 }
-pub fn string_from_int<'a>(allocator: &'a Bump, int: f64) -> StringString<'a> {
+pub fn string_from_int<'a>(allocator: &'a Bump, int: f64) -> &'a str {
     allocator.alloc((int as i64).to_string())
 }
-pub fn string_from_float<'a>(allocator: &'a Bump, float: f64) -> StringString<'a> {
+pub fn string_from_float<'a>(allocator: &'a Bump, float: f64) -> &'a str {
     allocator.alloc(float.to_string())
 }
-pub fn string_from_char<'a>(allocator: &'a Bump, char: char) -> StringString<'a> {
+pub fn string_from_char<'a>(allocator: &'a Bump, char: char) -> &'a str {
     allocator.alloc(char.to_string())
 }
-pub fn string_repeat<'a>(
-    allocator: &'a Bump,
-    length: f64,
-    segment: StringString,
-) -> StringString<'a> {
+pub fn string_repeat<'a>(allocator: &'a Bump, length: f64, segment: &str) -> &'a str {
     if length <= 0_f64 {
         &""
     } else {
         allocator.alloc(segment.repeat(length as usize))
     }
 }
-pub fn string_cons<'a>(
-    allocator: &'a Bump,
-    new_first_char: char,
-    tail_string: StringString,
-) -> StringString<'a> {
+pub fn string_cons<'a>(allocator: &'a Bump, new_first_char: char, tail_string: &str) -> &'a str {
     let mut tail_string_copy: String = tail_string.to_owned();
     tail_string_copy.insert(0, new_first_char);
     allocator.alloc(tail_string_copy)
 }
-pub fn string_all<IsExpected: Fn(char) -> bool>(
-    is_expected: IsExpected,
-    string: StringString,
-) -> bool {
+pub fn string_all<IsExpected: Fn(char) -> bool>(is_expected: IsExpected, string: &str) -> bool {
     string.chars().all(is_expected)
 }
-pub fn string_any<IsNeedle: Fn(char) -> bool>(is_needle: IsNeedle, string: StringString) -> bool {
+pub fn string_any<IsNeedle: Fn(char) -> bool>(is_needle: IsNeedle, string: &str) -> bool {
     string.chars().any(is_needle)
 }
 pub fn string_filter<'a, Keep: Fn(char) -> bool>(
     allocator: &'a Bump,
     keep: Keep,
-    string: StringString,
-) -> StringString<'a> {
+    string: &str,
+) -> &'a str {
     allocator.alloc(
         string
             .chars()
@@ -29771,14 +30141,14 @@ pub fn string_filter<'a, Keep: Fn(char) -> bool>(
 pub fn string_map<'a, ElementChange: Fn(char) -> char>(
     allocator: &'a Bump,
     element_change: ElementChange,
-    string: StringString,
-) -> StringString<'a> {
+    string: &str,
+) -> &'a str {
     allocator.alloc(string.chars().map(element_change).collect::<String>())
 }
 pub fn string_foldl<State, Reduce: Fn(char) -> Reduce1, Reduce1: Fn(State) -> State>(
     reduce: Reduce,
     initial_state: State,
-    string: StringString,
+    string: &str,
 ) -> State {
     string
         .chars()
@@ -29787,23 +30157,23 @@ pub fn string_foldl<State, Reduce: Fn(char) -> Reduce1, Reduce1: Fn(State) -> St
 pub fn string_foldr<State, Reduce: Fn(char) -> Reduce1, Reduce1: Fn(State) -> State>(
     reduce: Reduce,
     initial_state: State,
-    string: StringString,
+    string: &str,
 ) -> State {
     string
         .chars()
         .rev()
         .fold(initial_state, |state, element| reduce(element)(state))
 }
-pub fn string_to_list<'a>(allocator: &'a Bump, string: StringString) -> ListList<'a, char> {
+pub fn string_to_list<'a>(allocator: &'a Bump, string: &str) -> &'a ListList<'a, char> {
     double_ended_iterator_to_list(allocator, string.chars())
 }
-pub fn string_from_list<'a>(allocator: &'a Bump, list: ListList<char>) -> StringString<'a> {
+pub fn string_from_list<'a>(allocator: &'a Bump, list: &ListList<char>) -> &'a str {
     allocator.alloc(list.iter().collect::<String>())
 }
-pub fn string_reverse<'a>(allocator: &'a Bump, string: StringString) -> StringString<'a> {
+pub fn string_reverse<'a>(allocator: &'a Bump, string: &str) -> &'a str {
     allocator.alloc(string.chars().rev().collect::<String>())
 }
-pub fn string_uncons<'a>(string: StringString<'a>) -> Option<(char, StringString<'a>)> {
+pub fn string_uncons<'a>(string: &'a str) -> Option<(char, &'a str)> {
     let mut string_chars_iterator: std::str::Chars = string.chars();
     match string_chars_iterator.next() {
         Option::None => Option::None,
@@ -29811,7 +30181,7 @@ pub fn string_uncons<'a>(string: StringString<'a>) -> Option<(char, StringString
     }
 }
 
-pub fn string_left(taken_count: f64, string: StringString) -> StringString {
+pub fn string_left(taken_count: f64, string: &str) -> &str {
     if taken_count <= 0_f64 {
         &""
     } else {
@@ -29821,7 +30191,7 @@ pub fn string_left(taken_count: f64, string: StringString) -> StringString {
         }
     }
 }
-pub fn string_drop_left(skipped_count: f64, string: StringString) -> StringString {
+pub fn string_drop_left(skipped_count: f64, string: &str) -> &str {
     if skipped_count <= 0_f64 {
         string
     } else {
@@ -29831,7 +30201,7 @@ pub fn string_drop_left(skipped_count: f64, string: StringString) -> StringStrin
         }
     }
 }
-pub fn string_right(taken_count: f64, string: StringString) -> StringString {
+pub fn string_right(taken_count: f64, string: &str) -> &str {
     if taken_count <= 0_f64 {
         &""
     } else {
@@ -29844,7 +30214,7 @@ pub fn string_right(taken_count: f64, string: StringString) -> StringString {
         }
     }
 }
-pub fn string_drop_right(skipped_count: f64, string: StringString) -> StringString {
+pub fn string_drop_right(skipped_count: f64, string: &str) -> &str {
     if skipped_count <= 0_f64 {
         string
     } else {
@@ -29860,8 +30230,8 @@ pub fn string_drop_right(skipped_count: f64, string: StringString) -> StringStri
 pub fn string_slice<'a>(
     start_inclusive_possibly_negative: f64,
     end_exclusive_possibly_negative: f64,
-    string: StringString<'a>,
-) -> StringString<'a> {
+    string: &'a str,
+) -> &'a str {
     let start_inclusive_or_none_if_too_big: Option<usize> =
         normalize_string_slice_index_from_end_if_negative(
             start_inclusive_possibly_negative,
@@ -29891,7 +30261,7 @@ pub fn string_slice<'a>(
 /// Option::None means too big
 fn normalize_string_slice_index_from_end_if_negative(
     elm_index: f64,
-    string: StringString,
+    string: &str,
 ) -> Option<usize> {
     if elm_index >= 0_f64 {
         match string.char_indices().nth(elm_index as usize) {
@@ -29908,25 +30278,13 @@ fn normalize_string_slice_index_from_end_if_negative(
         }
     }
 }
-pub fn string_replace<'a>(
-    allocator: &'a Bump,
-    from: StringString,
-    to: StringString,
-    string: StringString<'a>,
-) -> StringString<'a> {
+pub fn string_replace<'a>(allocator: &'a Bump, from: &str, to: &str, string: &'a str) -> &'a str {
     allocator.alloc(string.replace(from, to))
 }
-pub fn string_append<'a>(
-    allocator: &'a Bump,
-    left: StringString,
-    right: StringString,
-) -> StringString<'a> {
+pub fn string_append<'a>(allocator: &'a Bump, left: &str, right: &str) -> &'a str {
     allocator.alloc(left.to_owned() + right)
 }
-pub fn string_concat<'a>(
-    allocator: &'a Bump,
-    segments: ListList<StringString>,
-) -> StringString<'a> {
+pub fn string_concat<'a>(allocator: &'a Bump, segments: &ListList<&str>) -> &'a str {
     let mut string_builder = String::new();
     for segment in segments.iter() {
         string_builder.push_str(segment);
@@ -29935,13 +30293,13 @@ pub fn string_concat<'a>(
 }
 pub fn string_join<'a>(
     allocator: &'a Bump,
-    in_between: StringString,
-    segments: ListList<StringString>,
-) -> StringString<'a> {
+    in_between: &str,
+    segments: &ListList<&str>,
+) -> &'a str {
     match segments {
-        &ListListGuts::Empty => &"",
-        &ListListGuts::Cons(head_segment, tail_segments) => {
-            let mut string_builder = head_segment.to_owned();
+        ListList::Empty => &"",
+        &ListList::Cons(head_segment, tail_segments) => {
+            let mut string_builder: String = head_segment.to_owned();
             for segment in tail_segments.iter() {
                 string_builder.push_str(in_between);
                 string_builder.push_str(segment);
@@ -29952,31 +30310,25 @@ pub fn string_join<'a>(
 }
 pub fn string_split<'a>(
     allocator: &'a Bump,
-    separator: StringString,
-    string: StringString<'a>,
-) -> ListList<'a, StringString<'a>> {
+    separator: &str,
+    string: &'a str,
+) -> &'a ListList<'a, &'a str> {
     iterator_to_list(allocator, string.split(separator))
 }
-pub fn string_words<'a>(
-    allocator: &'a Bump,
-    string: StringString<'a>,
-) -> ListList<'a, StringString<'a>> {
+pub fn string_words<'a>(allocator: &'a Bump, string: &'a str) -> &'a ListList<'a, &'a str> {
     iterator_to_list(allocator, string.split_whitespace())
 }
-pub fn string_lines<'a>(
-    allocator: &'a Bump,
-    string: StringString<'a>,
-) -> ListList<'a, StringString<'a>> {
+pub fn string_lines<'a>(allocator: &'a Bump, string: &'a str) -> &'a ListList<'a, &'a str> {
     iterator_to_list(allocator, string.lines())
 }
-pub fn string_contains(needle: StringString, string: StringString) -> bool {
+pub fn string_contains(needle: &str, string: &str) -> bool {
     string.contains(needle)
 }
 pub fn string_indexes<'a>(
     allocator: &'a Bump,
-    needle: StringString,
-    string: StringString<'a>,
-) -> ListList<'a, f64> {
+    needle: &str,
+    string: &'a str,
+) -> &'a ListList<'a, f64> {
     // this is a fairly expensive operation, O(chars * matches). Anyone know something faster?
     iterator_to_list(
         allocator,
@@ -29995,41 +30347,41 @@ pub fn string_indexes<'a>(
 }
 pub fn string_indices<'a>(
     allocator: &'a Bump,
-    needle: StringString,
-    string: StringString<'a>,
-) -> ListList<'a, f64> {
+    needle: &str,
+    string: &'a str,
+) -> &'a ListList<'a, f64> {
     string_indexes(allocator, needle, string)
 }
-pub fn string_starts_with(prefix_to_check_for: StringString, string: StringString) -> bool {
+pub fn string_starts_with(prefix_to_check_for: &str, string: &str) -> bool {
     string.starts_with(prefix_to_check_for)
 }
-pub fn string_ends_with(suffix_to_check_for: StringString, string: StringString) -> bool {
+pub fn string_ends_with(suffix_to_check_for: &str, string: &str) -> bool {
     string.ends_with(suffix_to_check_for)
 }
-pub fn string_to_float(string: StringString) -> Option<f64> {
+pub fn string_to_float(string: &str) -> Option<f64> {
     match string.parse::<f64>() {
         Result::Err(_) => Option::None,
         Result::Ok(float) => Option::Some(float),
     }
 }
-pub fn string_to_int(string: StringString) -> Option<f64> {
+pub fn string_to_int(string: &str) -> Option<f64> {
     match string.parse::<i64>() {
         Result::Err(_) => Option::None,
         Result::Ok(int) => Option::Some(int as f64),
     }
 }
-pub fn string_to_upper<'a>(allocator: &'a Bump, string: StringString) -> StringString<'a> {
+pub fn string_to_upper<'a>(allocator: &'a Bump, string: &str) -> &'a str {
     allocator.alloc(string.to_uppercase())
 }
-pub fn string_to_lower<'a>(allocator: &'a Bump, string: StringString) -> StringString<'a> {
+pub fn string_to_lower<'a>(allocator: &'a Bump, string: &str) -> &'a str {
     allocator.alloc(string.to_lowercase())
 }
 pub fn string_pad<'a>(
     allocator: &'a Bump,
     minimum_full_char_count: f64,
     padding: char,
-    string: StringString,
-) -> StringString<'a> {
+    string: &str,
+) -> &'a str {
     let half_to_pad: f64 = (minimum_full_char_count - string.chars().count() as f64) / 2_f64;
     let padding_string: String = padding.to_string();
     let mut padded: String = padding_string.repeat(half_to_pad.ceil() as usize);
@@ -30041,8 +30393,8 @@ pub fn string_pad_left<'a>(
     allocator: &'a Bump,
     minimum_length: f64,
     padding: char,
-    string: StringString,
-) -> StringString<'a> {
+    string: &str,
+) -> &'a str {
     let mut padded: String = padding
         .to_string()
         .repeat((minimum_length - string.chars().count() as f64) as usize);
@@ -30053,8 +30405,8 @@ pub fn string_pad_right<'a>(
     allocator: &'a Bump,
     minimum_length: f64,
     padding: char,
-    string: StringString,
-) -> StringString<'a> {
+    string: &str,
+) -> &'a str {
     let mut padded: String = string.to_owned();
     padded.push_str(
         &padding
@@ -30063,24 +30415,24 @@ pub fn string_pad_right<'a>(
     );
     allocator.alloc(padded)
 }
-pub fn string_trim(string: StringString) -> StringString {
+pub fn string_trim(string: &str) -> &str {
     string.trim()
 }
-pub fn string_trim_left(string: StringString) -> StringString {
+pub fn string_trim_left(string: &str) -> &str {
     string.trim_start()
 }
-pub fn string_trim_right(string: StringString) -> StringString {
+pub fn string_trim_right(string: &str) -> &str {
     string.trim_end()
 }
 
-pub fn debug_to_string<'a, A: std::fmt::Debug>(allocator: &'a Bump, data: A) -> StringString<'a> {
+pub fn debug_to_string<'a, A: std::fmt::Debug>(allocator: &'a Bump, data: A) -> &'a str {
     allocator.alloc(format!("{:?}", data)).as_str()
 }
 pub fn debug_log<'a, A: std::fmt::Debug>(data: A) -> A {
     println!("{:?}", data);
     data
 }
-pub fn debug_todo<Any>(message: StringString) -> Any {
+pub fn debug_todo<Any>(message: &str) -> Any {
     todo!("{}", message)
 }
 pub fn maybe_with_default<A>(on_nothing: A, maybe: Option<A>) -> A {

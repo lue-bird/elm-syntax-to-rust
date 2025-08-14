@@ -5,25 +5,22 @@ use bumpalo::Bump;
 
 pub type ResultResult<X, A> = Result<A, X>;
 
-pub type StringString<'a> = &'a str;
-
 #[derive(Copy, Clone /*, Debug is implemented below */, Eq, PartialEq, Hash, PartialOrd, Ord)]
-pub enum ListListGuts<'a, A> {
+pub enum ListList<'a, A> {
     Empty,
-    Cons(A, ListList<'a, A>),
+    Cons(A, &'a ListList<'a, A>),
 }
-pub type ListList<'a, A> = &'a ListListGuts<'a, A>;
 
 pub struct ListIterator<'a, A> {
-    remaining_list: ListList<'a, A>,
+    remaining_list: &'a ListList<'a, A>,
 }
 
 impl<'a, A> Iterator for ListIterator<'a, A> {
     type Item = &'a A;
     fn next(&mut self) -> Option<Self::Item> {
         match self.remaining_list {
-            &ListListGuts::Empty => Option::None,
-            &ListListGuts::Cons(ref head, tail) => {
+            ListList::Empty => Option::None,
+            ListList::Cons(head, tail) => {
                 self.remaining_list = tail;
                 Option::Some(head)
             }
@@ -31,14 +28,14 @@ impl<'a, A> Iterator for ListIterator<'a, A> {
     }
 }
 
-impl<'a, A> ListListGuts<'a, A> {
+impl<'a, A> ListList<'a, A> {
     fn iter(&self) -> ListIterator<'_, A> {
         ListIterator {
             remaining_list: self,
         }
     }
 }
-impl<'a, A: Clone + std::fmt::Debug> std::fmt::Debug for ListListGuts<'a, A> {
+impl<'a, A: Clone + std::fmt::Debug> std::fmt::Debug for ListList<'a, A> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("List[")?;
         let mut is_tail_element: bool = false;
@@ -207,41 +204,49 @@ pub fn bitwise_shift_right_zf_by(positions: f64, n: f64) -> f64 {
     std::ops::Shr::shr(n as u32, positions as u32) as f64
 }
 
-pub fn list_is_empty<A>(list: ListList<A>) -> bool {
+pub fn list_is_empty<A>(list: &ListList<A>) -> bool {
     match list {
-        &ListListGuts::Empty => true,
-        &ListListGuts::Cons(_, _) => false,
+        &ListList::Empty => true,
+        &ListList::Cons(_, _) => false,
     }
 }
-pub fn list_head<A: Clone>(list: ListList<A>) -> Option<A> {
+pub fn list_head<A: Clone>(list: &ListList<A>) -> Option<A> {
     match list {
-        &ListListGuts::Empty => Option::None,
-        &ListListGuts::Cons(ref head, _) => Option::Some(head.clone()),
+        ListList::Empty => Option::None,
+        ListList::Cons(head, _) => Option::Some(head.clone()),
     }
 }
-pub fn list_tail<A: Clone>(list: ListList<A>) -> Option<ListList<A>> {
+pub fn list_tail<'a, A: Clone>(list: &'a ListList<A>) -> Option<&'a ListList<'a, A>> {
     match list {
-        &ListListGuts::Empty => Option::None,
-        &ListListGuts::Cons(_, tail) => Option::Some(tail),
+        ListList::Empty => Option::None,
+        ListList::Cons(_, tail) => Option::Some(tail),
     }
 }
-pub fn list_cons<'a, A>(allocator: &'a Bump, head: A, tail: ListList<'a, A>) -> ListList<'a, A> {
-    allocator.alloc(ListListGuts::Cons(head, tail))
+pub fn list_cons<'a, A>(
+    allocator: &'a Bump,
+    head: A,
+    tail: &'a ListList<'a, A>,
+) -> &'a ListList<'a, A> {
+    allocator.alloc(ListList::Cons(head, tail))
 }
-pub fn list_singleton<'a, A>(allocator: &'a Bump, only_element: A) -> ListList<'a, A> {
-    list_cons(allocator, only_element, &ListListGuts::Empty)
+pub fn list_singleton<'a, A>(allocator: &'a Bump, only_element: A) -> &'a ListList<'a, A> {
+    list_cons(allocator, only_element, &ListList::Empty)
 }
-pub fn list_repeat<'a, A: Clone>(allocator: &'a Bump, count: f64, element: A) -> ListList<'a, A> {
+pub fn list_repeat<'a, A: Clone>(
+    allocator: &'a Bump,
+    count: f64,
+    element: A,
+) -> &'a ListList<'a, A> {
     double_ended_iterator_to_list(allocator, std::iter::repeat_n(element, count as usize))
 }
-pub fn list_range<'a>(allocator: &'a Bump, min: f64, max: f64) -> ListList<'a, f64> {
+pub fn list_range<'a>(allocator: &'a Bump, min: f64, max: f64) -> &'a ListList<'a, f64> {
     double_ended_iterator_to_list(allocator, ((min as i32)..=(max as i32)).map(|n| n as f64))
 }
 pub fn double_ended_iterator_to_list<'a, A: Clone, AIterator: DoubleEndedIterator<Item = A>>(
     allocator: &'a Bump,
     iterator: AIterator,
-) -> ListList<'a, A> {
-    let mut list_so_far: ListList<A> = &ListListGuts::Empty;
+) -> &'a ListList<'a, A> {
+    let mut list_so_far: &ListList<A> = &ListList::Empty;
     for element in iterator.rev() {
         list_so_far = list_cons(allocator, element.clone(), list_so_far)
     }
@@ -254,67 +259,70 @@ pub fn double_ended_ref_iterator_to_list<
 >(
     allocator: &'a Bump,
     iterator: AIterator,
-) -> ListList<'a, A> {
-    let mut list_so_far: ListList<A> = &ListListGuts::Empty;
+) -> &'a ListList<'a, A> {
+    let mut list_so_far: &ListList<A> = &ListList::Empty;
     for element in iterator.rev() {
         list_so_far = list_cons(allocator, element.clone(), list_so_far)
     }
     list_so_far
 }
 
-pub fn list_length<A>(list: ListList<A>) -> f64 {
+pub fn list_length<A>(list: &ListList<A>) -> f64 {
     list.iter().count() as f64
 }
-pub fn list_sum(list: ListList<f64>) -> f64 {
+pub fn list_sum(list: &ListList<f64>) -> f64 {
     list.iter().sum()
 }
-pub fn list_product(list: ListList<f64>) -> f64 {
+pub fn list_product(list: &ListList<f64>) -> f64 {
     list.iter().product()
 }
 pub fn list_all<A: Clone, IsExpected: Fn(A) -> bool>(
     is_expected: IsExpected,
-    list: ListList<A>,
+    list: &ListList<A>,
 ) -> bool {
     list.iter().all(|el| is_expected(el.clone()))
 }
-pub fn list_any<A: Clone, IsNeedle: Fn(A) -> bool>(is_needle: IsNeedle, list: ListList<A>) -> bool {
+pub fn list_any<A: Clone, IsNeedle: Fn(A) -> bool>(
+    is_needle: IsNeedle,
+    list: &ListList<A>,
+) -> bool {
     list.iter().any(|el| is_needle(el.clone()))
 }
-pub fn list_member<A: Clone + PartialEq>(needle: A, list: ListList<A>) -> bool {
+pub fn list_member<A: Clone + PartialEq>(needle: A, list: &ListList<A>) -> bool {
     list.iter().any(|el| el == &needle)
 }
-pub fn list_minimum<A: Clone + PartialOrd>(list: ListList<A>) -> Option<A> {
+pub fn list_minimum<A: Clone + PartialOrd>(list: &ListList<A>) -> Option<A> {
     list.iter().min_by(|&l, &r| basics_compare(l, r)).cloned()
 }
-pub fn list_maximum<A: Clone + PartialOrd>(list: ListList<A>) -> Option<A> {
+pub fn list_maximum<A: Clone + PartialOrd>(list: &ListList<A>) -> Option<A> {
     list.iter().max_by(|&l, &r| basics_compare(l, r)).cloned()
 }
 pub fn list_take<'a, A: Clone>(
     allocator: &'a Bump,
     keep_count: f64,
-    list: ListList<'a, A>,
-) -> ListList<'a, A> {
+    list: &'a ListList<'a, A>,
+) -> &'a ListList<'a, A> {
     ref_iterator_to_list(allocator, list.iter().take(keep_count as usize))
 }
 /// prefer `double_ended_iterator_to_list` where possible
 pub fn iterator_to_list<'a, A: Clone, AIterator: Iterator<Item = A>>(
     allocator: &'a Bump,
     iterator: AIterator,
-) -> ListList<'a, A> {
+) -> &'a ListList<'a, A> {
     double_ended_iterator_to_list(allocator, iterator.collect::<Vec<A>>().into_iter())
 }
 /// prefer `double_ended_ref_iterator_to_list` where possible
 pub fn ref_iterator_to_list<'a, A: Clone, AIterator: Iterator<Item = &'a A>>(
     allocator: &'a Bump,
     iterator: AIterator,
-) -> ListList<'a, A> {
+) -> &'a ListList<'a, A> {
     double_ended_ref_iterator_to_list(allocator, iterator.collect::<Vec<&A>>().into_iter())
 }
-pub fn list_drop<'a, A: Clone>(skip_count: f64, list: ListList<'a, A>) -> ListList<'a, A> {
+pub fn list_drop<'a, A: Clone>(skip_count: f64, list: &'a ListList<'a, A>) -> &'a ListList<'a, A> {
     let mut iterator = list.iter();
     for () in std::iter::repeat_n((), skip_count as usize) {
         match iterator.next() {
-            None => return &ListListGuts::Empty,
+            None => return &ListList::Empty,
             Some(_) => {}
         }
     }
@@ -323,11 +331,11 @@ pub fn list_drop<'a, A: Clone>(skip_count: f64, list: ListList<'a, A>) -> ListLi
 pub fn list_intersperse<'a, A: Clone>(
     allocator: &'a Bump,
     in_between: A,
-    list: ListList<A>,
-) -> ListList<'a, A> {
+    list: &ListList<A>,
+) -> &'a ListList<'a, A> {
     match list {
-        &ListListGuts::Empty => &ListListGuts::Empty,
-        &ListListGuts::Cons(ref head, tail) => list_cons(
+        ListList::Empty => &ListList::Empty,
+        ListList::Cons(head, tail) => list_cons(
             allocator,
             head.clone(),
             iterator_to_list(
@@ -341,15 +349,15 @@ pub fn list_intersperse<'a, A: Clone>(
 }
 pub fn list_concat<'a, A: Clone>(
     allocator: &'a Bump,
-    list: ListList<'a, ListList<A>>,
-) -> ListList<'a, A> {
+    list: &'a ListList<'a, ListList<A>>,
+) -> &'a ListList<'a, A> {
     ref_iterator_to_list(allocator, list.iter().flat_map(|inner| inner.iter()))
 }
-pub fn list_concat_map<'a, A: Clone, B: Clone, ElementToList: Fn(A) -> ListList<'a, B>>(
+pub fn list_concat_map<'a, A: Clone, B: Clone, ElementToList: Fn(A) -> &'a ListList<'a, B>>(
     allocator: &'a Bump,
     element_to_list: ElementToList,
-    list: ListList<A>,
-) -> ListList<'a, B> {
+    list: &'a ListList<A>,
+) -> &'a ListList<'a, B> {
     ref_iterator_to_list(
         allocator,
         list.iter()
@@ -359,7 +367,7 @@ pub fn list_concat_map<'a, A: Clone, B: Clone, ElementToList: Fn(A) -> ListList<
 pub fn list_foldl<A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) -> State>(
     reduce: Reduce,
     initial_state: State,
-    list: ListList<A>,
+    list: &ListList<A>,
 ) -> State {
     list.iter().fold(initial_state, |state, element| {
         reduce(element.clone())(state)
@@ -368,7 +376,7 @@ pub fn list_foldl<A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) 
 pub fn list_foldr<A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) -> State>(
     reduce: Reduce,
     initial_state: State,
-    list: ListList<A>,
+    list: &ListList<A>,
 ) -> State {
     list.iter()
         .map(|el| el.clone())
@@ -380,8 +388,8 @@ pub fn list_foldr<A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) 
         })
 }
 
-pub fn list_reverse<'a, A: Clone>(allocator: &'a Bump, list: ListList<A>) -> ListList<'a, A> {
-    let mut reverse_list: ListList<A> = &ListListGuts::Empty;
+pub fn list_reverse<'a, A: Clone>(allocator: &'a Bump, list: &ListList<A>) -> &'a ListList<'a, A> {
+    let mut reverse_list: &ListList<A> = &ListList::Empty;
     for new_head in list.iter() {
         reverse_list = list_cons(allocator, new_head.clone(), reverse_list)
     }
@@ -390,8 +398,8 @@ pub fn list_reverse<'a, A: Clone>(allocator: &'a Bump, list: ListList<A>) -> Lis
 pub fn list_filter<'a, A: Clone, Keep: Fn(A) -> bool>(
     allocator: &'a Bump,
     keep: Keep,
-    list: ListList<A>,
-) -> ListList<'a, A> {
+    list: &ListList<A>,
+) -> &'a ListList<'a, A> {
     // can be optimized by just returning list when all elements were kept
     iterator_to_list(
         allocator,
@@ -403,8 +411,8 @@ pub fn list_filter<'a, A: Clone, Keep: Fn(A) -> bool>(
 pub fn list_map<'a, A: Clone, B: Clone, ElementChange: Fn(A) -> B>(
     allocator: &'a Bump,
     element_change: ElementChange,
-    list: ListList<A>,
-) -> ListList<'a, B> {
+    list: &ListList<A>,
+) -> &'a ListList<'a, B> {
     iterator_to_list(allocator, list.iter().map(|el| element_change(el.clone())))
 }
 pub fn list_indexed_map<
@@ -416,8 +424,8 @@ pub fn list_indexed_map<
 >(
     allocator: &'a Bump,
     indexed_element_to_new: IndexedElementToNew,
-    list: ListList<A>,
-) -> ListList<'a, B> {
+    list: &ListList<A>,
+) -> &'a ListList<'a, B> {
     iterator_to_list(
         allocator,
         list.iter()
@@ -428,8 +436,8 @@ pub fn list_indexed_map<
 pub fn list_filter_map<'a, A: Clone, B: Clone, ElementToMaybe: Fn(A) -> Option<B>>(
     allocator: &'a Bump,
     element_to_maybe: ElementToMaybe,
-    list: ListList<'a, A>,
-) -> ListList<'a, B> {
+    list: &ListList<'a, A>,
+) -> &'a ListList<'a, B> {
     iterator_to_list(
         allocator,
         list.iter().filter_map(|el| element_to_maybe(el.clone())),
@@ -437,8 +445,8 @@ pub fn list_filter_map<'a, A: Clone, B: Clone, ElementToMaybe: Fn(A) -> Option<B
 }
 pub fn list_sort<'a, A: Clone + PartialOrd>(
     allocator: &'a Bump,
-    list: ListList<'a, A>,
-) -> ListList<'a, A> {
+    list: &'a ListList<'a, A>,
+) -> &'a ListList<'a, A> {
     let mut list_copy_as_vec: Vec<&A> = list.iter().collect();
     list_copy_as_vec.sort_by(|&a, &b| basics_compare(a, b));
     double_ended_ref_iterator_to_list(allocator, list_copy_as_vec.into_iter())
@@ -446,8 +454,8 @@ pub fn list_sort<'a, A: Clone + PartialOrd>(
 pub fn list_sort_by<'a, A: Clone, B: PartialOrd, ElementToComparable: Fn(A) -> B>(
     allocator: &'a Bump,
     element_to_comparable: ElementToComparable,
-    list: ListList<'a, A>,
-) -> ListList<'a, A> {
+    list: &ListList<'a, A>,
+) -> &'a ListList<'a, A> {
     let mut list_copy_as_vec: Vec<A> = list.iter().map(|el| el.clone()).collect();
     list_copy_as_vec.sort_by(|a, b| {
         basics_compare(
@@ -465,19 +473,19 @@ pub fn list_sort_with<
 >(
     allocator: &'a Bump,
     element_compare: ElementCompare,
-    list: ListList<'a, A>,
-) -> ListList<'a, A> {
+    list: &ListList<'a, A>,
+) -> &'a ListList<'a, A> {
     let mut list_copy_as_vec: Vec<A> = list.iter().map(|el| el.clone()).collect();
     list_copy_as_vec.sort_by(|a, b| element_compare(a.clone())(b.clone()));
     double_ended_iterator_to_list(allocator, list_copy_as_vec.into_iter())
 }
 pub fn list_append<'a, A: Clone>(
     allocator: &'a Bump,
-    left: ListList<A>,
-    right: ListList<'a, A>,
-) -> ListList<'a, A> {
+    left: &ListList<A>,
+    right: &'a ListList<'a, A>,
+) -> &'a ListList<'a, A> {
     // can be optimized
-    let mut combined_list: ListList<A> = right;
+    let mut combined_list: &ListList<A> = right;
     for next_right_last_element in left.iter().collect::<Vec<&A>>().into_iter().rev() {
         combined_list = list_cons(allocator, next_right_last_element.clone(), combined_list)
     }
@@ -485,10 +493,10 @@ pub fn list_append<'a, A: Clone>(
 }
 pub fn list_unzip<'a, A: Clone, B: Clone>(
     allocator: &'a Bump,
-    list: ListList<(A, B)>,
-) -> (ListList<'a, A>, ListList<'a, B>) {
-    let mut a_list: ListList<A> = &ListListGuts::Empty;
-    let mut b_list: ListList<B> = &ListListGuts::Empty;
+    list: &ListList<(A, B)>,
+) -> (&'a ListList<'a, A>, &'a ListList<'a, B>) {
+    let mut a_list: &ListList<A> = &ListList::Empty;
+    let mut b_list: &ListList<B> = &ListList::Empty;
     for (next_last_a, next_last_b) in list.iter().collect::<Vec<&(A, B)>>().into_iter().rev() {
         a_list = list_cons(allocator, next_last_a.clone(), a_list);
         b_list = list_cons(allocator, next_last_b.clone(), b_list)
@@ -498,8 +506,8 @@ pub fn list_unzip<'a, A: Clone, B: Clone>(
 pub fn list_partition<'a, A: Clone, Decode: Fn(A) -> bool>(
     allocator: &'a Bump,
     decode: Decode,
-    list: ListList<A>,
-) -> (ListList<'a, A>, ListList<'a, A>) {
+    list: &ListList<A>,
+) -> (&'a ListList<'a, A>, &'a ListList<'a, A>) {
     let (yes, no): (Vec<A>, Vec<A>) = list
         .iter()
         .map(|el| el.clone())
@@ -511,9 +519,9 @@ pub fn list_partition<'a, A: Clone, Decode: Fn(A) -> bool>(
 }
 pub fn list_zip<'a, A: Clone, B: Clone>(
     allocator: &'a Bump,
-    a_list: ListList<A>,
-    b_list: ListList<B>,
-) -> ListList<'a, (A, B)> {
+    a_list: &ListList<A>,
+    b_list: &ListList<B>,
+) -> &'a ListList<'a, (A, B)> {
     iterator_to_list(
         allocator,
         std::iter::zip(
@@ -532,9 +540,9 @@ pub fn list_map2<
 >(
     allocator: &'a Bump,
     combine: Combine,
-    a_list: ListList<A>,
-    b_list: ListList<B>,
-) -> ListList<'a, Combined> {
+    a_list: &ListList<A>,
+    b_list: &ListList<B>,
+) -> &'a ListList<'a, Combined> {
     iterator_to_list(
         allocator,
         std::iter::zip(a_list.iter(), b_list.iter()).map(|(a, b)| combine(a.clone())(b.clone())),
@@ -552,10 +560,10 @@ pub fn list_map3<
 >(
     allocator: &'a Bump,
     combine: Combine,
-    a_list: ListList<A>,
-    b_list: ListList<B>,
-    c_list: ListList<C>,
-) -> ListList<'a, Combined> {
+    a_list: &ListList<A>,
+    b_list: &ListList<B>,
+    c_list: &ListList<C>,
+) -> &'a ListList<'a, Combined> {
     iterator_to_list(
         allocator,
         a_list
@@ -579,11 +587,11 @@ pub fn list_map4<
 >(
     allocator: &'a Bump,
     combine: Combine,
-    a_list: ListList<A>,
-    b_list: ListList<B>,
-    c_list: ListList<C>,
-    d_list: ListList<D>,
-) -> ListList<'a, Combined> {
+    a_list: &ListList<A>,
+    b_list: &ListList<B>,
+    c_list: &ListList<C>,
+    d_list: &ListList<D>,
+) -> &'a ListList<'a, Combined> {
     iterator_to_list(
         allocator,
         a_list
@@ -610,12 +618,12 @@ pub fn list_map5<
 >(
     allocator: &'a Bump,
     combine: Combine,
-    a_list: ListList<A>,
-    b_list: ListList<B>,
-    c_list: ListList<C>,
-    d_list: ListList<D>,
-    e_list: ListList<E>,
-) -> ListList<'a, Combined> {
+    a_list: &ListList<A>,
+    b_list: &ListList<B>,
+    c_list: &ListList<C>,
+    d_list: &ListList<D>,
+    e_list: &ListList<E>,
+) -> &'a ListList<'a, Combined> {
     iterator_to_list(
         allocator,
         a_list
@@ -630,46 +638,46 @@ pub fn list_map5<
     )
 }
 
-pub type ArrayArray<'a, A> = &'a [A];
+pub type ArrayArray<A> = [A];
 
-pub fn array_empty<'a, A>() -> ArrayArray<'a, A> {
+pub fn array_empty<'a, A>() -> &'a ArrayArray<A> {
     &[]
 }
-pub fn array_singleton<'a, A>(allocator: &'a Bump, only_element: A) -> ArrayArray<'a, A> {
+pub fn array_singleton<'a, A>(allocator: &'a Bump, only_element: A) -> &'a ArrayArray<A> {
     allocator.alloc([only_element])
 }
 pub fn array_repeat<'a, A: Clone>(
     allocator: &'a Bump,
     length: f64,
     element: A,
-) -> ArrayArray<'a, A> {
+) -> &'a ArrayArray<A> {
     allocator.alloc(std::vec::from_elem(element, length as usize))
 }
 pub fn array_initialize<'a, A, IndexToElement: Fn(f64) -> A>(
     allocator: &'a Bump,
     length: f64,
     index_to_element: IndexToElement,
-) -> ArrayArray<'a, A> {
+) -> &'a ArrayArray<A> {
     allocator.alloc(
         (0..(length as i64))
             .map(|i| index_to_element(i as f64))
             .collect::<Vec<A>>(),
     )
 }
-pub fn array_is_empty<A>(array: ArrayArray<A>) -> bool {
+pub fn array_is_empty<A>(array: &ArrayArray<A>) -> bool {
     array.is_empty()
 }
-pub fn array_length<A>(array: ArrayArray<A>) -> f64 {
+pub fn array_length<A>(array: &ArrayArray<A>) -> f64 {
     array.len() as f64
 }
-pub fn array_get<A: Clone>(index: f64, array: ArrayArray<A>) -> Option<A> {
+pub fn array_get<A: Clone>(index: f64, array: &ArrayArray<A>) -> Option<A> {
     array.get(index as usize).map(|el| el.clone())
 }
 pub fn array_push<'a, A: Clone>(
     allocator: &'a Bump,
     new_last_element: A,
-    array: ArrayArray<A>,
-) -> ArrayArray<'a, A> {
+    array: &ArrayArray<A>,
+) -> &'a ArrayArray<A> {
     let mut array_as_vec: Vec<A> = array.to_vec();
     array_as_vec.push(new_last_element);
     allocator.alloc(array_as_vec)
@@ -678,8 +686,8 @@ pub fn array_set<'a, A: Clone>(
     allocator: &'a Bump,
     index: f64,
     new_element: A,
-    array: ArrayArray<'a, A>,
-) -> ArrayArray<'a, A> {
+    array: &'a ArrayArray<A>,
+) -> &'a ArrayArray<A> {
     if index < 0_f64 {
         array
     } else {
@@ -700,8 +708,8 @@ pub fn array_set<'a, A: Clone>(
 pub fn array_slice<'a, A>(
     start_inclusive_possibly_negative: f64,
     end_exclusive_possibly_negative: f64,
-    array: ArrayArray<'a, A>,
-) -> ArrayArray<'a, A> {
+    array: &'a ArrayArray<A>,
+) -> &'a ArrayArray<A> {
     let start_inclusive: usize =
         index_from_end_if_negative(start_inclusive_possibly_negative, array.len());
     let end_exclusive: usize =
@@ -721,11 +729,14 @@ fn index_from_end_if_negative(index_possibly_negative: f64, full_length: usize) 
         ((full_length as f64 + index_possibly_negative).max(0_f64) as usize).min(full_length)
     }
 }
-pub fn array_from_list<'a, A: Clone>(allocator: &'a Bump, list: ListList<A>) -> ArrayArray<'a, A> {
+pub fn array_from_list<'a, A: Clone>(allocator: &'a Bump, list: &ListList<A>) -> &'a ArrayArray<A> {
     allocator.alloc(list.iter().map(|el| el.clone()).collect::<Vec<A>>())
 }
 
-pub fn array_reverse<'a, A: Clone>(allocator: &'a Bump, array: ArrayArray<A>) -> ArrayArray<'a, A> {
+pub fn array_reverse<'a, A: Clone>(
+    allocator: &'a Bump,
+    array: &ArrayArray<A>,
+) -> &'a ArrayArray<A> {
     let mut array_copy: Vec<A> = array.to_vec();
     array_copy.reverse();
     allocator.alloc(array_copy)
@@ -733,8 +744,8 @@ pub fn array_reverse<'a, A: Clone>(allocator: &'a Bump, array: ArrayArray<A>) ->
 pub fn array_filter<'a, A: Clone, Keep: Fn(A) -> bool>(
     allocator: &'a Bump,
     keep: Keep,
-    array: ArrayArray<'a, A>,
-) -> ArrayArray<'a, A> {
+    array: &'a ArrayArray<A>,
+) -> &'a ArrayArray<A> {
     allocator.alloc(
         array
             .iter()
@@ -746,8 +757,8 @@ pub fn array_filter<'a, A: Clone, Keep: Fn(A) -> bool>(
 pub fn array_map<'a, A: Clone, B, ElementChange: Fn(A) -> B>(
     allocator: &'a Bump,
     element_change: ElementChange,
-    array: ArrayArray<'a, A>,
-) -> ArrayArray<'a, B> {
+    array: &'a ArrayArray<A>,
+) -> &'a ArrayArray<B> {
     allocator.alloc(
         array
             .iter()
@@ -764,8 +775,8 @@ pub fn array_indexed_map<
 >(
     allocator: &'a Bump,
     element_change: IndexedElementToNew,
-    array: ArrayArray<'a, A>,
-) -> ArrayArray<'a, B> {
+    array: &'a ArrayArray<A>,
+) -> &'a ArrayArray<B> {
     allocator.alloc(
         array
             .iter()
@@ -776,8 +787,8 @@ pub fn array_indexed_map<
 }
 pub fn array_sort<'a, A: Clone + PartialOrd>(
     allocator: &'a Bump,
-    array: ArrayArray<A>,
-) -> ArrayArray<'a, A> {
+    array: &ArrayArray<A>,
+) -> &'a ArrayArray<A> {
     let mut array_copy: Vec<A> = array.to_vec();
     array_copy.sort_by(|a, b| basics_compare(a, b));
     allocator.alloc(array_copy)
@@ -785,8 +796,8 @@ pub fn array_sort<'a, A: Clone + PartialOrd>(
 pub fn array_sort_by<'a, A: Clone, B: PartialOrd, ElementToComparable: Fn(A) -> B>(
     allocator: &'a Bump,
     element_to_comparable: ElementToComparable,
-    array: ArrayArray<'a, A>,
-) -> ArrayArray<'a, A> {
+    array: &'a ArrayArray<A>,
+) -> &'a ArrayArray<A> {
     let mut array_copy: Vec<A> = array.to_vec();
     array_copy.sort_by(|a, b| {
         basics_compare(
@@ -804,8 +815,8 @@ pub fn array_sort_with<
 >(
     allocator: &'a Bump,
     element_compare: ElementCompare,
-    array: ArrayArray<'a, A>,
-) -> ArrayArray<'a, A> {
+    array: &'a ArrayArray<A>,
+) -> &'a ArrayArray<A> {
     let mut array_copy: Vec<A> = array.to_vec();
     array_copy.sort_by(|a, b| element_compare(a.clone())(b.clone()));
     allocator.alloc(array_copy)
@@ -813,14 +824,14 @@ pub fn array_sort_with<
 
 pub fn array_to_list<'a, A: Clone>(
     allocator: &'a Bump,
-    array: ArrayArray<'a, A>,
-) -> ListList<'a, A> {
+    array: &'a ArrayArray<A>,
+) -> &'a ListList<'a, A> {
     double_ended_ref_iterator_to_list(allocator, array.iter())
 }
 pub fn array_to_indexed_list<'a, A: Clone>(
     allocator: &'a Bump,
-    array: ArrayArray<A>,
-) -> ListList<'a, (f64, A)> {
+    array: &ArrayArray<A>,
+) -> &'a ListList<'a, (f64, A)> {
     double_ended_iterator_to_list(
         allocator,
         array
@@ -832,7 +843,7 @@ pub fn array_to_indexed_list<'a, A: Clone>(
 pub fn array_foldl<'a, A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) -> State>(
     reduce: Reduce,
     initial_state: State,
-    array: ArrayArray<'a, A>,
+    array: &'a ArrayArray<A>,
 ) -> State {
     array.iter().fold(initial_state, |state, element| {
         reduce(element.clone())(state)
@@ -841,7 +852,7 @@ pub fn array_foldl<'a, A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(St
 pub fn array_foldr<'a, A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) -> State>(
     reduce: Reduce,
     initial_state: State,
-    array: ArrayArray<'a, A>,
+    array: &'a ArrayArray<A>,
 ) -> State {
     array.iter().rev().fold(initial_state, |state, element| {
         reduce(element.clone())(state)
@@ -850,9 +861,9 @@ pub fn array_foldr<'a, A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(St
 
 fn array_append<'a, A: Clone>(
     allocator: &'a Bump,
-    left: ArrayArray<A>,
-    right: ArrayArray<A>,
-) -> ArrayArray<'a, A> {
+    left: &ArrayArray<A>,
+    right: &ArrayArray<A>,
+) -> &'a ArrayArray<A> {
     let mut left_as_vec: Vec<A> = left.to_vec();
     left_as_vec.extend_from_slice(right);
     allocator.alloc(left_as_vec)
@@ -901,55 +912,44 @@ pub fn char_from_code(code: f64) -> char {
     char::from_u32(code as u32).unwrap_or('\0')
 }
 
-pub fn string_is_empty(string: StringString) -> bool {
+pub fn string_is_empty(string: &str) -> bool {
     string.is_empty()
 }
-pub fn string_length(string: StringString) -> f64 {
+pub fn string_length(string: &str) -> f64 {
     string.chars().count() as f64
 }
-pub fn string_from_int<'a>(allocator: &'a Bump, int: f64) -> StringString<'a> {
+pub fn string_from_int<'a>(allocator: &'a Bump, int: f64) -> &'a str {
     allocator.alloc((int as i64).to_string())
 }
-pub fn string_from_float<'a>(allocator: &'a Bump, float: f64) -> StringString<'a> {
+pub fn string_from_float<'a>(allocator: &'a Bump, float: f64) -> &'a str {
     allocator.alloc(float.to_string())
 }
-pub fn string_from_char<'a>(allocator: &'a Bump, char: char) -> StringString<'a> {
+pub fn string_from_char<'a>(allocator: &'a Bump, char: char) -> &'a str {
     allocator.alloc(char.to_string())
 }
-pub fn string_repeat<'a>(
-    allocator: &'a Bump,
-    length: f64,
-    segment: StringString,
-) -> StringString<'a> {
+pub fn string_repeat<'a>(allocator: &'a Bump, length: f64, segment: &str) -> &'a str {
     if length <= 0_f64 {
         &""
     } else {
         allocator.alloc(segment.repeat(length as usize))
     }
 }
-pub fn string_cons<'a>(
-    allocator: &'a Bump,
-    new_first_char: char,
-    tail_string: StringString,
-) -> StringString<'a> {
+pub fn string_cons<'a>(allocator: &'a Bump, new_first_char: char, tail_string: &str) -> &'a str {
     let mut tail_string_copy: String = tail_string.to_owned();
     tail_string_copy.insert(0, new_first_char);
     allocator.alloc(tail_string_copy)
 }
-pub fn string_all<IsExpected: Fn(char) -> bool>(
-    is_expected: IsExpected,
-    string: StringString,
-) -> bool {
+pub fn string_all<IsExpected: Fn(char) -> bool>(is_expected: IsExpected, string: &str) -> bool {
     string.chars().all(is_expected)
 }
-pub fn string_any<IsNeedle: Fn(char) -> bool>(is_needle: IsNeedle, string: StringString) -> bool {
+pub fn string_any<IsNeedle: Fn(char) -> bool>(is_needle: IsNeedle, string: &str) -> bool {
     string.chars().any(is_needle)
 }
 pub fn string_filter<'a, Keep: Fn(char) -> bool>(
     allocator: &'a Bump,
     keep: Keep,
-    string: StringString,
-) -> StringString<'a> {
+    string: &str,
+) -> &'a str {
     allocator.alloc(
         string
             .chars()
@@ -960,14 +960,14 @@ pub fn string_filter<'a, Keep: Fn(char) -> bool>(
 pub fn string_map<'a, ElementChange: Fn(char) -> char>(
     allocator: &'a Bump,
     element_change: ElementChange,
-    string: StringString,
-) -> StringString<'a> {
+    string: &str,
+) -> &'a str {
     allocator.alloc(string.chars().map(element_change).collect::<String>())
 }
 pub fn string_foldl<State, Reduce: Fn(char) -> Reduce1, Reduce1: Fn(State) -> State>(
     reduce: Reduce,
     initial_state: State,
-    string: StringString,
+    string: &str,
 ) -> State {
     string
         .chars()
@@ -976,23 +976,23 @@ pub fn string_foldl<State, Reduce: Fn(char) -> Reduce1, Reduce1: Fn(State) -> St
 pub fn string_foldr<State, Reduce: Fn(char) -> Reduce1, Reduce1: Fn(State) -> State>(
     reduce: Reduce,
     initial_state: State,
-    string: StringString,
+    string: &str,
 ) -> State {
     string
         .chars()
         .rev()
         .fold(initial_state, |state, element| reduce(element)(state))
 }
-pub fn string_to_list<'a>(allocator: &'a Bump, string: StringString) -> ListList<'a, char> {
+pub fn string_to_list<'a>(allocator: &'a Bump, string: &str) -> &'a ListList<'a, char> {
     double_ended_iterator_to_list(allocator, string.chars())
 }
-pub fn string_from_list<'a>(allocator: &'a Bump, list: ListList<char>) -> StringString<'a> {
+pub fn string_from_list<'a>(allocator: &'a Bump, list: &ListList<char>) -> &'a str {
     allocator.alloc(list.iter().collect::<String>())
 }
-pub fn string_reverse<'a>(allocator: &'a Bump, string: StringString) -> StringString<'a> {
+pub fn string_reverse<'a>(allocator: &'a Bump, string: &str) -> &'a str {
     allocator.alloc(string.chars().rev().collect::<String>())
 }
-pub fn string_uncons<'a>(string: StringString<'a>) -> Option<(char, StringString<'a>)> {
+pub fn string_uncons<'a>(string: &'a str) -> Option<(char, &'a str)> {
     let mut string_chars_iterator: std::str::Chars = string.chars();
     match string_chars_iterator.next() {
         Option::None => Option::None,
@@ -1000,7 +1000,7 @@ pub fn string_uncons<'a>(string: StringString<'a>) -> Option<(char, StringString
     }
 }
 
-pub fn string_left(taken_count: f64, string: StringString) -> StringString {
+pub fn string_left(taken_count: f64, string: &str) -> &str {
     if taken_count <= 0_f64 {
         &""
     } else {
@@ -1010,7 +1010,7 @@ pub fn string_left(taken_count: f64, string: StringString) -> StringString {
         }
     }
 }
-pub fn string_drop_left(skipped_count: f64, string: StringString) -> StringString {
+pub fn string_drop_left(skipped_count: f64, string: &str) -> &str {
     if skipped_count <= 0_f64 {
         string
     } else {
@@ -1020,7 +1020,7 @@ pub fn string_drop_left(skipped_count: f64, string: StringString) -> StringStrin
         }
     }
 }
-pub fn string_right(taken_count: f64, string: StringString) -> StringString {
+pub fn string_right(taken_count: f64, string: &str) -> &str {
     if taken_count <= 0_f64 {
         &""
     } else {
@@ -1033,7 +1033,7 @@ pub fn string_right(taken_count: f64, string: StringString) -> StringString {
         }
     }
 }
-pub fn string_drop_right(skipped_count: f64, string: StringString) -> StringString {
+pub fn string_drop_right(skipped_count: f64, string: &str) -> &str {
     if skipped_count <= 0_f64 {
         string
     } else {
@@ -1049,8 +1049,8 @@ pub fn string_drop_right(skipped_count: f64, string: StringString) -> StringStri
 pub fn string_slice<'a>(
     start_inclusive_possibly_negative: f64,
     end_exclusive_possibly_negative: f64,
-    string: StringString<'a>,
-) -> StringString<'a> {
+    string: &'a str,
+) -> &'a str {
     let start_inclusive_or_none_if_too_big: Option<usize> =
         normalize_string_slice_index_from_end_if_negative(
             start_inclusive_possibly_negative,
@@ -1080,7 +1080,7 @@ pub fn string_slice<'a>(
 /// Option::None means too big
 fn normalize_string_slice_index_from_end_if_negative(
     elm_index: f64,
-    string: StringString,
+    string: &str,
 ) -> Option<usize> {
     if elm_index >= 0_f64 {
         match string.char_indices().nth(elm_index as usize) {
@@ -1097,25 +1097,13 @@ fn normalize_string_slice_index_from_end_if_negative(
         }
     }
 }
-pub fn string_replace<'a>(
-    allocator: &'a Bump,
-    from: StringString,
-    to: StringString,
-    string: StringString<'a>,
-) -> StringString<'a> {
+pub fn string_replace<'a>(allocator: &'a Bump, from: &str, to: &str, string: &'a str) -> &'a str {
     allocator.alloc(string.replace(from, to))
 }
-pub fn string_append<'a>(
-    allocator: &'a Bump,
-    left: StringString,
-    right: StringString,
-) -> StringString<'a> {
+pub fn string_append<'a>(allocator: &'a Bump, left: &str, right: &str) -> &'a str {
     allocator.alloc(left.to_owned() + right)
 }
-pub fn string_concat<'a>(
-    allocator: &'a Bump,
-    segments: ListList<StringString>,
-) -> StringString<'a> {
+pub fn string_concat<'a>(allocator: &'a Bump, segments: &ListList<&str>) -> &'a str {
     let mut string_builder = String::new();
     for segment in segments.iter() {
         string_builder.push_str(segment);
@@ -1124,13 +1112,13 @@ pub fn string_concat<'a>(
 }
 pub fn string_join<'a>(
     allocator: &'a Bump,
-    in_between: StringString,
-    segments: ListList<StringString>,
-) -> StringString<'a> {
+    in_between: &str,
+    segments: &ListList<&str>,
+) -> &'a str {
     match segments {
-        &ListListGuts::Empty => &"",
-        &ListListGuts::Cons(head_segment, tail_segments) => {
-            let mut string_builder = head_segment.to_owned();
+        ListList::Empty => &"",
+        &ListList::Cons(head_segment, tail_segments) => {
+            let mut string_builder: String = head_segment.to_owned();
             for segment in tail_segments.iter() {
                 string_builder.push_str(in_between);
                 string_builder.push_str(segment);
@@ -1141,31 +1129,25 @@ pub fn string_join<'a>(
 }
 pub fn string_split<'a>(
     allocator: &'a Bump,
-    separator: StringString,
-    string: StringString<'a>,
-) -> ListList<'a, StringString<'a>> {
+    separator: &str,
+    string: &'a str,
+) -> &'a ListList<'a, &'a str> {
     iterator_to_list(allocator, string.split(separator))
 }
-pub fn string_words<'a>(
-    allocator: &'a Bump,
-    string: StringString<'a>,
-) -> ListList<'a, StringString<'a>> {
+pub fn string_words<'a>(allocator: &'a Bump, string: &'a str) -> &'a ListList<'a, &'a str> {
     iterator_to_list(allocator, string.split_whitespace())
 }
-pub fn string_lines<'a>(
-    allocator: &'a Bump,
-    string: StringString<'a>,
-) -> ListList<'a, StringString<'a>> {
+pub fn string_lines<'a>(allocator: &'a Bump, string: &'a str) -> &'a ListList<'a, &'a str> {
     iterator_to_list(allocator, string.lines())
 }
-pub fn string_contains(needle: StringString, string: StringString) -> bool {
+pub fn string_contains(needle: &str, string: &str) -> bool {
     string.contains(needle)
 }
 pub fn string_indexes<'a>(
     allocator: &'a Bump,
-    needle: StringString,
-    string: StringString<'a>,
-) -> ListList<'a, f64> {
+    needle: &str,
+    string: &'a str,
+) -> &'a ListList<'a, f64> {
     // this is a fairly expensive operation, O(chars * matches). Anyone know something faster?
     iterator_to_list(
         allocator,
@@ -1184,41 +1166,41 @@ pub fn string_indexes<'a>(
 }
 pub fn string_indices<'a>(
     allocator: &'a Bump,
-    needle: StringString,
-    string: StringString<'a>,
-) -> ListList<'a, f64> {
+    needle: &str,
+    string: &'a str,
+) -> &'a ListList<'a, f64> {
     string_indexes(allocator, needle, string)
 }
-pub fn string_starts_with(prefix_to_check_for: StringString, string: StringString) -> bool {
+pub fn string_starts_with(prefix_to_check_for: &str, string: &str) -> bool {
     string.starts_with(prefix_to_check_for)
 }
-pub fn string_ends_with(suffix_to_check_for: StringString, string: StringString) -> bool {
+pub fn string_ends_with(suffix_to_check_for: &str, string: &str) -> bool {
     string.ends_with(suffix_to_check_for)
 }
-pub fn string_to_float(string: StringString) -> Option<f64> {
+pub fn string_to_float(string: &str) -> Option<f64> {
     match string.parse::<f64>() {
         Result::Err(_) => Option::None,
         Result::Ok(float) => Option::Some(float),
     }
 }
-pub fn string_to_int(string: StringString) -> Option<f64> {
+pub fn string_to_int(string: &str) -> Option<f64> {
     match string.parse::<i64>() {
         Result::Err(_) => Option::None,
         Result::Ok(int) => Option::Some(int as f64),
     }
 }
-pub fn string_to_upper<'a>(allocator: &'a Bump, string: StringString) -> StringString<'a> {
+pub fn string_to_upper<'a>(allocator: &'a Bump, string: &str) -> &'a str {
     allocator.alloc(string.to_uppercase())
 }
-pub fn string_to_lower<'a>(allocator: &'a Bump, string: StringString) -> StringString<'a> {
+pub fn string_to_lower<'a>(allocator: &'a Bump, string: &str) -> &'a str {
     allocator.alloc(string.to_lowercase())
 }
 pub fn string_pad<'a>(
     allocator: &'a Bump,
     minimum_full_char_count: f64,
     padding: char,
-    string: StringString,
-) -> StringString<'a> {
+    string: &str,
+) -> &'a str {
     let half_to_pad: f64 = (minimum_full_char_count - string.chars().count() as f64) / 2_f64;
     let padding_string: String = padding.to_string();
     let mut padded: String = padding_string.repeat(half_to_pad.ceil() as usize);
@@ -1230,8 +1212,8 @@ pub fn string_pad_left<'a>(
     allocator: &'a Bump,
     minimum_length: f64,
     padding: char,
-    string: StringString,
-) -> StringString<'a> {
+    string: &str,
+) -> &'a str {
     let mut padded: String = padding
         .to_string()
         .repeat((minimum_length - string.chars().count() as f64) as usize);
@@ -1242,8 +1224,8 @@ pub fn string_pad_right<'a>(
     allocator: &'a Bump,
     minimum_length: f64,
     padding: char,
-    string: StringString,
-) -> StringString<'a> {
+    string: &str,
+) -> &'a str {
     let mut padded: String = string.to_owned();
     padded.push_str(
         &padding
@@ -1252,24 +1234,24 @@ pub fn string_pad_right<'a>(
     );
     allocator.alloc(padded)
 }
-pub fn string_trim(string: StringString) -> StringString {
+pub fn string_trim(string: &str) -> &str {
     string.trim()
 }
-pub fn string_trim_left(string: StringString) -> StringString {
+pub fn string_trim_left(string: &str) -> &str {
     string.trim_start()
 }
-pub fn string_trim_right(string: StringString) -> StringString {
+pub fn string_trim_right(string: &str) -> &str {
     string.trim_end()
 }
 
-pub fn debug_to_string<'a, A: std::fmt::Debug>(allocator: &'a Bump, data: A) -> StringString<'a> {
+pub fn debug_to_string<'a, A: std::fmt::Debug>(allocator: &'a Bump, data: A) -> &'a str {
     allocator.alloc(format!("{:?}", data)).as_str()
 }
 pub fn debug_log<'a, A: std::fmt::Debug>(data: A) -> A {
     println!("{:?}", data);
     data
 }
-pub fn debug_todo<Any>(message: StringString) -> Any {
+pub fn debug_todo<Any>(message: &str) -> Any {
     todo!("{}", message)
 }
 pub fn maybe_with_default<A>(on_nothing: A, maybe: Option<A>) -> A {
