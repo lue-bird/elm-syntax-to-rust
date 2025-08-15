@@ -54,7 +54,7 @@ impl<'a, A: Clone + std::fmt::Debug> std::fmt::Debug for ListList<'a, A> {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum BasicsNever {}
 
-pub fn basics_identity<A>(a: A) -> A {
+pub const fn basics_identity<A>(a: A) -> A {
     a
 }
 pub fn basics_always<Kept, Ignored>(kept: Kept, _: Ignored) -> Kept {
@@ -111,35 +111,35 @@ pub fn basics_compare<A: PartialOrd>(a: A, b: A) -> std::cmp::Ordering {
     }
 }
 
-pub fn basics_and(a: bool, b: bool) -> bool {
+pub const fn basics_and(a: bool, b: bool) -> bool {
     a && b
 }
-pub fn basics_or(a: bool, b: bool) -> bool {
+pub const fn basics_or(a: bool, b: bool) -> bool {
     a || b
 }
-pub fn basics_xor(a: bool, b: bool) -> bool {
+pub const fn basics_xor(a: bool, b: bool) -> bool {
     a ^ b
 }
-pub fn basics_not(bool: bool) -> bool {
+pub const fn basics_not(bool: bool) -> bool {
     !bool
 }
 
-pub fn basics_clamp(min: f64, max: f64, n: f64) -> f64 {
+pub const fn basics_clamp(min: f64, max: f64, n: f64) -> f64 {
     n.clamp(min, max)
 }
 pub fn basics_log_base(base: f64, n: f64) -> f64 {
     n.log(base)
 }
-pub fn basics_add(a: f64, b: f64) -> f64 {
+pub const fn basics_add(a: f64, b: f64) -> f64 {
     a + b
 }
-pub fn basics_sub(base: f64, reduction: f64) -> f64 {
+pub const fn basics_sub(base: f64, reduction: f64) -> f64 {
     base - reduction
 }
-pub fn basics_mul(a: f64, b: f64) -> f64 {
+pub const fn basics_mul(a: f64, b: f64) -> f64 {
     a * b
 }
-pub fn basics_fdiv(base: f64, by: f64) -> f64 {
+pub const fn basics_fdiv(base: f64, by: f64) -> f64 {
     base / by
 }
 pub fn basics_idiv(base: f64, by: f64) -> f64 {
@@ -165,10 +165,10 @@ pub fn basics_mod_by(by: f64, base: f64) -> f64 {
         }
     }
 }
-pub fn basics_degrees(degrees: f64) -> f64 {
+pub const fn basics_degrees(degrees: f64) -> f64 {
     degrees.to_radians()
 }
-pub fn basics_turns(turns: f64) -> f64 {
+pub const fn basics_turns(turns: f64) -> f64 {
     turns * 2_f64 * std::f64::consts::PI
 }
 pub fn basics_to_polar((x, y): (f64, f64)) -> (f64, f64) {
@@ -178,11 +178,11 @@ pub fn basics_from_polar((radius, theta): (f64, f64)) -> (f64, f64) {
     (radius * (f64::cos(theta)), radius * (f64::sin(theta)))
 }
 
-pub fn basics_never<A>(never: BasicsNever) -> A {
+pub const fn basics_never<A>(never: BasicsNever) -> A {
     match never {}
 }
 
-pub fn bitwise_complement(n: f64) -> f64 {
+pub const fn bitwise_complement(n: f64) -> f64 {
     !(n as i32) as f64
 }
 pub fn bitwise_and(a: f64, b: f64) -> f64 {
@@ -204,7 +204,7 @@ pub fn bitwise_shift_right_zf_by(positions: f64, n: f64) -> f64 {
     std::ops::Shr::shr(n as u32, positions as u32) as f64
 }
 
-pub fn list_is_empty<A>(list: &ListList<A>) -> bool {
+pub const fn list_is_empty<A>(list: &ListList<A>) -> bool {
     match list {
         &ListList::Empty => true,
         &ListList::Cons(_, _) => false,
@@ -216,7 +216,7 @@ pub fn list_head<A: Clone>(list: &ListList<A>) -> Option<A> {
         ListList::Cons(head, _) => Option::Some(head.clone()),
     }
 }
-pub fn list_tail<'a, A: Clone>(list: &'a ListList<A>) -> Option<&'a ListList<'a, A>> {
+pub const fn list_tail<'a, A: Clone>(list: &'a ListList<A>) -> Option<&'a ListList<'a, A>> {
     match list {
         ListList::Empty => Option::None,
         ListList::Cons(_, tail) => Option::Some(tail),
@@ -640,7 +640,7 @@ pub fn list_map5<
 
 pub type ArrayArray<A> = [A];
 
-pub fn array_empty<'a, A>() -> &'a ArrayArray<A> {
+pub const fn array_empty<'a, A>() -> &'a ArrayArray<A> {
     &[]
 }
 pub fn array_singleton<'a, A>(allocator: &'a Bump, only_element: A) -> &'a ArrayArray<A> {
@@ -664,10 +664,10 @@ pub fn array_initialize<'a, A, IndexToElement: Fn(f64) -> A>(
             .collect::<Vec<A>>(),
     )
 }
-pub fn array_is_empty<A>(array: &ArrayArray<A>) -> bool {
+pub const fn array_is_empty<A>(array: &ArrayArray<A>) -> bool {
     array.is_empty()
 }
-pub fn array_length<A>(array: &ArrayArray<A>) -> f64 {
+pub const fn array_length<A>(array: &ArrayArray<A>) -> f64 {
     array.len() as f64
 }
 pub fn array_get<A: Clone>(index: f64, array: &ArrayArray<A>) -> Option<A> {
@@ -859,7 +859,7 @@ pub fn array_foldr<'a, A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(St
     })
 }
 
-fn array_append<'a, A: Clone>(
+pub fn array_append<'a, A: Clone>(
     allocator: &'a Bump,
     left: &ArrayArray<A>,
     right: &ArrayArray<A>,
@@ -869,25 +869,25 @@ fn array_append<'a, A: Clone>(
     allocator.alloc(left_as_vec)
 }
 
-pub fn char_is_upper(char: char) -> bool {
+pub const fn char_is_upper(char: char) -> bool {
     char.is_ascii_uppercase()
 }
-pub fn char_is_lower(char: char) -> bool {
+pub const fn char_is_lower(char: char) -> bool {
     char.is_ascii_lowercase()
 }
-pub fn char_is_alpha(char: char) -> bool {
+pub const fn char_is_alpha(char: char) -> bool {
     char.is_ascii_alphabetic()
 }
-pub fn char_is_alpha_num(char: char) -> bool {
+pub const fn char_is_alpha_num(char: char) -> bool {
     char.is_ascii_alphanumeric()
 }
-pub fn char_is_digit(char: char) -> bool {
+pub const fn char_is_digit(char: char) -> bool {
     char.is_ascii_digit()
 }
-pub fn char_is_hex_digit(char: char) -> bool {
+pub const fn char_is_hex_digit(char: char) -> bool {
     char.is_ascii_hexdigit()
 }
-pub fn char_is_oct_digit(char: char) -> bool {
+pub const fn char_is_oct_digit(char: char) -> bool {
     match char {
         '0'..='7' => true,
         _ => false,
@@ -905,14 +905,14 @@ pub fn char_to_lower(char: char) -> char {
         Some(approximate_lowercase) => approximate_lowercase,
     }
 }
-pub fn char_to_code(char: char) -> f64 {
+pub const fn char_to_code(char: char) -> f64 {
     char as u32 as f64
 }
 pub fn char_from_code(code: f64) -> char {
     char::from_u32(code as u32).unwrap_or('\0')
 }
 
-pub fn string_is_empty(string: &str) -> bool {
+pub const fn string_is_empty(string: &str) -> bool {
     string.is_empty()
 }
 pub fn string_length(string: &str) -> f64 {
@@ -1442,6 +1442,6 @@ pub fn result_map5<
 }
 
 pub type BytesBytes<'a> = &'a [u8];
-pub fn bytes_width(bytes: BytesBytes) -> f64 {
+pub const fn bytes_width(bytes: BytesBytes) -> f64 {
     bytes.len() as f64
 }

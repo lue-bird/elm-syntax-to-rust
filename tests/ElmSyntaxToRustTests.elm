@@ -104,7 +104,7 @@ elmModuleSourceTranspileToRust source =
                                 , resultType : ElmSyntaxToRust.RustType
                                 , lifetimeParameters : List String
                                 }
-                        , lets :
+                        , consts :
                             FastDict.Dict
                                 String
                                 { result : ElmSyntaxToRust.RustExpression

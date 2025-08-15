@@ -103,13 +103,13 @@ type RustExpression
     | RustExpressionF64 Float
     | -- NUMBER currently represented as Double | RustExpressionInt64 Int
       RustExpressionChar Char
-    | RustExpressionStringLiteral String
+    | RustExpressionString String
     | RustExpressionSelf
     | RustExpressionReference
         { qualification : List String
         , name : String
         }
-    | RustExpressionVariant
+    | RustExpressionReferenceVariant
         { originTypeName : List String
         , name : String
         }
@@ -5397,7 +5397,7 @@ modules :
                     , resultType : RustType
                     , lifetimeParameters : List String
                     }
-            , lets :
+            , consts :
                 FastDict.Dict
                     String
                     { result : RustExpression
@@ -6053,7 +6053,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
         Err error ->
             { errors = [ error ]
             , declarations =
-                { lets = FastDict.empty
+                { consts = FastDict.empty
                 , fns = FastDict.empty
                 , typeAliases = FastDict.empty
                 , enumTypes = FastDict.empty
@@ -6221,6 +6221,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                             { lifetimeParameters : List String
                             , referenceOrValueType : ReferenceOrValueType
                             }
+                    , rustConsts : FastSet.Set String
                     , declarations :
                         { fns :
                             FastDict.Dict
@@ -6230,7 +6231,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                 , resultType : RustType
                                 , lifetimeParameters : List String
                                 }
-                        , lets :
+                        , consts :
                             FastDict.Dict
                                 String
                                 { result : RustExpression
@@ -6598,7 +6599,8 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                 }
                                 in
                                 moduleInferred.declarationsInferred
-                                    |> List.foldl
+                                    |> -- TODO sort by use to get the optimal amount of consts
+                                       List.foldl
                                         (\valueOrFunctionDeclarationInferred soFarAcrossModulesWithInferredValeAndFunctionDeclarations ->
                                             case
                                                 valueOrFunctionDeclarationInferred
@@ -6606,6 +6608,8 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                         { moduleInfo = createdModuleContext
                                                         , rustEnumTypes =
                                                             transpiledModuleDeclaredRustTypes.rustEnumTypes
+                                                        , rustConsts =
+                                                            soFarAcrossModulesWithInferredValeAndFunctionDeclarations.rustConsts
                                                         }
                                             of
                                                 Ok rustValueOrFunctionDeclaration ->
@@ -6617,14 +6621,15 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                             }
                                                                 |> elmReferenceToSnakeCaseRustName
                                                     in
-                                                    { errors = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.errors
-                                                    , rustEnumTypes = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.rustEnumTypes
-                                                    , declarations =
-                                                        case rustValueOrFunctionDeclaration.parameters of
-                                                            Just parameters ->
+                                                    case rustValueOrFunctionDeclaration.parameters of
+                                                        Just parameters ->
+                                                            { errors = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.errors
+                                                            , rustEnumTypes = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.rustEnumTypes
+                                                            , rustConsts = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.rustConsts
+                                                            , declarations =
                                                                 { typeAliases = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.typeAliases
                                                                 , enumTypes = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.enumTypes
-                                                                , lets = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.lets
+                                                                , consts = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.consts
                                                                 , fns =
                                                                     soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.fns
                                                                         |> FastDict.insert
@@ -6636,16 +6641,21 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                 rustValueOrFunctionDeclaration.lifetimeParameters
                                                                             }
                                                                 }
+                                                            }
 
-                                                            Nothing ->
-                                                                -- TODO instead still generate as fn(allocator)
+                                                        Nothing ->
+                                                            { errors = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.errors
+                                                            , rustEnumTypes = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.rustEnumTypes
+                                                            , rustConsts =
+                                                                soFarAcrossModulesWithInferredValeAndFunctionDeclarations.rustConsts
+                                                                    |> FastSet.insert rustName
+                                                            , declarations =
                                                                 { typeAliases = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.typeAliases
                                                                 , enumTypes = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.enumTypes
                                                                 , fns = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.fns
-                                                                , lets =
-                                                                    soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.lets
-                                                                        |> FastDict.insert
-                                                                            rustName
+                                                                , consts =
+                                                                    soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.consts
+                                                                        |> FastDict.insert rustName
                                                                             { resultType = rustValueOrFunctionDeclaration.resultType
                                                                             , result =
                                                                                 case rustValueOrFunctionDeclaration.result of
@@ -6664,11 +6674,12 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                         rustValueOrFunctionDeclaration.result
                                                                             }
                                                                 }
-                                                    }
+                                                            }
 
                                                 Err error ->
                                                     { declarations = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations
                                                     , rustEnumTypes = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.rustEnumTypes
+                                                    , rustConsts = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.rustConsts
                                                     , errors =
                                                         ("in value/function declaration "
                                                             ++ moduleName
@@ -6684,9 +6695,10 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                             moduleDeclaredInferredTypeAliasesAndChoiceTypes.errors
                                                 ++ soFarAcrossModules.errors
                                         , rustEnumTypes = soFarAcrossModules.rustEnumTypes
+                                        , rustConsts = soFarAcrossModules.rustConsts
                                         , declarations =
                                             { fns = soFarAcrossModules.declarations.fns
-                                            , lets = soFarAcrossModules.declarations.lets
+                                            , consts = soFarAcrossModules.declarations.consts
                                             , typeAliases =
                                                 transpiledModuleDeclaredRustTypes.rustTypeAliasDeclarations
                                                     |> List.foldl
@@ -6716,8 +6728,9 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                             )
                             { errors = []
                             , rustEnumTypes = FastDict.empty
+                            , rustConsts = FastSet.empty
                             , declarations =
-                                { lets = FastDict.empty
+                                { consts = FastDict.empty
                                 , fns = FastDict.empty
                                 , typeAliases = FastDict.empty
                                 , enumTypes = FastDict.empty
@@ -6725,8 +6738,8 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                             }
             in
             { declarations =
-                { lets =
-                    transpiledRustDeclarations.declarations.lets
+                { consts =
+                    transpiledRustDeclarations.declarations.consts
                         |> FastDict.map
                             (\_ valueOrFunctionInfo ->
                                 { result = valueOrFunctionInfo.result
@@ -7078,6 +7091,7 @@ valueOrFunctionDeclaration :
             { lifetimeParameters : List String
             , referenceOrValueType : ReferenceOrValueType
             }
+    , rustConsts : FastSet.Set String
     }
     -> InferredValueOrFunctionDeclaration
     ->
@@ -7112,7 +7126,7 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
     case rustFullTypeAsFunction.inputs of
         [] ->
             Result.map
-                (\result ->
+                (\rustResult ->
                     let
                         rustResultType : RustType
                         rustResultType =
@@ -7121,19 +7135,29 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
                                     { typeAliasesInModule = typeAliasesInModule
                                     , rustEnumTypes = context.rustEnumTypes
                                     }
+
+                        resultIgnoresGeneratedAllocator : Bool
+                        resultIgnoresGeneratedAllocator =
+                            (rustResult
+                                |> rustExpressionCountUsesOfReference
+                                    { qualification = [], name = generatedAllocatorVariableName }
+                            )
+                                == 0
                     in
                     if
-                        (rustResultType |> rustTypeIsConcrete)
+                        (rustResult |> rustExpressionIsConst { customConsts = context.rustConsts })
+                            && (-- https://github.com/rust-lang/rust/issues/113521
+                                rustResultType |> rustTypeIsConcrete
+                               )
                             && (rustResultType
                                     |> rustTypeUsedLifetimeVariables
                                     |> FastSet.isEmpty
                                )
+                            && resultIgnoresGeneratedAllocator
                     then
-                        -- TODO what if it internally references an allocator?
-                        -- add and reference a global bump allocator?
                         { parameters = Nothing
                         , resultType = rustResultType
-                        , result = result
+                        , result = rustResult
                         , lifetimeParameters = []
                         }
 
@@ -7141,13 +7165,7 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
                         { parameters =
                             Just
                                 [ { pattern =
-                                        if
-                                            (result
-                                                |> rustExpressionCountUsesOfReference
-                                                    { qualification = [], name = generatedAllocatorVariableName }
-                                            )
-                                                == 0
-                                        then
+                                        if resultIgnoresGeneratedAllocator then
                                             RustPatternIgnore
 
                                         else
@@ -7160,7 +7178,7 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
                                   }
                                 ]
                         , resultType = rustResultType
-                        , result = result
+                        , result = rustResult
                         , lifetimeParameters = [ generatedLifetimeVariableName ]
                         }
                 )
@@ -7168,6 +7186,7 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
                     |> expression
                         { moduleInfo = context.moduleInfo
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustConsts = context.rustConsts
                         , variablesFromWithinDeclarationInScope = FastDict.empty
                         , letDeclaredValueAndFunctionTypes = FastDict.empty
                         , path = []
@@ -7280,9 +7299,253 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
                                     patternTypedNodeIntroducedVariables
                         , letDeclaredValueAndFunctionTypes = FastDict.empty
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustConsts = context.rustConsts
                         , path = [ "result" ]
                         }
                 )
+
+
+{-| https://doc.rust-lang.org/reference/const_eval.html#constant-expressions
+-}
+rustExpressionIsConst : { customConsts : FastSet.Set String } -> RustExpression -> Bool
+rustExpressionIsConst context rustExpression =
+    -- IGNORE TCO
+    case rustExpression of
+        RustExpressionUnit ->
+            True
+
+        RustExpressionF64 _ ->
+            True
+
+        RustExpressionChar _ ->
+            True
+
+        RustExpressionString _ ->
+            True
+
+        RustExpressionSelf ->
+            -- hmm
+            False
+
+        RustExpressionReference reference ->
+            case ( reference.qualification, reference.name ) of
+                ( [], "basics_identity" ) ->
+                    True
+
+                ( [], "basics_and" ) ->
+                    True
+
+                ( [], "basics_or" ) ->
+                    True
+
+                ( [], "basics_xor" ) ->
+                    True
+
+                ( [], "basics_not" ) ->
+                    True
+
+                ( [], "basics_clamp" ) ->
+                    True
+
+                ( [], "basics_add" ) ->
+                    True
+
+                ( [], "basics_sub" ) ->
+                    True
+
+                ( [], "basics_mul" ) ->
+                    True
+
+                ( [], "basics_fdiv" ) ->
+                    True
+
+                ( [], "basics_degrees" ) ->
+                    True
+
+                ( [], "basics_turns" ) ->
+                    True
+
+                ( [], "basics_never" ) ->
+                    True
+
+                ( [], "bitwise_complement" ) ->
+                    True
+
+                ( [], "list_is_empty" ) ->
+                    True
+
+                ( [], "list_tail" ) ->
+                    True
+
+                ( [], "array_empty" ) ->
+                    True
+
+                ( [], "array_is_empty" ) ->
+                    True
+
+                ( [], "array_length" ) ->
+                    True
+
+                ( [], "char_is_upper" ) ->
+                    True
+
+                ( [], "char_is_lower" ) ->
+                    True
+
+                ( [], "char_is_alpha" ) ->
+                    True
+
+                ( [], "char_is_alpha_num" ) ->
+                    True
+
+                ( [], "char_is_digit" ) ->
+                    True
+
+                ( [], "char_is_hex_digit" ) ->
+                    True
+
+                ( [], "char_is_oct_digit" ) ->
+                    True
+
+                ( [], "char_to_code" ) ->
+                    True
+
+                ( [], "string_is_empty" ) ->
+                    True
+
+                ( [], "bytes_width" ) ->
+                    True
+
+                ( [], nonDefaultDeclarationConstName ) ->
+                    context.customConsts
+                        |> FastSet.member nonDefaultDeclarationConstName
+
+                ( [ "std", "f64", "consts" ], "E" ) ->
+                    True
+
+                ( [ "std", "f64", "consts" ], "PI" ) ->
+                    True
+
+                ( [ "f64" ], "abs" ) ->
+                    True
+
+                ( [ "f64" ], "is_nan" ) ->
+                    True
+
+                ( [ "f64" ], "is_infinite" ) ->
+                    True
+
+                _ ->
+                    False
+
+        RustExpressionReferenceVariant _ ->
+            True
+
+        RustExpressionNegateOperation inNegation ->
+            rustExpressionIsConst context inNegation
+
+        RustExpressionBorrow rustExpressionBorrow ->
+            rustExpressionIsConst context rustExpressionBorrow
+
+        RustExpressionAs rustExpressionAs ->
+            rustExpressionIsConst context rustExpressionAs.expression
+
+        RustExpressionRecordAccess _ ->
+            -- lack of knowledge if it's actually a method
+            False
+
+        RustExpressionTuple parts ->
+            (parts.part0 |> rustExpressionIsConst context)
+                && (parts.part1 |> rustExpressionIsConst context)
+                && (parts.part2Up
+                        |> List.all
+                            (\part ->
+                                part |> rustExpressionIsConst context
+                            )
+                   )
+
+        RustExpressionArrayLiteral elements ->
+            elements
+                |> List.all
+                    (\element ->
+                        element |> rustExpressionIsConst context
+                    )
+
+        RustExpressionRecord fields ->
+            fields
+                |> fastDictAll
+                    (\_ fieldValue ->
+                        fieldValue |> rustExpressionIsConst context
+                    )
+
+        RustExpressionCall call ->
+            (call.called |> rustExpressionIsConst context)
+                && (call.arguments
+                        |> List.all
+                            (\argument ->
+                                argument |> rustExpressionIsConst context
+                            )
+                   )
+
+        RustExpressionClosure _ ->
+            False
+
+        RustExpressionIfElse ifElse ->
+            (ifElse.condition |> rustExpressionIsConst context)
+                && (ifElse.onTrue |> rustExpressionIsConst context)
+                && (ifElse.onFalse |> rustExpressionIsConst context)
+
+        RustExpressionMatch match ->
+            (match.matched |> rustExpressionIsConst context)
+                && (match.case0.result |> rustExpressionIsConst context)
+                && (match.case1Up
+                        |> List.all
+                            (\matchCase ->
+                                matchCase.result |> rustExpressionIsConst context
+                            )
+                   )
+
+        RustExpressionAfterStatement rustExpressionAfterStatement ->
+            (rustExpressionAfterStatement.statement |> rustStatementIsConst context)
+                && (rustExpressionAfterStatement.result |> rustExpressionIsConst context)
+
+
+rustStatementIsConst : { customConsts : FastSet.Set String } -> RustStatement -> Bool
+rustStatementIsConst context rustStatement =
+    case rustStatement of
+        RustStatementLetDestructuring destructuring ->
+            rustExpressionIsConst context destructuring.expression
+
+        RustStatementLetDeclarationUninitialized _ ->
+            True
+
+        RustStatementLetDeclaration _ ->
+            -- for now
+            False
+
+        RustStatementFnDeclaration _ ->
+            -- for now
+            False
+
+        RustStatementLetMutDeclaration _ ->
+            -- for now
+            False
+
+        RustStatementBindingAssignment _ ->
+            -- for now
+            False
+
+        RustStatementRecordFieldAssignment _ ->
+            -- for now
+            False
+
+        RustStatementIfElse _ ->
+            -- for now
+            False
+
+        RustStatementMatch _ ->
+            -- for now
+            False
 
 
 rustTypeConstructBumpaloBump : RustType
@@ -7390,8 +7653,7 @@ rustKeywords =
 
 
 type alias ExpressionToRustContext =
-    { -- merge the next two?
-      variablesFromWithinDeclarationInScope : FastDict.Dict String ElmSyntaxTypeInfer.Type
+    { variablesFromWithinDeclarationInScope : FastDict.Dict String ElmSyntaxTypeInfer.Type
     , letDeclaredValueAndFunctionTypes :
         FastDict.Dict
             String
@@ -7427,6 +7689,7 @@ type alias ExpressionToRustContext =
             { lifetimeParameters : List String
             , referenceOrValueType : ReferenceOrValueType
             }
+    , rustConsts : FastSet.Set String
     , path : List String
     }
 
@@ -7489,7 +7752,7 @@ expression context expressionTypedNode =
             Ok (RustExpressionChar charValue)
 
         ElmSyntaxTypeInfer.ExpressionString stringValue ->
-            Ok (RustExpressionStringLiteral stringValue)
+            Ok (RustExpressionString stringValue)
 
         ElmSyntaxTypeInfer.ExpressionRecordAccessFunction fieldName ->
             case expressionTypedNode.type_ of
@@ -7668,6 +7931,7 @@ expression context expressionTypedNode =
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustConsts = context.rustConsts
                         , path = "called" :: context.path
                         }
                 )
@@ -7679,6 +7943,7 @@ expression context expressionTypedNode =
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustConsts = context.rustConsts
                         , path = "argument0" :: context.path
                         }
                 )
@@ -7694,6 +7959,7 @@ expression context expressionTypedNode =
                                     , letDeclaredValueAndFunctionTypes =
                                         context.letDeclaredValueAndFunctionTypes
                                     , rustEnumTypes = context.rustEnumTypes
+                                    , rustConsts = context.rustConsts
                                     , path =
                                         ("argument" ++ (argumentIndex |> String.fromInt))
                                             :: context.path
@@ -7719,6 +7985,7 @@ expression context expressionTypedNode =
                                 , letDeclaredValueAndFunctionTypes =
                                     context.letDeclaredValueAndFunctionTypes
                                 , rustEnumTypes = context.rustEnumTypes
+                                , rustConsts = context.rustConsts
                                 , path = "left" :: context.path
                                 }
                         )
@@ -7730,6 +7997,7 @@ expression context expressionTypedNode =
                                 , letDeclaredValueAndFunctionTypes =
                                     context.letDeclaredValueAndFunctionTypes
                                 , rustEnumTypes = context.rustEnumTypes
+                                , rustConsts = context.rustConsts
                                 , path = "right" :: context.path
                                 }
                         )
@@ -7750,6 +8018,7 @@ expression context expressionTypedNode =
                                 , letDeclaredValueAndFunctionTypes =
                                     context.letDeclaredValueAndFunctionTypes
                                 , rustEnumTypes = context.rustEnumTypes
+                                , rustConsts = context.rustConsts
                                 , path = "left" :: context.path
                                 }
                         )
@@ -7761,6 +8030,7 @@ expression context expressionTypedNode =
                                 , letDeclaredValueAndFunctionTypes =
                                     context.letDeclaredValueAndFunctionTypes
                                 , rustEnumTypes = context.rustEnumTypes
+                                , rustConsts = context.rustConsts
                                 , path = "right" :: context.path
                                 }
                         )
@@ -7817,6 +8087,7 @@ expression context expressionTypedNode =
                                 , letDeclaredValueAndFunctionTypes =
                                     context.letDeclaredValueAndFunctionTypes
                                 , rustEnumTypes = context.rustEnumTypes
+                                , rustConsts = context.rustConsts
                                 , path = "left" :: context.path
                                 }
                         )
@@ -7828,6 +8099,7 @@ expression context expressionTypedNode =
                                 , letDeclaredValueAndFunctionTypes =
                                     context.letDeclaredValueAndFunctionTypes
                                 , rustEnumTypes = context.rustEnumTypes
+                                , rustConsts = context.rustConsts
                                 , path = "right" :: context.path
                                 }
                         )
@@ -7868,6 +8140,7 @@ expression context expressionTypedNode =
                                 , letDeclaredValueAndFunctionTypes =
                                     context.letDeclaredValueAndFunctionTypes
                                 , rustEnumTypes = context.rustEnumTypes
+                                , rustConsts = context.rustConsts
                                 , path = "left" :: context.path
                                 }
                         )
@@ -7879,6 +8152,7 @@ expression context expressionTypedNode =
                                 , letDeclaredValueAndFunctionTypes =
                                     context.letDeclaredValueAndFunctionTypes
                                 , rustEnumTypes = context.rustEnumTypes
+                                , rustConsts = context.rustConsts
                                 , path = "right" :: context.path
                                 }
                         )
@@ -7959,7 +8233,7 @@ expression context expressionTypedNode =
 
                         rustExpressionVariantValue : RustExpression
                         rustExpressionVariantValue =
-                            RustExpressionVariant
+                            RustExpressionReferenceVariant
                                 { originTypeName = asRustVariant.originTypeName
                                 , name = asRustVariant.name
                                 }
@@ -8342,12 +8616,12 @@ expression context expressionTypedNode =
                                         RustExpressionArrayLiteral
                                             [ RustExpressionCall
                                                 { called =
-                                                    RustExpressionVariant
+                                                    RustExpressionReferenceVariant
                                                         { originTypeName = [ "PlatformCmdSingle" ]
                                                         , name = "PortOutgoing"
                                                         }
                                                 , arguments =
-                                                    [ RustExpressionStringLiteral reference.name
+                                                    [ RustExpressionString reference.name
                                                     , RustExpressionReference
                                                         { qualification = []
                                                         , name = "generated_value"
@@ -8385,12 +8659,12 @@ expression context expressionTypedNode =
                                         RustExpressionArrayLiteral
                                             [ RustExpressionCall
                                                 { called =
-                                                    RustExpressionVariant
+                                                    RustExpressionReferenceVariant
                                                         { originTypeName = [ "PlatformSubSingle" ]
                                                         , name = "PortIncoming"
                                                         }
                                                 , arguments =
-                                                    [ RustExpressionStringLiteral reference.name
+                                                    [ RustExpressionString reference.name
                                                     , RustExpressionReference
                                                         { qualification = []
                                                         , name = "generated_onValue"
@@ -8401,76 +8675,84 @@ expression context expressionTypedNode =
                                     }
 
                             else
-                                case
-                                    referenceOriginModuleInfo.valueAndFunctionAnnotations
-                                        |> FastDict.get reference.name
-                                of
-                                    Nothing ->
-                                        RustExpressionReference
-                                            { qualification = []
-                                            , name =
-                                                { moduleOrigin = reference.moduleOrigin
-                                                , name = reference.name
+                                let
+                                    rustName : String
+                                    rustName =
+                                        { moduleOrigin = reference.moduleOrigin
+                                        , name = reference.name
+                                        }
+                                            |> elmReferenceToSnakeCaseRustName
+                                in
+                                if context.rustConsts |> FastSet.member rustName then
+                                    RustExpressionReference
+                                        { qualification = []
+                                        , name = rustName
+                                        }
+
+                                else
+                                    case
+                                        referenceOriginModuleInfo.valueAndFunctionAnnotations
+                                            |> FastDict.get reference.name
+                                    of
+                                        Nothing ->
+                                            RustExpressionReference
+                                                { qualification = []
+                                                , name = rustName
                                                 }
-                                                    |> elmReferenceToSnakeCaseRustName
-                                            }
 
-                                    Just originDeclarationType ->
-                                        let
-                                            typeAliasesInModule : String -> Maybe (FastDict.Dict String { parameters : List String, recordFieldOrder : Maybe (List String), type_ : ElmSyntaxTypeInfer.Type })
-                                            typeAliasesInModule moduleNameToAccess =
-                                                context.moduleInfo
-                                                    |> FastDict.get moduleNameToAccess
-                                                    |> Maybe.map .typeAliases
+                                        Just originDeclarationType ->
+                                            let
+                                                typeAliasesInModule : String -> Maybe (FastDict.Dict String { parameters : List String, recordFieldOrder : Maybe (List String), type_ : ElmSyntaxTypeInfer.Type })
+                                                typeAliasesInModule moduleNameToAccess =
+                                                    context.moduleInfo
+                                                        |> FastDict.get moduleNameToAccess
+                                                        |> Maybe.map .typeAliases
 
-                                            originDeclarationTypeWithExpandedAliases : ElmSyntaxTypeInfer.Type
-                                            originDeclarationTypeWithExpandedAliases =
-                                                originDeclarationType
-                                                    |> inferredTypeExpandInnerAliases
-                                                        typeAliasesInModule
+                                                originDeclarationTypeWithExpandedAliases : ElmSyntaxTypeInfer.Type
+                                                originDeclarationTypeWithExpandedAliases =
+                                                    originDeclarationType
+                                                        |> inferredTypeExpandInnerAliases
+                                                            typeAliasesInModule
 
-                                            rustReference :
-                                                { qualification : List String
-                                                , name : String
-                                                , requiresAllocator : Bool
-                                                }
-                                            rustReference =
-                                                case
-                                                    { moduleOrigin = reference.moduleOrigin
-                                                    , name = reference.name
-                                                    , type_ = expressionTypedNode.type_
+                                                rustReference :
+                                                    { qualification : List String
+                                                    , name : String
+                                                    , requiresAllocator : Bool
                                                     }
-                                                        |> referenceToCoreRust
-                                                of
-                                                    Just coreRustReference ->
-                                                        coreRustReference
-
-                                                    Nothing ->
-                                                        { qualification = []
-                                                        , name =
-                                                            { moduleOrigin = reference.moduleOrigin
-                                                            , name = reference.name
-                                                            }
-                                                                |> elmReferenceToSnakeCaseRustName
-                                                                |> rustNameWithSpecializedTypes
-                                                                    (inferredTypeSpecializedVariablesFrom
-                                                                        originDeclarationTypeWithExpandedAliases
-                                                                        (expressionTypedNode.type_
-                                                                            |> inferredTypeExpandInnerAliases
-                                                                                typeAliasesInModule
-                                                                        )
-                                                                    )
-                                                        , requiresAllocator = True
+                                                rustReference =
+                                                    case
+                                                        { moduleOrigin = reference.moduleOrigin
+                                                        , name = reference.name
+                                                        , type_ = expressionTypedNode.type_
                                                         }
-                                        in
-                                        rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary context
-                                            { qualification = rustReference.qualification
-                                            , name = rustReference.name
-                                            , requiresAllocator = rustReference.requiresAllocator
-                                            , inferredType = expressionTypedNode.type_
-                                            , originDeclarationTypeWithExpandedAliases =
-                                                originDeclarationTypeWithExpandedAliases
-                                            }
+                                                            |> referenceToCoreRust
+                                                    of
+                                                        Just coreRustReference ->
+                                                            coreRustReference
+
+                                                        Nothing ->
+                                                            { qualification = []
+                                                            , name =
+                                                                rustName
+                                                                    |> rustNameWithSpecializedTypes
+                                                                        (inferredTypeSpecializedVariablesFrom
+                                                                            originDeclarationTypeWithExpandedAliases
+                                                                            (expressionTypedNode.type_
+                                                                                |> inferredTypeExpandInnerAliases
+                                                                                    typeAliasesInModule
+                                                                            )
+                                                                        )
+                                                            , requiresAllocator = True
+                                                            }
+                                            in
+                                            rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary context
+                                                { qualification = rustReference.qualification
+                                                , name = rustReference.name
+                                                , requiresAllocator = rustReference.requiresAllocator
+                                                , inferredType = expressionTypedNode.type_
+                                                , originDeclarationTypeWithExpandedAliases =
+                                                    originDeclarationTypeWithExpandedAliases
+                                                }
                 )
 
         ElmSyntaxTypeInfer.ExpressionIfThenElse ifThenElse ->
@@ -8490,6 +8772,7 @@ expression context expressionTypedNode =
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustConsts = context.rustConsts
                         , path = "condition" :: context.path
                         }
                 )
@@ -8501,6 +8784,7 @@ expression context expressionTypedNode =
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustConsts = context.rustConsts
                         , path = "on_true" :: context.path
                         }
                 )
@@ -8512,6 +8796,7 @@ expression context expressionTypedNode =
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustConsts = context.rustConsts
                         , path = "on_false" :: context.path
                         }
                 )
@@ -8557,6 +8842,7 @@ expression context expressionTypedNode =
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustConsts = context.rustConsts
                         , path = "part0" :: context.path
                         }
                 )
@@ -8568,6 +8854,7 @@ expression context expressionTypedNode =
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustConsts = context.rustConsts
                         , path = "part1" :: context.path
                         }
                 )
@@ -8589,6 +8876,7 @@ expression context expressionTypedNode =
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustConsts = context.rustConsts
                         , path = "part0" :: context.path
                         }
                 )
@@ -8600,6 +8888,7 @@ expression context expressionTypedNode =
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustConsts = context.rustConsts
                         , path = "part1" :: context.path
                         }
                 )
@@ -8611,6 +8900,7 @@ expression context expressionTypedNode =
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustConsts = context.rustConsts
                         , path = "part2" :: context.path
                         }
                 )
@@ -8658,6 +8948,7 @@ expression context expressionTypedNode =
                                     , letDeclaredValueAndFunctionTypes =
                                         context.letDeclaredValueAndFunctionTypes
                                     , rustEnumTypes = context.rustEnumTypes
+                                    , rustConsts = context.rustConsts
                                     , path = (elementIndex |> String.fromInt) :: context.path
                                     }
                         )
@@ -8697,6 +8988,7 @@ expression context expressionTypedNode =
                                         , letDeclaredValueAndFunctionTypes =
                                             context.letDeclaredValueAndFunctionTypes
                                         , rustEnumTypes = context.rustEnumTypes
+                                        , rustConsts = context.rustConsts
                                         , path =
                                             (field.name |> toSnakeCaseRustName)
                                                 :: context.path
@@ -8767,6 +9059,7 @@ expression context expressionTypedNode =
                                                 , letDeclaredValueAndFunctionTypes =
                                                     context.letDeclaredValueAndFunctionTypes
                                                 , rustEnumTypes = context.rustEnumTypes
+                                                , rustConsts = context.rustConsts
                                                 , path =
                                                     (field.name |> toSnakeCaseRustName)
                                                         :: context.path
@@ -8846,6 +9139,7 @@ expression context expressionTypedNode =
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustConsts = context.rustConsts
                         , path = "result" :: context.path
                         }
                 )
@@ -8877,6 +9171,7 @@ expression context expressionTypedNode =
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustConsts = context.rustConsts
                         , path = "matched" :: context.path
                         }
                 )
@@ -8888,6 +9183,7 @@ expression context expressionTypedNode =
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustConsts = context.rustConsts
                         , path = "case0" :: context.path
                         }
                 )
@@ -8906,6 +9202,7 @@ expression context expressionTypedNode =
                                     , letDeclaredValueAndFunctionTypes =
                                         context.letDeclaredValueAndFunctionTypes
                                     , rustEnumTypes = context.rustEnumTypes
+                                    , rustConsts = context.rustConsts
                                     , path =
                                         ("case" ++ (caseIndex |> String.fromInt))
                                             :: context.path
@@ -9002,6 +9299,7 @@ expression context expressionTypedNode =
                                     , letDeclaredValueAndFunctionTypes =
                                         letDeclaredValueAndFunctionTypesIncludingFromContext
                                     , rustEnumTypes = context.rustEnumTypes
+                                    , rustConsts = context.rustConsts
                                     , path =
                                         ("let_declaration" ++ (letDeclarationIndex |> String.fromInt))
                                             :: context.path
@@ -9017,6 +9315,7 @@ expression context expressionTypedNode =
                         , letDeclaredValueAndFunctionTypes =
                             letDeclaredValueAndFunctionTypesIncludingFromContext
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustConsts = context.rustConsts
                         , path = "let_result" :: context.path
                         }
                 )
@@ -9047,7 +9346,7 @@ rustExpressionAllocFunction =
 rustExpressionBorrowListEmpty : RustExpression
 rustExpressionBorrowListEmpty =
     RustExpressionBorrow
-        (RustExpressionVariant
+        (RustExpressionReferenceVariant
             { originTypeName = [ "ListList" ]
             , name = "Empty"
             }
@@ -9286,10 +9585,10 @@ rustExpressionAlterBindingNames variableNameChange rustExpression =
         RustExpressionChar _ ->
             rustExpression
 
-        RustExpressionStringLiteral _ ->
+        RustExpressionString _ ->
             rustExpression
 
-        RustExpressionVariant _ ->
+        RustExpressionReferenceVariant _ ->
             rustExpression
 
         RustExpressionSelf ->
@@ -10178,7 +10477,7 @@ rustExpressionIsEmptyString rustExpression =
 
 rustExpressionStringLiteralEmpty : RustExpression
 rustExpressionStringLiteralEmpty =
-    RustExpressionStringLiteral ""
+    RustExpressionString ""
 
 
 inferredTypeExpandFunction :
@@ -10394,7 +10693,7 @@ rustExpressionCallCondense call =
                 , arguments = [ call.argument ]
                 }
 
-        RustExpressionVariant _ ->
+        RustExpressionReferenceVariant _ ->
             RustExpressionCall
                 { called = call.called
                 , arguments = [ call.argument ]
@@ -10412,7 +10711,7 @@ rustExpressionCallCondense call =
                 , arguments = [ call.argument ]
                 }
 
-        RustExpressionStringLiteral _ ->
+        RustExpressionString _ ->
             RustExpressionCall
                 { called = call.called
                 , arguments = [ call.argument ]
@@ -10483,7 +10782,7 @@ rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck rustExpressi
         RustExpressionChar _ ->
             False
 
-        RustExpressionStringLiteral _ ->
+        RustExpressionString _ ->
             False
 
         RustExpressionSelf ->
@@ -10492,7 +10791,7 @@ rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck rustExpressi
         RustExpressionReference _ ->
             False
 
-        RustExpressionVariant _ ->
+        RustExpressionReferenceVariant _ ->
             False
 
         RustExpressionNegateOperation inNegation ->
@@ -10627,7 +10926,7 @@ rustExpressionInnermostLambdaResult rustExpression =
         RustExpressionChar _ ->
             { statements = [], result = rustExpression }
 
-        RustExpressionStringLiteral _ ->
+        RustExpressionString _ ->
             { statements = [], result = rustExpression }
 
         RustExpressionSelf ->
@@ -10636,7 +10935,7 @@ rustExpressionInnermostLambdaResult rustExpression =
         RustExpressionReference _ ->
             { statements = [], result = rustExpression }
 
-        RustExpressionVariant _ ->
+        RustExpressionReferenceVariant _ ->
             { statements = [], result = rustExpression }
 
         RustExpressionNegateOperation _ ->
@@ -10746,6 +11045,8 @@ rustStatementUsesReferenceInLambdaOrFnDeclaration referenceToCheck rustStatement
                    )
 
 
+{-| Not to be confused with `rustExpressionIsConst`
+-}
 rustExpressionIsConstant : RustExpression -> Bool
 rustExpressionIsConstant rustExpression =
     case rustExpression of
@@ -10758,7 +11059,7 @@ rustExpressionIsConstant rustExpression =
         RustExpressionChar _ ->
             True
 
-        RustExpressionStringLiteral _ ->
+        RustExpressionString _ ->
             True
 
         RustExpressionSelf ->
@@ -10767,7 +11068,7 @@ rustExpressionIsConstant rustExpression =
         RustExpressionReference _ ->
             True
 
-        RustExpressionVariant _ ->
+        RustExpressionReferenceVariant _ ->
             True
 
         RustExpressionNegateOperation _ ->
@@ -10832,13 +11133,13 @@ rustExpressionCountUsesOfReference referenceToCountUsesOf rustExpression =
         RustExpressionSelf ->
             0
 
-        RustExpressionVariant _ ->
+        RustExpressionReferenceVariant _ ->
             0
 
         RustExpressionF64 _ ->
             0
 
-        RustExpressionStringLiteral _ ->
+        RustExpressionString _ ->
             0
 
         RustExpressionChar _ ->
@@ -11040,10 +11341,10 @@ rustExpressionSubstituteReferences referenceToExpression rustExpression =
         RustExpressionChar _ ->
             rustExpression
 
-        RustExpressionStringLiteral _ ->
+        RustExpressionString _ ->
             rustExpression
 
-        RustExpressionVariant _ ->
+        RustExpressionReferenceVariant _ ->
             rustExpression
 
         RustExpressionSelf ->
@@ -11335,6 +11636,7 @@ case_ context syntaxCase =
                 , letDeclaredValueAndFunctionTypes =
                     context.letDeclaredValueAndFunctionTypes
                 , rustEnumTypes = context.rustEnumTypes
+                , rustConsts = context.rustConsts
                 , path =
                     -- intentional as there is only one sub-expression
                     context.path
@@ -11369,6 +11671,7 @@ letDeclaration context syntaxLetDeclarationNode =
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustConsts = context.rustConsts
                         , path =
                             -- intentional as there is only one sub-expression
                             context.path
@@ -11615,6 +11918,7 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                     , variablesFromWithinDeclarationInScope =
                         context.variablesFromWithinDeclarationInScope
                     , rustEnumTypes = context.rustEnumTypes
+                    , rustConsts = context.rustConsts
                     }
             )
 
@@ -11771,6 +12075,7 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                     , letDeclaredValueAndFunctionTypes =
                         context.letDeclaredValueAndFunctionTypes
                     , rustEnumTypes = context.rustEnumTypes
+                    , rustConsts = context.rustConsts
                     , path = "result" :: context.path
                     }
             )
@@ -12557,7 +12862,7 @@ printRustLetDeclaration rustLetDeclaration =
             resultTypePrint |> Print.lineSpread
     in
     Print.exactly
-        ("pub static " ++ rustLetDeclaration.name)
+        ("pub const " ++ rustLetDeclaration.name)
         |> Print.followedBy
             (Print.withIndentAtNextMultipleOf4
                 (printExactlyColon
@@ -14667,7 +14972,7 @@ rustExpressionIsSpaceSeparated rustExpression =
         RustExpressionF64 _ ->
             False
 
-        RustExpressionStringLiteral _ ->
+        RustExpressionString _ ->
             False
 
         RustExpressionSelf ->
@@ -14676,7 +14981,7 @@ rustExpressionIsSpaceSeparated rustExpression =
         RustExpressionReference _ ->
             False
 
-        RustExpressionVariant _ ->
+        RustExpressionReferenceVariant _ ->
             False
 
         RustExpressionNegateOperation _ ->
@@ -14735,7 +15040,7 @@ printRustExpressionNotParenthesized rustExpression =
             Print.exactly
                 (reference |> qualifiedRustReferenceToString)
 
-        RustExpressionVariant reference ->
+        RustExpressionReferenceVariant reference ->
             Print.exactly
                 (qualifiedRustReferenceToString
                     { qualification = reference.originTypeName
@@ -14752,7 +15057,7 @@ printRustExpressionNotParenthesized rustExpression =
         RustExpressionF64 double ->
             Print.exactly (double |> f64Literal)
 
-        RustExpressionStringLiteral string ->
+        RustExpressionString string ->
             printRustStringLiteral string
 
         RustExpressionTuple parts ->
@@ -15583,7 +15888,7 @@ rustDeclarationsToModuleString :
             , lifetimeParameters : List String
             , resultType : RustType
             }
-    , lets :
+    , consts :
         FastDict.Dict
             String
             { result : RustExpression
@@ -15698,7 +16003,7 @@ use bumpalo::Bump;
 
 
 """
-        ++ ((rustDeclarations.lets
+        ++ ((rustDeclarations.consts
                 |> fastDictMapAndToList
                     (\name valueOrFunctionInfo ->
                         printRustLetDeclaration
@@ -29271,7 +29576,7 @@ impl<'a, A: Clone + std::fmt::Debug> std::fmt::Debug for ListList<'a, A> {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum BasicsNever {}
 
-pub fn basics_identity<A>(a: A) -> A {
+pub const fn basics_identity<A>(a: A) -> A {
     a
 }
 pub fn basics_always<Kept, Ignored>(kept: Kept, _: Ignored) -> Kept {
@@ -29328,35 +29633,35 @@ pub fn basics_compare<A: PartialOrd>(a: A, b: A) -> std::cmp::Ordering {
     }
 }
 
-pub fn basics_and(a: bool, b: bool) -> bool {
+pub const fn basics_and(a: bool, b: bool) -> bool {
     a && b
 }
-pub fn basics_or(a: bool, b: bool) -> bool {
+pub const fn basics_or(a: bool, b: bool) -> bool {
     a || b
 }
-pub fn basics_xor(a: bool, b: bool) -> bool {
+pub const fn basics_xor(a: bool, b: bool) -> bool {
     a ^ b
 }
-pub fn basics_not(bool: bool) -> bool {
+pub const fn basics_not(bool: bool) -> bool {
     !bool
 }
 
-pub fn basics_clamp(min: f64, max: f64, n: f64) -> f64 {
+pub const fn basics_clamp(min: f64, max: f64, n: f64) -> f64 {
     n.clamp(min, max)
 }
 pub fn basics_log_base(base: f64, n: f64) -> f64 {
     n.log(base)
 }
-pub fn basics_add(a: f64, b: f64) -> f64 {
+pub const fn basics_add(a: f64, b: f64) -> f64 {
     a + b
 }
-pub fn basics_sub(base: f64, reduction: f64) -> f64 {
+pub const fn basics_sub(base: f64, reduction: f64) -> f64 {
     base - reduction
 }
-pub fn basics_mul(a: f64, b: f64) -> f64 {
+pub const fn basics_mul(a: f64, b: f64) -> f64 {
     a * b
 }
-pub fn basics_fdiv(base: f64, by: f64) -> f64 {
+pub const fn basics_fdiv(base: f64, by: f64) -> f64 {
     base / by
 }
 pub fn basics_idiv(base: f64, by: f64) -> f64 {
@@ -29382,10 +29687,10 @@ pub fn basics_mod_by(by: f64, base: f64) -> f64 {
         }
     }
 }
-pub fn basics_degrees(degrees: f64) -> f64 {
+pub const fn basics_degrees(degrees: f64) -> f64 {
     degrees.to_radians()
 }
-pub fn basics_turns(turns: f64) -> f64 {
+pub const fn basics_turns(turns: f64) -> f64 {
     turns * 2_f64 * std::f64::consts::PI
 }
 pub fn basics_to_polar((x, y): (f64, f64)) -> (f64, f64) {
@@ -29395,11 +29700,11 @@ pub fn basics_from_polar((radius, theta): (f64, f64)) -> (f64, f64) {
     (radius * (f64::cos(theta)), radius * (f64::sin(theta)))
 }
 
-pub fn basics_never<A>(never: BasicsNever) -> A {
+pub const fn basics_never<A>(never: BasicsNever) -> A {
     match never {}
 }
 
-pub fn bitwise_complement(n: f64) -> f64 {
+pub const fn bitwise_complement(n: f64) -> f64 {
     !(n as i32) as f64
 }
 pub fn bitwise_and(a: f64, b: f64) -> f64 {
@@ -29421,7 +29726,7 @@ pub fn bitwise_shift_right_zf_by(positions: f64, n: f64) -> f64 {
     std::ops::Shr::shr(n as u32, positions as u32) as f64
 }
 
-pub fn list_is_empty<A>(list: &ListList<A>) -> bool {
+pub const fn list_is_empty<A>(list: &ListList<A>) -> bool {
     match list {
         &ListList::Empty => true,
         &ListList::Cons(_, _) => false,
@@ -29433,7 +29738,7 @@ pub fn list_head<A: Clone>(list: &ListList<A>) -> Option<A> {
         ListList::Cons(head, _) => Option::Some(head.clone()),
     }
 }
-pub fn list_tail<'a, A: Clone>(list: &'a ListList<A>) -> Option<&'a ListList<'a, A>> {
+pub const fn list_tail<'a, A: Clone>(list: &'a ListList<A>) -> Option<&'a ListList<'a, A>> {
     match list {
         ListList::Empty => Option::None,
         ListList::Cons(_, tail) => Option::Some(tail),
@@ -29857,7 +30162,7 @@ pub fn list_map5<
 
 pub type ArrayArray<A> = [A];
 
-pub fn array_empty<'a, A>() -> &'a ArrayArray<A> {
+pub const fn array_empty<'a, A>() -> &'a ArrayArray<A> {
     &[]
 }
 pub fn array_singleton<'a, A>(allocator: &'a Bump, only_element: A) -> &'a ArrayArray<A> {
@@ -29881,10 +30186,10 @@ pub fn array_initialize<'a, A, IndexToElement: Fn(f64) -> A>(
             .collect::<Vec<A>>(),
     )
 }
-pub fn array_is_empty<A>(array: &ArrayArray<A>) -> bool {
+pub const fn array_is_empty<A>(array: &ArrayArray<A>) -> bool {
     array.is_empty()
 }
-pub fn array_length<A>(array: &ArrayArray<A>) -> f64 {
+pub const fn array_length<A>(array: &ArrayArray<A>) -> f64 {
     array.len() as f64
 }
 pub fn array_get<A: Clone>(index: f64, array: &ArrayArray<A>) -> Option<A> {
@@ -30076,7 +30381,7 @@ pub fn array_foldr<'a, A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(St
     })
 }
 
-fn array_append<'a, A: Clone>(
+pub fn array_append<'a, A: Clone>(
     allocator: &'a Bump,
     left: &ArrayArray<A>,
     right: &ArrayArray<A>,
@@ -30086,25 +30391,25 @@ fn array_append<'a, A: Clone>(
     allocator.alloc(left_as_vec)
 }
 
-pub fn char_is_upper(char: char) -> bool {
+pub const fn char_is_upper(char: char) -> bool {
     char.is_ascii_uppercase()
 }
-pub fn char_is_lower(char: char) -> bool {
+pub const fn char_is_lower(char: char) -> bool {
     char.is_ascii_lowercase()
 }
-pub fn char_is_alpha(char: char) -> bool {
+pub const fn char_is_alpha(char: char) -> bool {
     char.is_ascii_alphabetic()
 }
-pub fn char_is_alpha_num(char: char) -> bool {
+pub const fn char_is_alpha_num(char: char) -> bool {
     char.is_ascii_alphanumeric()
 }
-pub fn char_is_digit(char: char) -> bool {
+pub const fn char_is_digit(char: char) -> bool {
     char.is_ascii_digit()
 }
-pub fn char_is_hex_digit(char: char) -> bool {
+pub const fn char_is_hex_digit(char: char) -> bool {
     char.is_ascii_hexdigit()
 }
-pub fn char_is_oct_digit(char: char) -> bool {
+pub const fn char_is_oct_digit(char: char) -> bool {
     match char {
         '0'..='7' => true,
         _ => false,
@@ -30122,14 +30427,14 @@ pub fn char_to_lower(char: char) -> char {
         Some(approximate_lowercase) => approximate_lowercase,
     }
 }
-pub fn char_to_code(char: char) -> f64 {
+pub const fn char_to_code(char: char) -> f64 {
     char as u32 as f64
 }
 pub fn char_from_code(code: f64) -> char {
     char::from_u32(code as u32).unwrap_or('\\0')
 }
 
-pub fn string_is_empty(string: &str) -> bool {
+pub const fn string_is_empty(string: &str) -> bool {
     string.is_empty()
 }
 pub fn string_length(string: &str) -> f64 {
@@ -30659,7 +30964,7 @@ pub fn result_map5<
 }
 
 pub type BytesBytes<'a> = &'a [u8];
-pub fn bytes_width(bytes: BytesBytes) -> f64 {
+pub const fn bytes_width(bytes: BytesBytes) -> f64 {
     bytes.len() as f64
 }
 """
