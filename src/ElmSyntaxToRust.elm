@@ -6458,6 +6458,78 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                             |> List.foldl
                                                 (\inferredTypeDeclarationComponent soFar ->
                                                     case inferredTypeDeclarationComponent of
+                                                        Graph.AcyclicSCC inferredTypeDeclaration ->
+                                                            case inferredTypeDeclaration of
+                                                                InferredTypeAliasDeclaration inferredTypeAliasDeclaration ->
+                                                                    let
+                                                                        rustTypeAliasDeclaration :
+                                                                            { lifetimeParameters : List String
+                                                                            , parameters : List String
+                                                                            , type_ : RustType
+                                                                            }
+                                                                        rustTypeAliasDeclaration =
+                                                                            typeAliasDeclaration
+                                                                                { typeAliasesInModule = typeAliasesInModule
+                                                                                , rustEnumTypes = soFar.rustEnumTypes
+                                                                                }
+                                                                                { parameters = inferredTypeAliasDeclaration.parameters
+                                                                                , type_ = inferredTypeAliasDeclaration.type_
+                                                                                }
+                                                                    in
+                                                                    { rustEnumTypes = soFar.rustEnumTypes
+                                                                    , rustEnumDeclarations = soFar.rustEnumDeclarations
+                                                                    , rustTypeAliasDeclarations =
+                                                                        { name =
+                                                                            { moduleOrigin = moduleName
+                                                                            , name = inferredTypeAliasDeclaration.name
+                                                                            }
+                                                                                |> elmReferenceToPascalCaseRustName
+                                                                        , lifetimeParameters = rustTypeAliasDeclaration.lifetimeParameters
+                                                                        , parameters = rustTypeAliasDeclaration.parameters
+                                                                        , type_ = rustTypeAliasDeclaration.type_
+                                                                        }
+                                                                            :: soFar.rustTypeAliasDeclarations
+                                                                    }
+
+                                                                InferredChoiceTypeDeclaration inferredChoiceAliasDeclaration ->
+                                                                    let
+                                                                        rustName : String
+                                                                        rustName =
+                                                                            { moduleOrigin = moduleName
+                                                                            , name = inferredChoiceAliasDeclaration.name
+                                                                            }
+                                                                                |> elmReferenceToPascalCaseRustName
+
+                                                                        rustEnumDeclaration :
+                                                                            { parameters : List String
+                                                                            , lifetimeParameters : List String
+                                                                            , variants : FastDict.Dict String (List RustType)
+                                                                            }
+                                                                        rustEnumDeclaration =
+                                                                            choiceTypeDeclaration
+                                                                                { typeAliasesInModule = typeAliasesInModule
+                                                                                , rustEnumTypes = soFar.rustEnumTypes
+                                                                                }
+                                                                                { parameters = inferredChoiceAliasDeclaration.parameters
+                                                                                , variants = inferredChoiceAliasDeclaration.variants
+                                                                                }
+                                                                    in
+                                                                    { rustTypeAliasDeclarations = soFar.rustTypeAliasDeclarations
+                                                                    , rustEnumTypes =
+                                                                        soFar.rustEnumTypes
+                                                                            |> FastDict.insert rustName
+                                                                                { lifetimeParameters = rustEnumDeclaration.lifetimeParameters
+                                                                                , referenceOrValueType = ValueType
+                                                                                }
+                                                                    , rustEnumDeclarations =
+                                                                        { name = rustName
+                                                                        , parameters = rustEnumDeclaration.parameters
+                                                                        , lifetimeParameters = rustEnumDeclaration.lifetimeParameters
+                                                                        , variants = rustEnumDeclaration.variants
+                                                                        }
+                                                                            :: soFar.rustEnumDeclarations
+                                                                    }
+
                                                         Graph.CyclicSCC inferredTypeDeclarationCycle ->
                                                             inferredTypeDeclarationCycle
                                                                 |> List.foldl
@@ -6536,78 +6608,6 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                 }
                                                                     )
                                                                     soFar
-
-                                                        Graph.AcyclicSCC inferredTypeDeclaration ->
-                                                            case inferredTypeDeclaration of
-                                                                InferredTypeAliasDeclaration inferredTypeAliasDeclaration ->
-                                                                    let
-                                                                        rustTypeAliasDeclaration :
-                                                                            { lifetimeParameters : List String
-                                                                            , parameters : List String
-                                                                            , type_ : RustType
-                                                                            }
-                                                                        rustTypeAliasDeclaration =
-                                                                            typeAliasDeclaration
-                                                                                { typeAliasesInModule = typeAliasesInModule
-                                                                                , rustEnumTypes = soFar.rustEnumTypes
-                                                                                }
-                                                                                { parameters = inferredTypeAliasDeclaration.parameters
-                                                                                , type_ = inferredTypeAliasDeclaration.type_
-                                                                                }
-                                                                    in
-                                                                    { rustEnumTypes = soFar.rustEnumTypes
-                                                                    , rustEnumDeclarations = soFar.rustEnumDeclarations
-                                                                    , rustTypeAliasDeclarations =
-                                                                        { name =
-                                                                            { moduleOrigin = moduleName
-                                                                            , name = inferredTypeAliasDeclaration.name
-                                                                            }
-                                                                                |> elmReferenceToPascalCaseRustName
-                                                                        , lifetimeParameters = rustTypeAliasDeclaration.lifetimeParameters
-                                                                        , parameters = rustTypeAliasDeclaration.parameters
-                                                                        , type_ = rustTypeAliasDeclaration.type_
-                                                                        }
-                                                                            :: soFar.rustTypeAliasDeclarations
-                                                                    }
-
-                                                                InferredChoiceTypeDeclaration inferredChoiceAliasDeclaration ->
-                                                                    let
-                                                                        rustName : String
-                                                                        rustName =
-                                                                            { moduleOrigin = moduleName
-                                                                            , name = inferredChoiceAliasDeclaration.name
-                                                                            }
-                                                                                |> elmReferenceToPascalCaseRustName
-
-                                                                        rustEnumDeclaration :
-                                                                            { parameters : List String
-                                                                            , lifetimeParameters : List String
-                                                                            , variants : FastDict.Dict String (List RustType)
-                                                                            }
-                                                                        rustEnumDeclaration =
-                                                                            choiceTypeDeclaration
-                                                                                { typeAliasesInModule = typeAliasesInModule
-                                                                                , rustEnumTypes = soFar.rustEnumTypes
-                                                                                }
-                                                                                { parameters = inferredChoiceAliasDeclaration.parameters
-                                                                                , variants = inferredChoiceAliasDeclaration.variants
-                                                                                }
-                                                                    in
-                                                                    { rustTypeAliasDeclarations = soFar.rustTypeAliasDeclarations
-                                                                    , rustEnumTypes =
-                                                                        soFar.rustEnumTypes
-                                                                            |> FastDict.insert rustName
-                                                                                { lifetimeParameters = rustEnumDeclaration.lifetimeParameters
-                                                                                , referenceOrValueType = ValueType
-                                                                                }
-                                                                    , rustEnumDeclarations =
-                                                                        { name = rustName
-                                                                        , parameters = rustEnumDeclaration.parameters
-                                                                        , lifetimeParameters = rustEnumDeclaration.lifetimeParameters
-                                                                        , variants = rustEnumDeclaration.variants
-                                                                        }
-                                                                            :: soFar.rustEnumDeclarations
-                                                                    }
                                                 )
                                                 { rustEnumDeclarations = []
                                                 , rustTypeAliasDeclarations = []
@@ -6615,83 +6615,142 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                 }
                                 in
                                 moduleInferred.declarationsInferred
-                                    |> -- TODO sort by use to get the optimal amount of consts
-                                       List.foldl
-                                        (\valueOrFunctionDeclarationInferred soFarAcrossModulesWithInferredValeAndFunctionDeclarations ->
-                                            case
-                                                valueOrFunctionDeclarationInferred
-                                                    |> valueOrFunctionDeclaration
-                                                        { moduleInfo = createdModuleContext
-                                                        , rustEnumTypes =
-                                                            transpiledModuleDeclaredRustTypes.rustEnumTypes
-                                                        , rustConsts =
-                                                            soFarAcrossModulesWithInferredValeAndFunctionDeclarations.rustConsts
-                                                        }
-                                            of
-                                                Ok rustValueOrFunctionDeclaration ->
-                                                    let
-                                                        rustName : String
-                                                        rustName =
-                                                            { moduleOrigin = moduleName
-                                                            , name = valueOrFunctionDeclarationInferred.name
-                                                            }
-                                                                |> elmReferenceToSnakeCaseRustName
-                                                    in
-                                                    case rustValueOrFunctionDeclaration.parameters of
-                                                        Just parameters ->
-                                                            { errors = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.errors
-                                                            , rustEnumTypes = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.rustEnumTypes
-                                                            , rustConsts = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.rustConsts
-                                                            , declarations =
-                                                                { typeAliases = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.typeAliases
-                                                                , enumTypes = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.enumTypes
-                                                                , consts = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.consts
-                                                                , fns =
-                                                                    soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.fns
-                                                                        |> FastDict.insert
-                                                                            rustName
-                                                                            { parameters = parameters
-                                                                            , resultType = rustValueOrFunctionDeclaration.resultType
-                                                                            , result = rustValueOrFunctionDeclaration.result
-                                                                            , lifetimeParameters =
-                                                                                rustValueOrFunctionDeclaration.lifetimeParameters
-                                                                            }
+                                    |> inferredValueOrFunctionDeclarationsToMostToLeastDependedOn
+                                        { moduleOrigin = moduleName }
+                                    |> List.foldl
+                                        (\valueOrFunctionDeclarationInferredComponent withInferredValeAndFunctionDeclarationsSoFar ->
+                                            case valueOrFunctionDeclarationInferredComponent of
+                                                Graph.AcyclicSCC valueOrFunctionDeclarationInferred ->
+                                                    case
+                                                        valueOrFunctionDeclarationInferred
+                                                            |> valueOrFunctionDeclaration
+                                                                { moduleInfo = createdModuleContext
+                                                                , rustEnumTypes = transpiledModuleDeclaredRustTypes.rustEnumTypes
+                                                                , rustConsts = withInferredValeAndFunctionDeclarationsSoFar.rustConsts
                                                                 }
+                                                    of
+                                                        Ok rustValueOrFunctionDeclaration ->
+                                                            let
+                                                                rustName : String
+                                                                rustName =
+                                                                    { moduleOrigin = moduleName
+                                                                    , name = valueOrFunctionDeclarationInferred.name
+                                                                    }
+                                                                        |> elmReferenceToSnakeCaseRustName
+                                                            in
+                                                            case rustValueOrFunctionDeclaration.parameters of
+                                                                Just parameters ->
+                                                                    { errors = withInferredValeAndFunctionDeclarationsSoFar.errors
+                                                                    , rustEnumTypes = withInferredValeAndFunctionDeclarationsSoFar.rustEnumTypes
+                                                                    , rustConsts = withInferredValeAndFunctionDeclarationsSoFar.rustConsts
+                                                                    , declarations =
+                                                                        { typeAliases = withInferredValeAndFunctionDeclarationsSoFar.declarations.typeAliases
+                                                                        , enumTypes = withInferredValeAndFunctionDeclarationsSoFar.declarations.enumTypes
+                                                                        , consts = withInferredValeAndFunctionDeclarationsSoFar.declarations.consts
+                                                                        , fns =
+                                                                            withInferredValeAndFunctionDeclarationsSoFar.declarations.fns
+                                                                                |> FastDict.insert rustName
+                                                                                    { parameters = parameters
+                                                                                    , resultType = rustValueOrFunctionDeclaration.resultType
+                                                                                    , result = rustValueOrFunctionDeclaration.result
+                                                                                    , lifetimeParameters = rustValueOrFunctionDeclaration.lifetimeParameters
+                                                                                    }
+                                                                        }
+                                                                    }
+
+                                                                Nothing ->
+                                                                    { errors = withInferredValeAndFunctionDeclarationsSoFar.errors
+                                                                    , rustEnumTypes = withInferredValeAndFunctionDeclarationsSoFar.rustEnumTypes
+                                                                    , rustConsts =
+                                                                        withInferredValeAndFunctionDeclarationsSoFar.rustConsts
+                                                                            |> FastSet.insert rustName
+                                                                    , declarations =
+                                                                        { typeAliases = withInferredValeAndFunctionDeclarationsSoFar.declarations.typeAliases
+                                                                        , enumTypes = withInferredValeAndFunctionDeclarationsSoFar.declarations.enumTypes
+                                                                        , fns = withInferredValeAndFunctionDeclarationsSoFar.declarations.fns
+                                                                        , consts =
+                                                                            withInferredValeAndFunctionDeclarationsSoFar.declarations.consts
+                                                                                |> FastDict.insert rustName
+                                                                                    { resultType = rustValueOrFunctionDeclaration.resultType
+                                                                                    , result = rustValueOrFunctionDeclaration.result
+                                                                                    }
+                                                                        }
+                                                                    }
+
+                                                        Err error ->
+                                                            { declarations = withInferredValeAndFunctionDeclarationsSoFar.declarations
+                                                            , rustEnumTypes = withInferredValeAndFunctionDeclarationsSoFar.rustEnumTypes
+                                                            , rustConsts = withInferredValeAndFunctionDeclarationsSoFar.rustConsts
+                                                            , errors =
+                                                                ("in value/function declaration "
+                                                                    ++ moduleName
+                                                                    ++ "."
+                                                                    ++ valueOrFunctionDeclarationInferred.name
+                                                                    ++ ": "
+                                                                    ++ error
+                                                                )
+                                                                    :: withInferredValeAndFunctionDeclarationsSoFar.errors
                                                             }
 
-                                                        Nothing ->
-                                                            { errors = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.errors
-                                                            , rustEnumTypes = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.rustEnumTypes
-                                                            , rustConsts =
-                                                                soFarAcrossModulesWithInferredValeAndFunctionDeclarations.rustConsts
-                                                                    |> FastSet.insert rustName
-                                                            , declarations =
-                                                                { typeAliases = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.typeAliases
-                                                                , enumTypes = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.enumTypes
-                                                                , fns = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.fns
-                                                                , consts =
-                                                                    soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.consts
-                                                                        |> FastDict.insert rustName
-                                                                            { resultType = rustValueOrFunctionDeclaration.resultType
-                                                                            , result = rustValueOrFunctionDeclaration.result
+                                                Graph.CyclicSCC valueOrFunctionDeclarationInferredCycle ->
+                                                    valueOrFunctionDeclarationInferredCycle
+                                                        |> List.foldl
+                                                            (\valueOrFunctionDeclarationInferred withCycleMemberSoFar ->
+                                                                case
+                                                                    valueOrFunctionDeclarationInferred
+                                                                        |> valueOrFunctionDeclaration
+                                                                            { moduleInfo = createdModuleContext
+                                                                            , rustEnumTypes = transpiledModuleDeclaredRustTypes.rustEnumTypes
+                                                                            , rustConsts = withCycleMemberSoFar.rustConsts
                                                                             }
-                                                                }
-                                                            }
+                                                                of
+                                                                    Ok rustValueOrFunctionDeclaration ->
+                                                                        let
+                                                                            rustName : String
+                                                                            rustName =
+                                                                                { moduleOrigin = moduleName
+                                                                                , name = valueOrFunctionDeclarationInferred.name
+                                                                                }
+                                                                                    |> elmReferenceToSnakeCaseRustName
+                                                                        in
+                                                                        { errors = withCycleMemberSoFar.errors
+                                                                        , rustEnumTypes = withCycleMemberSoFar.rustEnumTypes
+                                                                        , rustConsts = withCycleMemberSoFar.rustConsts
+                                                                        , declarations =
+                                                                            { typeAliases = withCycleMemberSoFar.declarations.typeAliases
+                                                                            , enumTypes = withCycleMemberSoFar.declarations.enumTypes
+                                                                            , consts = withCycleMemberSoFar.declarations.consts
+                                                                            , fns =
+                                                                                withCycleMemberSoFar.declarations.fns
+                                                                                    |> FastDict.insert rustName
+                                                                                        { parameters =
+                                                                                            rustValueOrFunctionDeclaration.parameters
+                                                                                                |> -- mutual recursion with a value declaration
+                                                                                                   -- is always an error
+                                                                                                   Maybe.withDefault []
+                                                                                        , resultType = rustValueOrFunctionDeclaration.resultType
+                                                                                        , result = rustValueOrFunctionDeclaration.result
+                                                                                        , lifetimeParameters = rustValueOrFunctionDeclaration.lifetimeParameters
+                                                                                        }
+                                                                            }
+                                                                        }
 
-                                                Err error ->
-                                                    { declarations = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations
-                                                    , rustEnumTypes = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.rustEnumTypes
-                                                    , rustConsts = soFarAcrossModulesWithInferredValeAndFunctionDeclarations.rustConsts
-                                                    , errors =
-                                                        ("in value/function declaration "
-                                                            ++ moduleName
-                                                            ++ "."
-                                                            ++ valueOrFunctionDeclarationInferred.name
-                                                            ++ ": "
-                                                            ++ error
-                                                        )
-                                                            :: soFarAcrossModulesWithInferredValeAndFunctionDeclarations.errors
-                                                    }
+                                                                    Err error ->
+                                                                        { declarations = withCycleMemberSoFar.declarations
+                                                                        , rustEnumTypes = withCycleMemberSoFar.rustEnumTypes
+                                                                        , rustConsts = withCycleMemberSoFar.rustConsts
+                                                                        , errors =
+                                                                            ("in value/function declaration "
+                                                                                ++ moduleName
+                                                                                ++ "."
+                                                                                ++ valueOrFunctionDeclarationInferred.name
+                                                                                ++ ": "
+                                                                                ++ error
+                                                                            )
+                                                                                :: withCycleMemberSoFar.errors
+                                                                        }
+                                                            )
+                                                            withInferredValeAndFunctionDeclarationsSoFar
                                         )
                                         { errors =
                                             moduleDeclaredInferredTypeAliasesAndChoiceTypes.errors
@@ -13148,6 +13207,224 @@ printExactlySpaceEqualsLinebreakIndented =
 printExactlySpaceMinusGreaterThanSpace : Print
 printExactlySpaceMinusGreaterThanSpace =
     Print.exactly " -> "
+
+
+inferredValueOrFunctionDeclarationsToMostToLeastDependedOn :
+    { moduleOrigin : String }
+    -> List InferredValueOrFunctionDeclaration
+    -> List (Graph.SCC InferredValueOrFunctionDeclaration)
+inferredValueOrFunctionDeclarationsToMostToLeastDependedOn context inferredValueOrFunctionDeclarations =
+    inferredValueOrFunctionDeclarations
+        |> List.map
+            (\inferredValueOrFunctionDeclaration ->
+                ( inferredValueOrFunctionDeclaration
+                , ( context.moduleOrigin, inferredValueOrFunctionDeclaration.name )
+                , inferredValueOrFunctionDeclaration.result
+                    |> inferredExpressionTypedNodeUsedReferences
+                    |> FastSet.toList
+                )
+            )
+        |> Graph.stronglyConnComponents
+
+
+inferredExpressionTypedNodeUsedReferences :
+    ElmSyntaxTypeInfer.TypedNode ElmSyntaxTypeInfer.Expression
+    -> FastSet.Set ( {- module origin -} String, String )
+inferredExpressionTypedNodeUsedReferences expressionTypedNode =
+    -- IGNORE TCO
+    case expressionTypedNode.value of
+        ElmSyntaxTypeInfer.ExpressionUnit ->
+            FastSet.empty
+
+        ElmSyntaxTypeInfer.ExpressionInteger _ ->
+            FastSet.empty
+
+        ElmSyntaxTypeInfer.ExpressionFloat _ ->
+            FastSet.empty
+
+        ElmSyntaxTypeInfer.ExpressionString _ ->
+            FastSet.empty
+
+        ElmSyntaxTypeInfer.ExpressionChar _ ->
+            FastSet.empty
+
+        ElmSyntaxTypeInfer.ExpressionReferenceVariant _ ->
+            FastSet.empty
+
+        ElmSyntaxTypeInfer.ExpressionReferenceRecordTypeAliasConstructorFunction _ ->
+            FastSet.empty
+
+        ElmSyntaxTypeInfer.ExpressionOperatorFunction _ ->
+            FastSet.empty
+
+        ElmSyntaxTypeInfer.ExpressionRecordAccessFunction _ ->
+            FastSet.empty
+
+        ElmSyntaxTypeInfer.ExpressionReference reference ->
+            FastSet.singleton ( reference.moduleOrigin, reference.name )
+
+        ElmSyntaxTypeInfer.ExpressionNegation negated ->
+            inferredExpressionTypedNodeUsedReferences negated
+
+        ElmSyntaxTypeInfer.ExpressionParenthesized inParens ->
+            inferredExpressionTypedNodeUsedReferences inParens
+
+        ElmSyntaxTypeInfer.ExpressionRecordAccess expressionRecordAccess ->
+            inferredExpressionTypedNodeUsedReferences
+                expressionRecordAccess.record
+
+        ElmSyntaxTypeInfer.ExpressionLambda expressionLambda ->
+            inferredExpressionTypedNodeUsedReferences
+                expressionLambda.result
+
+        ElmSyntaxTypeInfer.ExpressionInfixOperation expressionInfixOperation ->
+            expressionInfixOperation.left
+                |> inferredExpressionTypedNodeUsedReferences
+                |> FastSet.union
+                    (expressionInfixOperation.right
+                        |> inferredExpressionTypedNodeUsedReferences
+                    )
+
+        ElmSyntaxTypeInfer.ExpressionTuple parts ->
+            parts.part0
+                |> inferredExpressionTypedNodeUsedReferences
+                |> FastSet.union
+                    (parts.part1
+                        |> inferredExpressionTypedNodeUsedReferences
+                    )
+
+        ElmSyntaxTypeInfer.ExpressionTriple parts ->
+            parts.part0
+                |> inferredExpressionTypedNodeUsedReferences
+                |> FastSet.union
+                    (parts.part1
+                        |> inferredExpressionTypedNodeUsedReferences
+                    )
+                |> FastSet.union
+                    (parts.part2
+                        |> inferredExpressionTypedNodeUsedReferences
+                    )
+
+        ElmSyntaxTypeInfer.ExpressionIfThenElse expressionIfThenElse ->
+            expressionIfThenElse.condition
+                |> inferredExpressionTypedNodeUsedReferences
+                |> FastSet.union
+                    (expressionIfThenElse.onTrue
+                        |> inferredExpressionTypedNodeUsedReferences
+                    )
+                |> FastSet.union
+                    (expressionIfThenElse.onFalse
+                        |> inferredExpressionTypedNodeUsedReferences
+                    )
+
+        ElmSyntaxTypeInfer.ExpressionList elements ->
+            elements
+                |> listMapToFastSetsAndUnify
+                    inferredExpressionTypedNodeUsedReferences
+
+        ElmSyntaxTypeInfer.ExpressionRecord fields ->
+            fields
+                |> listMapToFastSetsAndUnify
+                    (\field ->
+                        field.value
+                            |> inferredExpressionTypedNodeUsedReferences
+                    )
+
+        ElmSyntaxTypeInfer.ExpressionCall expressionCall ->
+            expressionCall.called
+                |> inferredExpressionTypedNodeUsedReferences
+                |> FastSet.union
+                    (expressionCall.argument1Up
+                        |> listMapToFastSetsAndUnify
+                            inferredExpressionTypedNodeUsedReferences
+                    )
+                |> FastSet.union
+                    (expressionCall.argument0
+                        |> inferredExpressionTypedNodeUsedReferences
+                    )
+
+        ElmSyntaxTypeInfer.ExpressionRecordUpdate expressionRecordUpdate ->
+            FastSet.insert
+                ( expressionRecordUpdate.recordVariable.value.moduleOrigin
+                , expressionRecordUpdate.recordVariable.value.name
+                )
+                (expressionRecordUpdate.field1Up
+                    |> listMapToFastSetsAndUnify
+                        (\field ->
+                            field.value
+                                |> inferredExpressionTypedNodeUsedReferences
+                        )
+                )
+                |> FastSet.union
+                    (expressionRecordUpdate.field0.value
+                        |> inferredExpressionTypedNodeUsedReferences
+                    )
+
+        ElmSyntaxTypeInfer.ExpressionCaseOf expressionCaseOf ->
+            expressionCaseOf.matched
+                |> inferredExpressionTypedNodeUsedReferences
+                |> FastSet.union
+                    (expressionCaseOf.case1Up
+                        |> listMapToFastSetsAndUnify
+                            (\caseOfCase ->
+                                caseOfCase.result
+                                    |> inferredExpressionTypedNodeUsedReferences
+                            )
+                    )
+                |> FastSet.union
+                    (expressionCaseOf.case0.result
+                        |> inferredExpressionTypedNodeUsedReferences
+                    )
+
+        ElmSyntaxTypeInfer.ExpressionLetIn expressionLetIn ->
+            expressionLetInUsesOfLocalReferences expressionLetIn
+
+
+expressionLetInUsesOfLocalReferences :
+    { declaration1Up :
+        List
+            { range : Elm.Syntax.Range.Range
+            , declaration : ElmSyntaxTypeInfer.LetDeclaration
+            }
+    , declaration0 :
+        { range : Elm.Syntax.Range.Range
+        , declaration : ElmSyntaxTypeInfer.LetDeclaration
+        }
+    , result : ElmSyntaxTypeInfer.TypedNode ElmSyntaxTypeInfer.Expression
+    }
+    -> FastSet.Set ( {- module origin -} String, String )
+expressionLetInUsesOfLocalReferences expressionLetIn =
+    FastSet.union
+        (expressionLetIn.declaration1Up
+            |> List.foldl
+                (\inferredLetDeclaration soFar ->
+                    FastSet.union
+                        soFar
+                        (inferredLetDeclaration.declaration
+                            |> letDeclarationUsesOfLocalReferences
+                        )
+                )
+                (expressionLetIn.declaration0.declaration
+                    |> letDeclarationUsesOfLocalReferences
+                )
+        )
+        (expressionLetIn.result
+            |> inferredExpressionTypedNodeUsedReferences
+        )
+
+
+letDeclarationUsesOfLocalReferences :
+    ElmSyntaxTypeInfer.LetDeclaration
+    -> FastSet.Set ( {- module origin -} String, String )
+letDeclarationUsesOfLocalReferences inferredLetDeclaration =
+    case inferredLetDeclaration of
+        ElmSyntaxTypeInfer.LetDestructuring letDestructuring ->
+            letDestructuring.expression
+                |> inferredExpressionTypedNodeUsedReferences
+
+        ElmSyntaxTypeInfer.LetValueOrFunctionDeclaration inferredLetValueOrFunctionDeclaration ->
+            inferredLetValueOrFunctionDeclaration.result
+                |> inferredExpressionTypedNodeUsedReferences
 
 
 type InferredChoiceTypeOrTypeAliasDeclaration
