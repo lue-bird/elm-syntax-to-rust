@@ -1693,7 +1693,7 @@ printRustTypeTuple parts =
     in
     printExactlyParenOpening
         |> Print.followedBy
-            (Print.withIndentIncreasedBy 3
+            (Print.withIndentIncreasedBy 1
                 ((part0Print :: part1Print :: part2UpPrints)
                     |> Print.listMapAndIntersperseAndFlatten
                         (\partPrint -> partPrint)
@@ -5383,11 +5383,6 @@ printExactlyParenOpening =
 printExactlyParenClosing : Print
 printExactlyParenClosing =
     Print.exactly ")"
-
-
-printExactlyParenOpeningSpace : Print
-printExactlyParenOpeningSpace =
-    Print.exactly "( "
 
 
 {-| Transpile a list of [`Elm.Syntax.Declaration.Declaration`](https://dark.elm.dmy.fr/packages/stil4m/elm-syntax/latest/Elm-Syntax-Declaration#Declaration)s
@@ -15501,12 +15496,12 @@ printRustExpressionTuple parts =
                                 Print.lineSpread
                     )
     in
-    printExactlyParenOpeningSpace
+    printExactlyParenOpening
         |> Print.followedBy
             ((part0Print :: part1Print :: part2UpPrints)
                 |> Print.listMapAndIntersperseAndFlatten
                     (\partPrint ->
-                        Print.withIndentIncreasedBy 2 partPrint
+                        Print.withIndentIncreasedBy 1 partPrint
                     )
                     (Print.emptyOrLinebreakIndented lineSpread
                         |> Print.followedBy
@@ -15514,7 +15509,7 @@ printRustExpressionTuple parts =
                     )
             )
         |> Print.followedBy
-            (Print.spaceOrLinebreakIndented lineSpread)
+            (Print.emptyOrLinebreakIndented lineSpread)
         |> Print.followedBy
             printExactlyParenClosing
 
