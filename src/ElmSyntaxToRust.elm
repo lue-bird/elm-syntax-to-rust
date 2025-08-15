@@ -6238,6 +6238,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                             , referenceOrValueType : ReferenceOrValueType
                             }
                     , rustConsts : FastSet.Set String
+                    , rustFns : FastDict.Dict String { requiresAllocator : Bool }
                     , declarations :
                         { fns :
                             FastDict.Dict
@@ -6627,6 +6628,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                 { moduleInfo = createdModuleContext
                                                                 , rustEnumTypes = transpiledModuleDeclaredRustTypes.rustEnumTypes
                                                                 , rustConsts = withInferredValeAndFunctionDeclarationsSoFar.rustConsts
+                                                                , rustFns = withInferredValeAndFunctionDeclarationsSoFar.rustFns
                                                                 }
                                                     of
                                                         Ok rustValueOrFunctionDeclaration ->
@@ -6643,6 +6645,12 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                     { errors = withInferredValeAndFunctionDeclarationsSoFar.errors
                                                                     , rustEnumTypes = withInferredValeAndFunctionDeclarationsSoFar.rustEnumTypes
                                                                     , rustConsts = withInferredValeAndFunctionDeclarationsSoFar.rustConsts
+                                                                    , rustFns =
+                                                                        withInferredValeAndFunctionDeclarationsSoFar.rustFns
+                                                                            |> FastDict.insert rustName
+                                                                                { requiresAllocator =
+                                                                                    rustValueOrFunctionDeclaration.requiresAllocator
+                                                                                }
                                                                     , declarations =
                                                                         { typeAliases = withInferredValeAndFunctionDeclarationsSoFar.declarations.typeAliases
                                                                         , enumTypes = withInferredValeAndFunctionDeclarationsSoFar.declarations.enumTypes
@@ -6661,6 +6669,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                 Nothing ->
                                                                     { errors = withInferredValeAndFunctionDeclarationsSoFar.errors
                                                                     , rustEnumTypes = withInferredValeAndFunctionDeclarationsSoFar.rustEnumTypes
+                                                                    , rustFns = withInferredValeAndFunctionDeclarationsSoFar.rustFns
                                                                     , rustConsts =
                                                                         withInferredValeAndFunctionDeclarationsSoFar.rustConsts
                                                                             |> FastSet.insert rustName
@@ -6681,6 +6690,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                             { declarations = withInferredValeAndFunctionDeclarationsSoFar.declarations
                                                             , rustEnumTypes = withInferredValeAndFunctionDeclarationsSoFar.rustEnumTypes
                                                             , rustConsts = withInferredValeAndFunctionDeclarationsSoFar.rustConsts
+                                                            , rustFns = withInferredValeAndFunctionDeclarationsSoFar.rustFns
                                                             , errors =
                                                                 ("in value/function declaration "
                                                                     ++ moduleName
@@ -6695,13 +6705,14 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                 Graph.CyclicSCC valueOrFunctionDeclarationInferredCycle ->
                                                     valueOrFunctionDeclarationInferredCycle
                                                         |> List.foldl
-                                                            (\valueOrFunctionDeclarationInferred withCycleMemberSoFar ->
+                                                            (\valueOrFunctionDeclarationInferred withCycleMembersSoFar ->
                                                                 case
                                                                     valueOrFunctionDeclarationInferred
                                                                         |> valueOrFunctionDeclaration
                                                                             { moduleInfo = createdModuleContext
                                                                             , rustEnumTypes = transpiledModuleDeclaredRustTypes.rustEnumTypes
-                                                                            , rustConsts = withCycleMemberSoFar.rustConsts
+                                                                            , rustConsts = withCycleMembersSoFar.rustConsts
+                                                                            , rustFns = withCycleMembersSoFar.rustFns
                                                                             }
                                                                 of
                                                                     Ok rustValueOrFunctionDeclaration ->
@@ -6713,15 +6724,19 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                 }
                                                                                     |> elmReferenceToSnakeCaseRustName
                                                                         in
-                                                                        { errors = withCycleMemberSoFar.errors
-                                                                        , rustEnumTypes = withCycleMemberSoFar.rustEnumTypes
-                                                                        , rustConsts = withCycleMemberSoFar.rustConsts
+                                                                        { errors = withCycleMembersSoFar.errors
+                                                                        , rustEnumTypes = withCycleMembersSoFar.rustEnumTypes
+                                                                        , rustConsts = withCycleMembersSoFar.rustConsts
+                                                                        , rustFns =
+                                                                            withInferredValeAndFunctionDeclarationsSoFar.rustFns
+                                                                                |> FastDict.insert rustName
+                                                                                    { requiresAllocator = True }
                                                                         , declarations =
-                                                                            { typeAliases = withCycleMemberSoFar.declarations.typeAliases
-                                                                            , enumTypes = withCycleMemberSoFar.declarations.enumTypes
-                                                                            , consts = withCycleMemberSoFar.declarations.consts
+                                                                            { typeAliases = withCycleMembersSoFar.declarations.typeAliases
+                                                                            , enumTypes = withCycleMembersSoFar.declarations.enumTypes
+                                                                            , consts = withCycleMembersSoFar.declarations.consts
                                                                             , fns =
-                                                                                withCycleMemberSoFar.declarations.fns
+                                                                                withCycleMembersSoFar.declarations.fns
                                                                                     |> FastDict.insert rustName
                                                                                         { parameters =
                                                                                             rustValueOrFunctionDeclaration.parameters
@@ -6736,9 +6751,10 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                         }
 
                                                                     Err error ->
-                                                                        { declarations = withCycleMemberSoFar.declarations
-                                                                        , rustEnumTypes = withCycleMemberSoFar.rustEnumTypes
-                                                                        , rustConsts = withCycleMemberSoFar.rustConsts
+                                                                        { declarations = withCycleMembersSoFar.declarations
+                                                                        , rustEnumTypes = withCycleMembersSoFar.rustEnumTypes
+                                                                        , rustConsts = withCycleMembersSoFar.rustConsts
+                                                                        , rustFns = withCycleMembersSoFar.rustFns
                                                                         , errors =
                                                                             ("in value/function declaration "
                                                                                 ++ moduleName
@@ -6747,7 +6763,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                 ++ ": "
                                                                                 ++ error
                                                                             )
-                                                                                :: withCycleMemberSoFar.errors
+                                                                                :: withCycleMembersSoFar.errors
                                                                         }
                                                             )
                                                             withInferredValeAndFunctionDeclarationsSoFar
@@ -6757,6 +6773,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                 ++ soFarAcrossModules.errors
                                         , rustEnumTypes = soFarAcrossModules.rustEnumTypes
                                         , rustConsts = soFarAcrossModules.rustConsts
+                                        , rustFns = soFarAcrossModules.rustFns
                                         , declarations =
                                             { fns = soFarAcrossModules.declarations.fns
                                             , consts = soFarAcrossModules.declarations.consts
@@ -6790,6 +6807,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                             { errors = []
                             , rustEnumTypes = FastDict.empty
                             , rustConsts = FastSet.empty
+                            , rustFns = FastDict.empty
                             , declarations =
                                 { consts = FastDict.empty
                                 , fns = FastDict.empty
@@ -7153,12 +7171,14 @@ valueOrFunctionDeclaration :
             , referenceOrValueType : ReferenceOrValueType
             }
     , rustConsts : FastSet.Set String
+    , rustFns : FastDict.Dict String { requiresAllocator : Bool }
     }
     -> InferredValueOrFunctionDeclaration
     ->
         Result
             String
             { parameters : Maybe (List { pattern : RustPattern, type_ : RustType })
+            , requiresAllocator : Bool
             , result : RustExpression
             , resultType : RustType
             , lifetimeParameters : List String
@@ -7184,186 +7204,160 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
             typeWithExpandedAliases
                 |> inferredTypeExpandFunction
     in
-    case rustFullTypeAsFunction.inputs of
-        [] ->
-            Result.map
-                (\rustResult ->
-                    let
-                        rustResultType : RustType
-                        rustResultType =
-                            syntaxDeclarationValueOrFunction.type_
-                                |> type_
-                                    { typeAliasesInModule = typeAliasesInModule
-                                    , rustEnumTypes = context.rustEnumTypes
+    Result.map
+        (\rustResult ->
+            let
+                rustResultType : RustType
+                rustResultType =
+                    syntaxDeclarationValueOrFunction.type_
+                        |> type_
+                            { typeAliasesInModule = typeAliasesInModule
+                            , rustEnumTypes = context.rustEnumTypes
+                            }
+
+                resultIgnoresGeneratedAllocator : Bool
+                resultIgnoresGeneratedAllocator =
+                    (rustResult
+                        |> rustExpressionCountUsesOfReference
+                            { qualification = [], name = generatedAllocatorVariableName }
+                    )
+                        == 0
+            in
+            if
+                (rustFullTypeAsFunction.inputs |> List.isEmpty)
+                    && (rustResult |> rustExpressionIsConst { customConsts = context.rustConsts })
+                    && (-- https://github.com/rust-lang/rust/issues/113521
+                        rustResultType |> rustTypeIsConcrete
+                       )
+                    && (rustResultType
+                            |> rustTypeUsedLifetimeVariables
+                            |> FastSet.isEmpty
+                       )
+                    && resultIgnoresGeneratedAllocator
+            then
+                { parameters = Nothing
+                , requiresAllocator = False
+                , resultType = rustResultType
+                , result = rustResult
+                , lifetimeParameters = []
+                }
+
+            else
+                let
+                    syntaxParameterCount : Int
+                    syntaxParameterCount =
+                        syntaxDeclarationValueOrFunction.parameters
+                            |> List.length
+
+                    additionalGeneratedParameters : List { name : String, type_ : RustType }
+                    additionalGeneratedParameters =
+                        rustFullTypeAsFunction.inputs
+                            |> List.drop syntaxParameterCount
+                            |> List.indexedMap
+                                (\additionalParameterIndex additionalParameterInferredType ->
+                                    { name =
+                                        generatedParameterNameForIndex
+                                            (syntaxParameterCount + additionalParameterIndex)
+                                    , type_ =
+                                        additionalParameterInferredType
+                                            |> type_
+                                                { typeAliasesInModule = typeAliasesInModule
+                                                , rustEnumTypes = context.rustEnumTypes
+                                                }
                                     }
+                                )
 
-                        resultIgnoresGeneratedAllocator : Bool
-                        resultIgnoresGeneratedAllocator =
-                            (rustResult
-                                |> rustExpressionCountUsesOfReference
-                                    { qualification = [], name = generatedAllocatorVariableName }
-                            )
-                                == 0
-                    in
-                    if
-                        (rustResult |> rustExpressionIsConst { customConsts = context.rustConsts })
-                            && (-- https://github.com/rust-lang/rust/issues/113521
-                                rustResultType |> rustTypeIsConcrete
-                               )
-                            && (rustResultType
-                                    |> rustTypeUsedLifetimeVariables
-                                    |> FastSet.isEmpty
-                               )
-                            && resultIgnoresGeneratedAllocator
-                    then
-                        { parameters = Nothing
-                        , resultType = rustResultType
-                        , result = rustResult
-                        , lifetimeParameters = []
-                        }
+                    fullResult : RustExpression
+                    fullResult =
+                        additionalGeneratedParameters
+                            |> List.foldl
+                                (\additionalGeneratedParameter soFar ->
+                                    rustExpressionCallCondense
+                                        { called = soFar
+                                        , argument =
+                                            RustExpressionReference
+                                                { qualification = []
+                                                , name = additionalGeneratedParameter.name
+                                                }
+                                        }
+                                )
+                                rustResult
+                in
+                { requiresAllocator = Basics.not resultIgnoresGeneratedAllocator
+                , parameters =
+                    Just
+                        (listConsJust
+                            (if resultIgnoresGeneratedAllocator then
+                                Nothing
 
-                    else
-                        { parameters =
-                            Just
-                                [ { pattern =
-                                        if resultIgnoresGeneratedAllocator then
-                                            RustPatternIgnore
-
-                                        else
-                                            RustPatternVariable generatedAllocatorVariableName
-                                  , type_ =
+                             else
+                                Just
+                                    { pattern = RustPatternVariable generatedAllocatorVariableName
+                                    , type_ =
                                         RustTypeBorrow
                                             { lifetimeVariable = Just generatedLifetimeVariableName
                                             , type_ = rustTypeConstructBumpaloBump
                                             }
-                                  }
-                                ]
-                        , resultType = rustResultType
-                        , result = rustResult
-                        , lifetimeParameters = [ generatedLifetimeVariableName ]
-                        }
-                )
-                (syntaxDeclarationValueOrFunction.result
-                    |> expression
-                        { moduleInfo = context.moduleInfo
-                        , rustEnumTypes = context.rustEnumTypes
-                        , rustConsts = context.rustConsts
-                        , variablesFromWithinDeclarationInScope = FastDict.empty
-                        , letDeclaredValueAndFunctionTypes = FastDict.empty
-                        , path = []
-                        }
-                )
-
-        _ :: _ ->
-            Result.map
-                (\result ->
-                    let
-                        syntaxParameterCount : Int
-                        syntaxParameterCount =
-                            syntaxDeclarationValueOrFunction.parameters
-                                |> List.length
-
-                        additionalGeneratedParameters : List { name : String, type_ : RustType }
-                        additionalGeneratedParameters =
-                            rustFullTypeAsFunction.inputs
-                                |> List.drop syntaxParameterCount
-                                |> List.indexedMap
-                                    (\additionalParameterIndex additionalParameterInferredType ->
-                                        { name =
-                                            generatedParameterNameForIndex
-                                                (syntaxParameterCount + additionalParameterIndex)
+                                    }
+                            )
+                            (syntaxDeclarationValueOrFunction.parameters
+                                |> List.map
+                                    (\parameter ->
+                                        { pattern =
+                                            parameter
+                                                |> pattern { rustEnumTypes = context.rustEnumTypes }
                                         , type_ =
-                                            additionalParameterInferredType
+                                            parameter.type_
                                                 |> type_
                                                     { typeAliasesInModule = typeAliasesInModule
                                                     , rustEnumTypes = context.rustEnumTypes
                                                     }
                                         }
                                     )
-
-                        fullResult : RustExpression
-                        fullResult =
-                            additionalGeneratedParameters
-                                |> List.foldl
-                                    (\additionalGeneratedParameter soFar ->
-                                        rustExpressionCallCondense
-                                            { called = soFar
-                                            , argument =
-                                                RustExpressionReference
-                                                    { qualification = []
-                                                    , name = additionalGeneratedParameter.name
-                                                    }
-                                            }
-                                    )
-                                    result
-                    in
-                    { parameters =
-                        Just
-                            ({ pattern =
-                                if
-                                    (result
-                                        |> rustExpressionCountUsesOfReference
-                                            { qualification = [], name = generatedAllocatorVariableName }
-                                    )
-                                        == 0
-                                then
-                                    RustPatternIgnore
-
-                                else
-                                    RustPatternVariable generatedAllocatorVariableName
-                             , type_ =
-                                RustTypeBorrow
-                                    { lifetimeVariable = Just generatedLifetimeVariableName
-                                    , type_ = rustTypeConstructBumpaloBump
-                                    }
-                             }
-                                :: (syntaxDeclarationValueOrFunction.parameters
-                                        |> List.map
-                                            (\parameter ->
-                                                { pattern =
-                                                    parameter
-                                                        |> pattern { rustEnumTypes = context.rustEnumTypes }
-                                                , type_ =
-                                                    parameter.type_
-                                                        |> type_
-                                                            { typeAliasesInModule = typeAliasesInModule
-                                                            , rustEnumTypes = context.rustEnumTypes
-                                                            }
-                                                }
-                                            )
-                                   )
-                                ++ (additionalGeneratedParameters
-                                        |> List.map
-                                            (\additionalParameter ->
-                                                { pattern = RustPatternVariable additionalParameter.name
-                                                , type_ = additionalParameter.type_
-                                                }
-                                            )
-                                   )
                             )
-                    , resultType =
-                        rustFullTypeAsFunction.output
-                            |> type_
-                                { typeAliasesInModule = typeAliasesInModule
-                                , rustEnumTypes = context.rustEnumTypes
-                                }
-                    , result = fullResult
-                    , lifetimeParameters = [ generatedLifetimeVariableName ]
-                    }
-                )
-                (syntaxDeclarationValueOrFunction.result
-                    |> expression
-                        { moduleInfo = context.moduleInfo
-                        , variablesFromWithinDeclarationInScope =
-                            syntaxDeclarationValueOrFunction.parameters
-                                |> listMapToFastDictsAndUnify
-                                    patternTypedNodeIntroducedVariables
-                        , letDeclaredValueAndFunctionTypes = FastDict.empty
-                        , rustEnumTypes = context.rustEnumTypes
-                        , rustConsts = context.rustConsts
-                        , path = [ "result" ]
-                        }
-                )
+                            ++ (additionalGeneratedParameters
+                                    |> List.map
+                                        (\additionalParameter ->
+                                            { pattern = RustPatternVariable additionalParameter.name
+                                            , type_ = additionalParameter.type_
+                                            }
+                                        )
+                               )
+                        )
+                , resultType =
+                    rustFullTypeAsFunction.output
+                        |> type_
+                            { typeAliasesInModule = typeAliasesInModule
+                            , rustEnumTypes = context.rustEnumTypes
+                            }
+                , result = fullResult
+                , lifetimeParameters = [ generatedLifetimeVariableName ]
+                }
+        )
+        (syntaxDeclarationValueOrFunction.result
+            |> expression
+                { moduleInfo = context.moduleInfo
+                , variablesFromWithinDeclarationInScope =
+                    syntaxDeclarationValueOrFunction.parameters
+                        |> listMapToFastDictsAndUnify
+                            patternTypedNodeIntroducedVariables
+                , letDeclaredValueAndFunctionTypes = FastDict.empty
+                , rustEnumTypes = context.rustEnumTypes
+                , rustConsts = context.rustConsts
+                , rustFns = context.rustFns
+                , path = [ "result" ]
+                }
+        )
+
+
+listConsJust : Maybe a -> List a -> List a
+listConsJust maybeNewHead list =
+    case maybeNewHead of
+        Nothing ->
+            list
+
+        Just newHead ->
+            newHead :: list
 
 
 {-| https://doc.rust-lang.org/reference/const_eval.html#constant-expressions
@@ -7751,6 +7745,7 @@ type alias ExpressionToRustContext =
             , referenceOrValueType : ReferenceOrValueType
             }
     , rustConsts : FastSet.Set String
+    , rustFns : FastDict.Dict String { requiresAllocator : Bool }
     , path : List String
     }
 
@@ -7993,6 +7988,7 @@ expression context expressionTypedNode =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
                         , rustConsts = context.rustConsts
+                        , rustFns = context.rustFns
                         , path = "called" :: context.path
                         }
                 )
@@ -8005,6 +8001,7 @@ expression context expressionTypedNode =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
                         , rustConsts = context.rustConsts
+                        , rustFns = context.rustFns
                         , path = "argument0" :: context.path
                         }
                 )
@@ -8021,6 +8018,7 @@ expression context expressionTypedNode =
                                         context.letDeclaredValueAndFunctionTypes
                                     , rustEnumTypes = context.rustEnumTypes
                                     , rustConsts = context.rustConsts
+                                    , rustFns = context.rustFns
                                     , path =
                                         ("argument" ++ (argumentIndex |> String.fromInt))
                                             :: context.path
@@ -8047,6 +8045,7 @@ expression context expressionTypedNode =
                                     context.letDeclaredValueAndFunctionTypes
                                 , rustEnumTypes = context.rustEnumTypes
                                 , rustConsts = context.rustConsts
+                                , rustFns = context.rustFns
                                 , path = "left" :: context.path
                                 }
                         )
@@ -8059,6 +8058,7 @@ expression context expressionTypedNode =
                                     context.letDeclaredValueAndFunctionTypes
                                 , rustEnumTypes = context.rustEnumTypes
                                 , rustConsts = context.rustConsts
+                                , rustFns = context.rustFns
                                 , path = "right" :: context.path
                                 }
                         )
@@ -8080,6 +8080,7 @@ expression context expressionTypedNode =
                                     context.letDeclaredValueAndFunctionTypes
                                 , rustEnumTypes = context.rustEnumTypes
                                 , rustConsts = context.rustConsts
+                                , rustFns = context.rustFns
                                 , path = "left" :: context.path
                                 }
                         )
@@ -8092,6 +8093,7 @@ expression context expressionTypedNode =
                                     context.letDeclaredValueAndFunctionTypes
                                 , rustEnumTypes = context.rustEnumTypes
                                 , rustConsts = context.rustConsts
+                                , rustFns = context.rustFns
                                 , path = "right" :: context.path
                                 }
                         )
@@ -8149,6 +8151,7 @@ expression context expressionTypedNode =
                                     context.letDeclaredValueAndFunctionTypes
                                 , rustEnumTypes = context.rustEnumTypes
                                 , rustConsts = context.rustConsts
+                                , rustFns = context.rustFns
                                 , path = "left" :: context.path
                                 }
                         )
@@ -8161,6 +8164,7 @@ expression context expressionTypedNode =
                                     context.letDeclaredValueAndFunctionTypes
                                 , rustEnumTypes = context.rustEnumTypes
                                 , rustConsts = context.rustConsts
+                                , rustFns = context.rustFns
                                 , path = "right" :: context.path
                                 }
                         )
@@ -8175,19 +8179,21 @@ expression context expressionTypedNode =
                                         , name = operationFunctionReference.name
                                         }
                                 , arguments =
-                                    (if operationFunctionReference.requiresAllocator then
-                                        [ RustExpressionReference
-                                            { qualification = []
-                                            , name = generatedAllocatorVariableName
-                                            }
-                                        ]
+                                    listConsJust
+                                        (if operationFunctionReference.requiresAllocator then
+                                            Just
+                                                (RustExpressionReference
+                                                    { qualification = []
+                                                    , name = generatedAllocatorVariableName
+                                                    }
+                                                )
 
-                                     else
-                                        []
-                                    )
-                                        ++ [ left
-                                           , right
-                                           ]
+                                         else
+                                            Nothing
+                                        )
+                                        [ left
+                                        , right
+                                        ]
                                 }
                         )
                         (expressionOperatorToRustFunctionReference
@@ -8202,6 +8208,7 @@ expression context expressionTypedNode =
                                     context.letDeclaredValueAndFunctionTypes
                                 , rustEnumTypes = context.rustEnumTypes
                                 , rustConsts = context.rustConsts
+                                , rustFns = context.rustFns
                                 , path = "left" :: context.path
                                 }
                         )
@@ -8214,6 +8221,7 @@ expression context expressionTypedNode =
                                     context.letDeclaredValueAndFunctionTypes
                                 , rustEnumTypes = context.rustEnumTypes
                                 , rustConsts = context.rustConsts
+                                , rustFns = context.rustFns
                                 , path = "right" :: context.path
                                 }
                         )
@@ -8644,6 +8652,7 @@ expression context expressionTypedNode =
                                         |> .expression
 
                  else
+                    -- is not variable from within declaration
                     case context.moduleInfo |> FastDict.get reference.moduleOrigin of
                         Nothing ->
                             -- error?
@@ -8803,7 +8812,14 @@ expression context expressionTypedNode =
                                                                                     typeAliasesInModule
                                                                             )
                                                                         )
-                                                            , requiresAllocator = True
+                                                            , requiresAllocator =
+                                                                case context.rustFns |> FastDict.get rustName of
+                                                                    Nothing ->
+                                                                        -- (mutually) recursive fn
+                                                                        True
+
+                                                                    Just rustFn ->
+                                                                        rustFn.requiresAllocator
                                                             }
                                             in
                                             rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary context
@@ -8834,6 +8850,7 @@ expression context expressionTypedNode =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
                         , rustConsts = context.rustConsts
+                        , rustFns = context.rustFns
                         , path = "condition" :: context.path
                         }
                 )
@@ -8846,6 +8863,7 @@ expression context expressionTypedNode =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
                         , rustConsts = context.rustConsts
+                        , rustFns = context.rustFns
                         , path = "on_true" :: context.path
                         }
                 )
@@ -8858,6 +8876,7 @@ expression context expressionTypedNode =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
                         , rustConsts = context.rustConsts
+                        , rustFns = context.rustFns
                         , path = "on_false" :: context.path
                         }
                 )
@@ -8904,6 +8923,7 @@ expression context expressionTypedNode =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
                         , rustConsts = context.rustConsts
+                        , rustFns = context.rustFns
                         , path = "part0" :: context.path
                         }
                 )
@@ -8916,6 +8936,7 @@ expression context expressionTypedNode =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
                         , rustConsts = context.rustConsts
+                        , rustFns = context.rustFns
                         , path = "part1" :: context.path
                         }
                 )
@@ -8938,6 +8959,7 @@ expression context expressionTypedNode =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
                         , rustConsts = context.rustConsts
+                        , rustFns = context.rustFns
                         , path = "part0" :: context.path
                         }
                 )
@@ -8950,6 +8972,7 @@ expression context expressionTypedNode =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
                         , rustConsts = context.rustConsts
+                        , rustFns = context.rustFns
                         , path = "part1" :: context.path
                         }
                 )
@@ -8962,6 +8985,7 @@ expression context expressionTypedNode =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
                         , rustConsts = context.rustConsts
+                        , rustFns = context.rustFns
                         , path = "part2" :: context.path
                         }
                 )
@@ -9010,6 +9034,7 @@ expression context expressionTypedNode =
                                         context.letDeclaredValueAndFunctionTypes
                                     , rustEnumTypes = context.rustEnumTypes
                                     , rustConsts = context.rustConsts
+                                    , rustFns = context.rustFns
                                     , path = (elementIndex |> String.fromInt) :: context.path
                                     }
                         )
@@ -9050,6 +9075,7 @@ expression context expressionTypedNode =
                                             context.letDeclaredValueAndFunctionTypes
                                         , rustEnumTypes = context.rustEnumTypes
                                         , rustConsts = context.rustConsts
+                                        , rustFns = context.rustFns
                                         , path =
                                             (field.name |> toSnakeCaseRustName)
                                                 :: context.path
@@ -9121,6 +9147,7 @@ expression context expressionTypedNode =
                                                     context.letDeclaredValueAndFunctionTypes
                                                 , rustEnumTypes = context.rustEnumTypes
                                                 , rustConsts = context.rustConsts
+                                                , rustFns = context.rustFns
                                                 , path =
                                                     (field.name |> toSnakeCaseRustName)
                                                         :: context.path
@@ -9201,6 +9228,7 @@ expression context expressionTypedNode =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
                         , rustConsts = context.rustConsts
+                        , rustFns = context.rustFns
                         , path = "result" :: context.path
                         }
                 )
@@ -9233,6 +9261,7 @@ expression context expressionTypedNode =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
                         , rustConsts = context.rustConsts
+                        , rustFns = context.rustFns
                         , path = "matched" :: context.path
                         }
                 )
@@ -9245,6 +9274,7 @@ expression context expressionTypedNode =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
                         , rustConsts = context.rustConsts
+                        , rustFns = context.rustFns
                         , path = "case0" :: context.path
                         }
                 )
@@ -9264,6 +9294,7 @@ expression context expressionTypedNode =
                                         context.letDeclaredValueAndFunctionTypes
                                     , rustEnumTypes = context.rustEnumTypes
                                     , rustConsts = context.rustConsts
+                                    , rustFns = context.rustFns
                                     , path =
                                         ("case" ++ (caseIndex |> String.fromInt))
                                             :: context.path
@@ -9361,6 +9392,7 @@ expression context expressionTypedNode =
                                         letDeclaredValueAndFunctionTypesIncludingFromContext
                                     , rustEnumTypes = context.rustEnumTypes
                                     , rustConsts = context.rustConsts
+                                    , rustFns = context.rustFns
                                     , path =
                                         ("let_declaration" ++ (letDeclarationIndex |> String.fromInt))
                                             :: context.path
@@ -9377,6 +9409,7 @@ expression context expressionTypedNode =
                             letDeclaredValueAndFunctionTypesIncludingFromContext
                         , rustEnumTypes = context.rustEnumTypes
                         , rustConsts = context.rustConsts
+                        , rustFns = context.rustFns
                         , path = "let_result" :: context.path
                         }
                 )
@@ -11698,6 +11731,7 @@ case_ context syntaxCase =
                     context.letDeclaredValueAndFunctionTypes
                 , rustEnumTypes = context.rustEnumTypes
                 , rustConsts = context.rustConsts
+                , rustFns = context.rustFns
                 , path =
                     -- intentional as there is only one sub-expression
                     context.path
@@ -11733,6 +11767,7 @@ letDeclaration context syntaxLetDeclarationNode =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
                         , rustConsts = context.rustConsts
+                        , rustFns = context.rustFns
                         , path =
                             -- intentional as there is only one sub-expression
                             context.path
@@ -11979,6 +12014,7 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                     , variablesFromWithinDeclarationInScope =
                         context.variablesFromWithinDeclarationInScope
                     , rustEnumTypes = context.rustEnumTypes
+                    , rustFns = context.rustFns
                     , rustConsts = context.rustConsts
                     }
             )
@@ -12137,6 +12173,7 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                         context.letDeclaredValueAndFunctionTypes
                     , rustEnumTypes = context.rustEnumTypes
                     , rustConsts = context.rustConsts
+                    , rustFns = context.rustFns
                     , path = "result" :: context.path
                     }
             )
