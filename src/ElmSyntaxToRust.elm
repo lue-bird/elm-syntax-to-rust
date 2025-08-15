@@ -5359,6 +5359,22 @@ printParenthesized inner =
         |> Print.followedBy printExactlyParenClosing
 
 
+{-| {Wrap in curlies}
+-}
+printCurlyEmbraced : Print -> Print
+printCurlyEmbraced inner =
+    printExactlyCurlyOpening
+        |> Print.followedBy
+            (Print.withIndentIncreasedBy 1
+                inner
+            )
+        |> Print.followedBy
+            (Print.emptyOrLinebreakIndented
+                (inner |> Print.lineSpread)
+            )
+        |> Print.followedBy printExactlyCurlyClosing
+
+
 printExactlyParenOpening : Print
 printExactlyParenOpening =
     Print.exactly "("
@@ -6657,21 +6673,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                     soFarAcrossModulesWithInferredValeAndFunctionDeclarations.declarations.consts
                                                                         |> FastDict.insert rustName
                                                                             { resultType = rustValueOrFunctionDeclaration.resultType
-                                                                            , result =
-                                                                                case rustValueOrFunctionDeclaration.result of
-                                                                                    RustExpressionAfterStatement _ ->
-                                                                                        RustExpressionCall
-                                                                                            { called =
-                                                                                                RustExpressionClosure
-                                                                                                    { parameters = []
-                                                                                                    , resultType = Just rustValueOrFunctionDeclaration.resultType
-                                                                                                    , result = rustValueOrFunctionDeclaration.result
-                                                                                                    }
-                                                                                            , arguments = []
-                                                                                            }
-
-                                                                                    _ ->
-                                                                                        rustValueOrFunctionDeclaration.result
+                                                                            , result = rustValueOrFunctionDeclaration.result
                                                                             }
                                                                 }
                                                             }
@@ -12860,6 +12862,11 @@ printRustLetDeclaration rustLetDeclaration =
         resultTypeFullLineSpread : Print.LineSpread
         resultTypeFullLineSpread =
             resultTypePrint |> Print.lineSpread
+
+        resultPrint : Print
+        resultPrint =
+            printRustExpressionNotParenthesized
+                rustLetDeclaration.result
     in
     Print.exactly
         ("pub const " ++ rustLetDeclaration.name)
@@ -12873,10 +12880,15 @@ printRustLetDeclaration rustLetDeclaration =
                             )
                         )
                     |> Print.followedBy
-                        printExactlySpaceEqualsLinebreakIndented
-                    |> Print.followedBy
-                        (printRustExpressionNotParenthesized
-                            rustLetDeclaration.result
+                        (case rustLetDeclaration.result of
+                            RustExpressionAfterStatement _ ->
+                                printExactlySpaceEquals
+                                    |> Print.followedBy
+                                        (printCurlyEmbraced resultPrint)
+
+                            _ ->
+                                printExactlySpaceEqualsLinebreakIndented
+                                    |> Print.followedBy resultPrint
                         )
                 )
             )
