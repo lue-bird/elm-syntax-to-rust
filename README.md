@@ -2,7 +2,7 @@
 > I'm also just learning rust so any tips (e.g. in issues) are appreciated
 >
 > TODO
-> - constrain type variables as `: Clone` instead of `: Copy` and make `.clone()` explicit. A consequence is that current closure and match-arm pattern variables are prefixed with `ref` (because a closure are otherwise considered FnOnce and a match arm cannot generally move)
+> - constrain type variables as `: Clone` instead of `: Copy` and make `.clone()` explicit. A consequence is that current closure and match-arm pattern variables are prefixed with `ref` (because a closure is otherwise considered FnOnce and a match arm cannot generally move)
 > - replace immutable string type by `&mut Cow<str>` and array by `&mut Cow<[A]>` to make appending strings or setting array elements cheap. As a result, when a variable's type contains a string/array, use `alloc(_.clone())` every use but the last and pattern match with `(Owned("x") | Borrowed("x"))`
 > - optional: if lambda is called with a function, always inline that function
 
