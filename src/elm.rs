@@ -1445,3 +1445,189 @@ pub type BytesBytes<'a> = &'a [u8];
 pub const fn bytes_width(bytes: BytesBytes) -> f64 {
     bytes.len() as f64
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GeneratedOffsetStart<Offset, Start> {
+    offset: Offset,
+    start: Start,
+}
+pub struct TimeCivil {
+    day: i64,
+    month: i64,
+    year: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TimeMonth {
+    Apr,
+    Aug,
+    Dec,
+    Feb,
+    Jan,
+    Jul,
+    Jun,
+    Mar,
+    May,
+    Nov,
+    Oct,
+    Sep,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TimePosix {
+    Posix(i64),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TimeWeekday {
+    Fri,
+    Mon,
+    Sat,
+    Sun,
+    Thu,
+    Tue,
+    Wed,
+}
+
+pub type TimeEra = GeneratedOffsetStart<f64, f64>;
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TimeZone<'a> {
+    Zone(i64, &'a ListList<'a, TimeEra>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TimeZoneName<'a> {
+    Name(&'a str),
+    Offset(f64),
+}
+
+pub fn time_custom_zone<'a>(
+    default_offset_in_minutes: f64,
+    eras: &'a ListList<'a, GeneratedOffsetStart<f64, f64>>,
+) -> TimeZone<'a> {
+    TimeZone::Zone(default_offset_in_minutes as i64, eras)
+}
+
+pub fn floored_div(numerator: i64, denominator: i64) -> i64 {
+    f64::floor(numerator as f64 / denominator as f64) as i64
+}
+
+pub fn time_millis_to_posix(milliseconds: f64) -> TimePosix {
+    TimePosix::Posix(milliseconds as i64)
+}
+
+pub fn time_posix_to_millis(TimePosix::Posix(millis): TimePosix) -> f64 {
+    millis as f64
+}
+
+pub fn time_posix_to_millis_i64(TimePosix::Posix(millis): TimePosix) -> i64 {
+    millis
+}
+
+pub fn time_to_adjusted_minutes<'a>(
+    TimeZone::Zone(default_offset, eras): TimeZone<'a>,
+    time: TimePosix,
+) -> i64 {
+    time_to_adjusted_minutes_help(
+        default_offset,
+        floored_div(time_posix_to_millis_i64(time), 60000_i64),
+        eras,
+    )
+}
+
+pub fn time_to_adjusted_minutes_help<'a>(
+    default_offset: i64,
+    posix_minutes: i64,
+    eras: &'a ListList<'a, GeneratedOffsetStart<f64, f64>>,
+) -> i64 {
+    match eras {
+        &ListList::Empty => posix_minutes + default_offset,
+        &ListList::Cons(era, older_eras) => {
+            if (era.start as i64) < posix_minutes {
+                posix_minutes + era.offset as i64
+            } else {
+                time_to_adjusted_minutes_help(default_offset, posix_minutes, older_eras)
+            }
+        }
+    }
+}
+
+pub fn time_to_civil(minutes: i64) -> TimeCivil {
+    let raw_day: i64 = floored_div(minutes, 60_i64 * 24_i64) + 719468_i64;
+    let era: i64 = if raw_day >= 0_i64 {
+        raw_day
+    } else {
+        raw_day - 146096_i64
+    } / 146097_i64;
+    let day_of_era: i64 = raw_day - era * 146097_i64;
+    let year_of_era: i64 = (day_of_era - day_of_era / 1460_i64 + day_of_era / 36524_i64
+        - day_of_era / 146096_i64)
+        / 365_i64;
+    let day_of_year: i64 =
+        day_of_era - (365_i64 * year_of_era + year_of_era / 4_i64 - year_of_era / 100_i64);
+    let mp: i64 = (5_i64 * day_of_year + 2_i64) / 153_i64;
+    let month: i64 = mp + if mp < 10_i64 { 3_i64 } else { -9_i64 };
+    let year: i64 = year_of_era + era * 400_i64;
+    TimeCivil {
+        day: day_of_year - (153_i64 * mp + 2_i64) / 5_i64 + 1_i64,
+        month: month,
+        year: year + if month <= 2_i64 { 1_i64 } else { 0_i64 },
+    }
+}
+
+pub fn time_to_day<'a>(zone: TimeZone<'a>, time: TimePosix) -> f64 {
+    time_to_civil(time_to_adjusted_minutes(zone, time)).day as f64
+}
+
+pub fn time_to_hour<'a>(zone: TimeZone<'a>, time: TimePosix) -> f64 {
+    (floored_div(time_to_adjusted_minutes(zone, time), 60_i64) % 24_i64) as f64
+}
+
+pub fn time_to_millis<'a>(_: TimeZone<'a>, time: TimePosix) -> f64 {
+    (time_posix_to_millis_i64(time) % 1000_i64) as f64
+}
+
+pub fn time_to_minute<'a>(zone: TimeZone<'a>, time: TimePosix) -> f64 {
+    (time_to_adjusted_minutes(zone, time) % 60_i64) as f64
+}
+
+pub fn time_to_month<'a>(zone: TimeZone<'a>, time: TimePosix) -> TimeMonth {
+    match time_to_civil(time_to_adjusted_minutes(zone, time)).month {
+        1_i64 => TimeMonth::Jan,
+        2_i64 => TimeMonth::Feb,
+        3_i64 => TimeMonth::Mar,
+        4_i64 => TimeMonth::Apr,
+        5_i64 => TimeMonth::May,
+        6_i64 => TimeMonth::Jun,
+        7_i64 => TimeMonth::Jul,
+        8_i64 => TimeMonth::Aug,
+        9_i64 => TimeMonth::Sep,
+        10_i64 => TimeMonth::Oct,
+        11_i64 => TimeMonth::Nov,
+        _ => TimeMonth::Dec,
+    }
+}
+
+pub fn time_to_second<'a>(_: TimeZone<'a>, time: TimePosix) -> f64 {
+    (floored_div(time_posix_to_millis_i64(time), 1000_i64) % 60_i64) as f64
+}
+
+pub fn time_to_weekday<'a>(zone: TimeZone<'a>, time: TimePosix) -> TimeWeekday {
+    match floored_div(time_to_adjusted_minutes(zone, time), 60_i64 * 24_i64) % 7_i64 {
+        0_i64 => TimeWeekday::Thu,
+        1_i64 => TimeWeekday::Fri,
+        2_i64 => TimeWeekday::Sat,
+        3_i64 => TimeWeekday::Sun,
+        4_i64 => TimeWeekday::Mon,
+        5_i64 => TimeWeekday::Tue,
+        _ => TimeWeekday::Wed,
+    }
+}
+
+pub fn time_to_year<'a>(zone: TimeZone<'a>, time: TimePosix) -> f64 {
+    time_to_civil(time_to_adjusted_minutes(zone, time)).year as f64
+}
+
+pub fn time_utc<'a>() -> TimeZone<'a> {
+    TimeZone::Zone(0_i64, &ListList::Empty)
+}

@@ -44,7 +44,7 @@ pub fn sample_plus2<'a>(allocator: &'a Bump, n: f64) -> f64 {
 
 -   not supported are
     -   ports that use non-json values like `port sendMessage : String -> Cmd msg`, glsl
-    -   `elm/file`, `elm/http`, `elm/browser`, `elm-explorations/markdown`, `elm-explorations/webgl`, `elm-explorations/benchmark` (currently also `elm/json`, `elm/random`, `elm/time`, `Bytes.Encode`, `Bytes.Decode`, `elm/regex`, `elm/virtual-dom`, `elm-explorations/linear-algebra` TODO)
+    -   `elm/file`, `elm/http`, `elm/browser`, `elm-explorations/markdown`, `elm-explorations/webgl`, `elm-explorations/benchmark` (currently also `elm/json`, `elm/random`, `Bytes.Encode`, `Bytes.Decode`, `elm/regex`, `elm/virtual-dom`, `elm-explorations/linear-algebra` TODO)
     -   `Task`, `Process`, `Platform.Task`, `Platform.ProcessId`, `Platform.Router`, `Platform.sendToApp`, `Platform.sendToSelf`, `Random.generate`, `Time.now`, `Time.every`, `Time.here`, `Time.getZoneName`, `Bytes.getHostEndianness`
     -   extensible record types outside of module-level value/function declarations. For example, these declarations might not work:
         ```elm
