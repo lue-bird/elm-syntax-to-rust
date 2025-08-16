@@ -12922,7 +12922,7 @@ printRustFnDeclaration rustValueOrFunctionDeclaration =
                         |> Print.followedBy
                             (Print.emptyOrLinebreakIndented parametersLineSpread)
                     )
-                    |> Print.followedBy printExactlySpaceMinusGreaterThanSpace
+                    |> Print.followedBy printExactlySpaceMinusGreaterThan
                     |> Print.followedBy
                         (Print.spaceOrLinebreakIndented headerLineSpread)
                     |> Print.followedBy
@@ -13183,7 +13183,7 @@ printRustLocalFnDeclaration rustFnDeclaration =
                         |> Print.followedBy
                             (Print.emptyOrLinebreakIndented parametersLineSpread)
                     )
-                    |> Print.followedBy printExactlySpaceMinusGreaterThanSpace
+                    |> Print.followedBy printExactlySpaceMinusGreaterThan
                     |> Print.followedBy
                         (Print.spaceOrLinebreakIndented headerLineSpread)
                     |> Print.followedBy
@@ -13238,9 +13238,9 @@ printExactlySpaceEqualsLinebreakIndented =
         |> Print.followedBy Print.linebreakIndented
 
 
-printExactlySpaceMinusGreaterThanSpace : Print
-printExactlySpaceMinusGreaterThanSpace =
-    Print.exactly " -> "
+printExactlySpaceMinusGreaterThan : Print
+printExactlySpaceMinusGreaterThan =
+    Print.exactly " ->"
 
 
 inferredValueOrFunctionDeclarationsToMostToLeastDependedOn :
