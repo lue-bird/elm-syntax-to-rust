@@ -1921,8 +1921,8 @@ singleDoubleQuotedStringCharToEscaped character =
                 String.fromChar otherCharacter
 
 
-unsafeHexDigitIntToString : Int -> String
-unsafeHexDigitIntToString int =
+hexDigitIntToString : Int -> String
+hexDigitIntToString int =
     case int of
         0 ->
             "0"
@@ -1982,22 +1982,22 @@ characterHex character =
             Char.toCode character
     in
     String.toUpper
-        (unsafeHexDigitIntToString
+        (hexDigitIntToString
             (charCode
                 |> Bitwise.and 0xF000
                 |> Bitwise.shiftRightBy 12
             )
-            ++ unsafeHexDigitIntToString
+            ++ hexDigitIntToString
                 (charCode
                     |> Bitwise.and 0x0F00
                     |> Bitwise.shiftRightBy 8
                 )
-            ++ unsafeHexDigitIntToString
+            ++ hexDigitIntToString
                 (charCode
                     |> Bitwise.and 0xF0
                     |> Bitwise.shiftRightBy 4
                 )
-            ++ unsafeHexDigitIntToString
+            ++ hexDigitIntToString
                 (charCode |> Bitwise.and 0x0F)
             ++ ""
         )
