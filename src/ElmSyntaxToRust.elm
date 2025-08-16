@@ -3548,7 +3548,7 @@ referenceToCoreRust reference =
                 "toList" ->
                     Just
                         { qualification = []
-                        , name = "string_toList"
+                        , name = "string_to_list"
                         , requiresAllocator = True
                         }
 
@@ -9009,7 +9009,9 @@ expression context expressionTypedNode =
                                     RustExpressionReference
                                         { qualification = [], name = "array_to_list" }
                                 , arguments =
-                                    [ RustExpressionBorrow
+                                    [ RustExpressionReference
+                                        { qualification = [], name = generatedAllocatorVariableName }
+                                    , RustExpressionBorrow
                                         (RustExpressionArrayLiteral
                                             (element0 :: element1 :: element2Up)
                                         )
@@ -10743,7 +10745,7 @@ rustExpressionCallCondense call =
                                         case argumentReference.name of
                                             "array_to_list" ->
                                                 case argumentCall.arguments of
-                                                    [ RustExpressionArrayLiteral elements ] ->
+                                                    [ {- allocator -} _, RustExpressionArrayLiteral elements ] ->
                                                         Just elements
 
                                                     _ ->
