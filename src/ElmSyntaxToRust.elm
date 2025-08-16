@@ -9475,14 +9475,8 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
                 parameterCount
     in
     case parameterCountIncludingPotentialAllocator of
-        1 ->
-            RustExpressionReference
-                { qualification = rustReference.qualification
-                , name = rustReference.name
-                }
-
         0 ->
-            -- TODO optimize checking
+            -- TODO should be redundant with context.rustConsts checking
             let
                 asRustType : RustType
                 asRustType =
@@ -9546,94 +9540,101 @@ rustExpressionReferenceDeclaredValueOrFunctionAppliedLazilyOrCurriedIfNecessary 
                     }
 
         _ ->
-            let
-                inferredTypeExpandedAsFunction : { inputs : List ElmSyntaxTypeInfer.Type, output : ElmSyntaxTypeInfer.Type }
-                inferredTypeExpandedAsFunction =
-                    rustReference.inferredType
-                        |> inferredTypeExpandInnerAliases typeAliasesInModule
-                        |> inferredTypeExpandFunction
+            if parameterCount == 1 && Basics.not rustReference.requiresAllocator then
+                RustExpressionReference
+                    { qualification = rustReference.qualification
+                    , name = rustReference.name
+                    }
 
-                typeAliasesInModule : String -> Maybe (FastDict.Dict String { parameters : List String, recordFieldOrder : Maybe (List String), type_ : ElmSyntaxTypeInfer.Type })
-                typeAliasesInModule moduleNameToAccess =
-                    context.moduleInfo
-                        |> FastDict.get moduleNameToAccess
-                        |> Maybe.map .typeAliases
-            in
-            inferredTypeExpandedAsFunction.inputs
-                |> List.take parameterCount
-                |> List.indexedMap Tuple.pair
-                |> List.foldr
-                    (\( parameterIndex, parameterInferredType ) resultSoFar ->
-                        let
-                            parameterType : RustType
-                            parameterType =
-                                parameterInferredType
-                                    |> type_
-                                        { typeAliasesInModule = typeAliasesInModule
-                                        , rustEnumTypes = context.rustEnumTypes
+            else
+                let
+                    inferredTypeExpandedAsFunction : { inputs : List ElmSyntaxTypeInfer.Type, output : ElmSyntaxTypeInfer.Type }
+                    inferredTypeExpandedAsFunction =
+                        rustReference.inferredType
+                            |> inferredTypeExpandInnerAliases typeAliasesInModule
+                            |> inferredTypeExpandFunction
+
+                    typeAliasesInModule : String -> Maybe (FastDict.Dict String { parameters : List String, recordFieldOrder : Maybe (List String), type_ : ElmSyntaxTypeInfer.Type })
+                    typeAliasesInModule moduleNameToAccess =
+                        context.moduleInfo
+                            |> FastDict.get moduleNameToAccess
+                            |> Maybe.map .typeAliases
+                in
+                inferredTypeExpandedAsFunction.inputs
+                    |> List.take parameterCount
+                    |> List.indexedMap Tuple.pair
+                    |> List.foldr
+                        (\( parameterIndex, parameterInferredType ) resultSoFar ->
+                            let
+                                parameterType : RustType
+                                parameterType =
+                                    parameterInferredType
+                                        |> type_
+                                            { typeAliasesInModule = typeAliasesInModule
+                                            , rustEnumTypes = context.rustEnumTypes
+                                            }
+                            in
+                            { expression =
+                                rustExpressionClosureReference
+                                    { parameters =
+                                        [ { pattern =
+                                                RustPatternVariable
+                                                    (generatedParameterNameForIndexAtPath
+                                                        parameterIndex
+                                                        context.path
+                                                    )
+                                          , type_ = Just parameterType
+                                          }
+                                        ]
+                                    , resultType = Just resultSoFar.type_
+                                    , result = resultSoFar.expression
+                                    }
+                            , type_ =
+                                rustTypeBorrowDynFn
+                                    { input = [ parameterType ]
+                                    , output = resultSoFar.type_
+                                    }
+                            }
+                        )
+                        { type_ =
+                            inferredTypeExpandedAsFunction.output
+                                |> type_
+                                    { typeAliasesInModule = typeAliasesInModule
+                                    , rustEnumTypes = context.rustEnumTypes
+                                    }
+                        , expression =
+                            RustExpressionCall
+                                { called =
+                                    RustExpressionReference
+                                        { qualification = rustReference.qualification
+                                        , name = rustReference.name
                                         }
-                        in
-                        { expression =
-                            rustExpressionClosureReference
-                                { parameters =
-                                    [ { pattern =
-                                            RustPatternVariable
-                                                (generatedParameterNameForIndexAtPath
-                                                    parameterIndex
-                                                    context.path
-                                                )
-                                      , type_ = Just parameterType
-                                      }
-                                    ]
-                                , resultType = Just resultSoFar.type_
-                                , result = resultSoFar.expression
-                                }
-                        , type_ =
-                            rustTypeBorrowDynFn
-                                { input = [ parameterType ]
-                                , output = resultSoFar.type_
+                                , arguments =
+                                    (if rustReference.requiresAllocator then
+                                        [ RustExpressionReference
+                                            { qualification = []
+                                            , name = generatedAllocatorVariableName
+                                            }
+                                        ]
+
+                                     else
+                                        []
+                                    )
+                                        ++ (List.range 0 (parameterCount - 1)
+                                                |> List.map
+                                                    (\parameterIndex ->
+                                                        RustExpressionReference
+                                                            { qualification = []
+                                                            , name =
+                                                                generatedParameterNameForIndexAtPath
+                                                                    parameterIndex
+                                                                    context.path
+                                                            }
+                                                    )
+                                           )
                                 }
                         }
-                    )
-                    { type_ =
-                        inferredTypeExpandedAsFunction.output
-                            |> type_
-                                { typeAliasesInModule = typeAliasesInModule
-                                , rustEnumTypes = context.rustEnumTypes
-                                }
-                    , expression =
-                        RustExpressionCall
-                            { called =
-                                RustExpressionReference
-                                    { qualification = rustReference.qualification
-                                    , name = rustReference.name
-                                    }
-                            , arguments =
-                                (if rustReference.requiresAllocator then
-                                    [ RustExpressionReference
-                                        { qualification = []
-                                        , name = generatedAllocatorVariableName
-                                        }
-                                    ]
-
-                                 else
-                                    []
-                                )
-                                    ++ (List.range 0 (parameterCount - 1)
-                                            |> List.map
-                                                (\parameterIndex ->
-                                                    RustExpressionReference
-                                                        { qualification = []
-                                                        , name =
-                                                            generatedParameterNameForIndexAtPath
-                                                                parameterIndex
-                                                                context.path
-                                                        }
-                                                )
-                                       )
-                            }
-                    }
-                |> .expression
+                    |> .expression
 
 
 generatedParameterNameForIndexAtPath : Int -> List String -> String
