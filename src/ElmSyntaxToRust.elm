@@ -7188,23 +7188,23 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
             context.moduleInfo
                 |> FastDict.get moduleNameToAccess
                 |> Maybe.map .typeAliases
-
-        typeWithExpandedAliases : ElmSyntaxTypeInfer.Type
-        typeWithExpandedAliases =
-            syntaxDeclarationValueOrFunction.type_
-                |> inferredTypeExpandInnerAliases typeAliasesInModule
-
-        rustFullTypeAsFunction :
-            { inputs : List ElmSyntaxTypeInfer.Type
-            , output : ElmSyntaxTypeInfer.Type
-            }
-        rustFullTypeAsFunction =
-            typeWithExpandedAliases
-                |> inferredTypeExpandFunction
     in
     Result.map
         (\rustResult ->
             let
+                typeWithExpandedAliases : ElmSyntaxTypeInfer.Type
+                typeWithExpandedAliases =
+                    syntaxDeclarationValueOrFunction.type_
+                        |> inferredTypeExpandInnerAliases typeAliasesInModule
+
+                rustFullTypeAsFunction :
+                    { inputs : List ElmSyntaxTypeInfer.Type
+                    , output : ElmSyntaxTypeInfer.Type
+                    }
+                rustFullTypeAsFunction =
+                    typeWithExpandedAliases
+                        |> inferredTypeExpandFunction
+
                 rustResultType : RustType
                 rustResultType =
                     syntaxDeclarationValueOrFunction.type_
@@ -9465,14 +9465,6 @@ rustExpressionReferenceDeclaredFnAppliedLazilyOrCurriedIfNecessary context rustR
                 |> inferredTypeExpandFunction
                 |> .inputs
                 |> List.length
-
-        parameterCountIncludingPotentialAllocator : Int
-        parameterCountIncludingPotentialAllocator =
-            if rustReference.requiresAllocator then
-                parameterCount + 1
-
-            else
-                parameterCount
     in
     if parameterCount == 1 && Basics.not rustReference.requiresAllocator then
         RustExpressionReference
