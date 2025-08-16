@@ -1908,7 +1908,10 @@ singleDoubleQuotedStringCharToEscaped character =
             "\\r"
 
         '{' ->
-            "\\{"
+            "{{"
+
+        '}' ->
+            "}}"
 
         otherCharacter ->
             if characterIsNotPrint otherCharacter then
