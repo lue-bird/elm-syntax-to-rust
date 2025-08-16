@@ -1907,12 +1907,6 @@ singleDoubleQuotedStringCharToEscaped character =
         '\u{000D}' ->
             "\\r"
 
-        '{' ->
-            "{{"
-
-        '}' ->
-            "}}"
-
         otherCharacter ->
             if characterIsNotPrint otherCharacter then
                 "\\u" ++ characterHex otherCharacter
