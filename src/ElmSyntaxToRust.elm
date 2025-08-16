@@ -4746,25 +4746,25 @@ referenceToCoreRust reference =
         "Elm.Kernel.Parser" ->
             case reference.name of
                 "isSubString" ->
-                    Just { qualification = [], name = "elm_kernel_parser_is_sub_string", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "elm_kernel_parser_is_sub_string", requiresAllocator = False }
 
                 "isSubChar" ->
-                    Just { qualification = [], name = "elm_kernel_parser_is_sub_char", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "elm_kernel_parser_is_sub_char", requiresAllocator = False }
 
                 "isAsciiCode" ->
-                    Just { qualification = [], name = "elm_kernel_parser_is_ascii_code", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "elm_kernel_parser_is_ascii_code", requiresAllocator = False }
 
                 "chompBase10" ->
-                    Just { qualification = [], name = "elm_kernel_parser_chomp_base10", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "elm_kernel_parser_chomp_base10", requiresAllocator = False }
 
                 "consumeBase" ->
-                    Just { qualification = [], name = "elm_kernel_parser_consume_base", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "elm_kernel_parser_consume_base", requiresAllocator = False }
 
                 "consumeBase16" ->
-                    Just { qualification = [], name = "elm_kernel_parser_consume_base16", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "elm_kernel_parser_consume_base16", requiresAllocator = False }
 
                 "findSubString" ->
-                    Just { qualification = [], name = "elm_kernel_parser_find_sub_string", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "elm_kernel_parser_find_sub_string", requiresAllocator = False }
 
                 _ ->
                     Nothing
@@ -31402,5 +31402,170 @@ pub fn time_to_year<'a>(zone: TimeZone<'a>, time: TimePosix) -> f64 {
 
 pub fn time_utc<'a>() -> TimeZone<'a> {
     TimeZone::Zone(0_i64, &ListList::Empty)
+}
+
+pub fn elm_kernel_parser_is_sub_string(
+    small_string: &str,
+    offset_original: f64,
+    row_original: f64,
+    col_original: f64,
+    big_string: &str,
+) -> (f64, f64, f64) {
+    let mut row: usize = row_original as usize;
+    let mut col: usize = col_original as usize;
+    let mut small_string_iterator = small_string.chars();
+    for code in big_string.chars().skip(offset_original as usize) {
+        if small_string_iterator.next() != Option::Some(code) {
+            return (-1_f64, row as f64, col as f64);
+        }
+        if code == '\\n' {
+            row = row + 1;
+            col = 1
+        } else {
+            col = col + 1;
+        }
+    }
+    (
+        offset_original + small_string.chars().count() as f64,
+        row as f64,
+        col as f64,
+    )
+}
+
+pub fn elm_kernel_parser_is_sub_char(
+    predicate: impl Fn(char) -> bool,
+    offset_original: f64,
+    string: &str,
+) -> f64 {
+    match string.chars().nth(offset_original as usize) {
+        Option::None => -1_f64,
+        Option::Some(char_at_offset) => {
+            if predicate(char_at_offset) {
+                if char_at_offset == '\\n' {
+                    -2_f64
+                } else {
+                    offset_original + 1_f64
+                }
+            } else {
+                -1_f64
+            }
+        }
+    }
+}
+
+pub fn elm_kernel_parser_is_ascii_code(code: f64, offset: f64, string: &str) -> bool {
+    match string.chars().nth(offset as usize) {
+        Option::None => false,
+        Option::Some(char_at_offset) => char_at_offset as usize == code as usize,
+    }
+}
+
+pub fn elm_kernel_parser_chomp_base10(offset_original: f64, string: &str) -> f64 {
+    let mut offset: usize = offset_original as usize;
+    let mut string_iterator_from_offset = string.chars().skip(offset);
+    'the_loop: loop {
+        match string_iterator_from_offset.next() {
+            Option::None => break 'the_loop,
+            Option::Some(char_at_offset) => {
+                if char_at_offset < '0' || char_at_offset > '9' {
+                    break 'the_loop;
+                } else {
+                    offset = offset + 1
+                }
+            }
+        }
+    }
+    offset as f64
+}
+
+pub fn elm_kernel_parser_consume_base(
+    base_f64: f64,
+    offset_original: f64,
+    string: &str,
+) -> (f64, f64) {
+    let base: i64 = base_f64 as i64;
+    let mut offset: usize = offset_original as usize;
+    let mut string_iterator_from_offset = string.chars().skip(offset);
+    let mut total: i64 = 0;
+    'the_loop: loop {
+        match string_iterator_from_offset.next() {
+            Option::None => break 'the_loop,
+            Option::Some(char_at_offset) => {
+                let digit: i64 = char_at_offset as i64 - '0' as i64;
+                if digit < 0 || digit >= base {
+                    break 'the_loop;
+                } else {
+                    total = base * total + digit;
+                    offset = offset + 1
+                }
+            }
+        }
+    }
+    (offset as f64, total as f64)
+}
+
+pub fn elm_kernel_parser_consume_base16(offset_original: f64, string: &str) -> (f64, f64) {
+    let mut offset: usize = offset_original as usize;
+    let mut string_iterator_from_offset = string.chars().skip(offset);
+    let mut total: usize = 0;
+    'the_loop: loop {
+        match string_iterator_from_offset.next() {
+            Option::None => break 'the_loop,
+            Option::Some(char_at_offset) => {
+                if char_at_offset >= '0' && char_at_offset <= '9' {
+                    total = 16 * total + char_at_offset as usize - '0' as usize;
+                    offset = offset + 1;
+                } else if char_at_offset >= 'A' && char_at_offset <= 'F' {
+                    total = 16 * total + 10 + char_at_offset as usize - ('A' as usize);
+                    offset = offset + 1;
+                } else if char_at_offset >= 'a' && char_at_offset <= 'f' {
+                    total = 16 * total + 10 + char_at_offset as usize - ('a' as usize);
+                    offset = offset + 1;
+                } else {
+                    break 'the_loop;
+                }
+            }
+        }
+    }
+    (offset as f64, total as f64)
+}
+
+pub fn elm_kernel_parser_find_sub_string(
+    small_string: &str,
+    offset_original_f64: f64,
+    row_original: f64,
+    col_original: f64,
+    big_string: &str,
+) -> (f64, f64, f64) {
+    let offset_original: usize = offset_original_f64 as usize;
+    match big_string.char_indices().nth(offset_original) {
+        Option::None => (-1_f64, row_original, col_original),
+        Option::Some((offset_original_as_char_index, _)) => {
+            match big_string[offset_original_as_char_index..].find(small_string) {
+                Option::None => (-1_f64, row_original, col_original),
+                Option::Some(found_start_offset_from_offset) => {
+                    let small_string_char_count = small_string.chars().count();
+                    let mut row: usize = row_original as usize;
+                    let mut col: usize = col_original as usize;
+                    for char_at_offset in big_string[offset_original_as_char_index..]
+                        .chars()
+                        .take(small_string_char_count)
+                    {
+                        if char_at_offset == '\\n' {
+                            col = 1;
+                            row = row + 1
+                        } else {
+                            col = col + 1;
+                        }
+                    }
+                    (
+                        (offset_original + found_start_offset_from_offset) as f64,
+                        row as f64,
+                        col as f64,
+                    )
+                }
+            }
+        }
+    }
 }
 """
