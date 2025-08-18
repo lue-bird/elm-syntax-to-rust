@@ -41,7 +41,7 @@ type RustType
         , name : String
         , arguments : List RustType
         , lifetimeArguments : List String
-        , -- TODO isEq
+        , -- TODO isPartialEq
           -- TODO isDebug
           -- TODO remove
           isFunction : Bool
@@ -51,15 +51,8 @@ type RustType
         , part1 : RustType
         , part2Up : List RustType
         }
-    | -- TODO remove as records are transpiled to type constructs
-      RustTypeRecord
-        -- invariant: cannot have exactly one entry
-        (FastDict.Dict String RustType)
     | RustTypeVariable String
-    | -- TODO for functions: switch to introducing type parameters with Fn constraints
-      --      because impl Trait is not allowed in the return type of `Fn` trait bounds
-      -- TODO in general: switch to &'a dyn Fn in type alias, struct field value, variant value types
-      RustTypeFunction
+    | RustTypeFunction
         { input : List RustType
         , output : RustType
         }
@@ -622,11 +615,6 @@ rustTypeUsedLifetimeVariables rustType =
                         |> listMapToFastSetsAndUnify rustTypeUsedLifetimeVariables
                     )
 
-        RustTypeRecord fields ->
-            fields
-                |> FastDict.values
-                |> listMapToFastSetsAndUnify rustTypeUsedLifetimeVariables
-
         RustTypeVariable _ ->
             FastSet.empty
 
@@ -771,9 +759,6 @@ rustTypeIsDebug rustType =
             typeConstruct.arguments
                 |> List.all rustTypeIsDebug
 
-        RustTypeRecord fields ->
-            fields |> fastDictAll (\_ fieldValue -> fieldValue |> rustTypeIsDebug)
-
 
 rustTypeIsPartialEq : RustType -> Bool
 rustTypeIsPartialEq rustType =
@@ -804,9 +789,6 @@ rustTypeIsPartialEq rustType =
             -- TODO typeConstruct.isPartialEq &&
             typeConstruct.arguments
                 |> List.all rustTypeIsPartialEq
-
-        RustTypeRecord fields ->
-            fields |> fastDictAll (\_ fieldValue -> fieldValue |> rustTypeIsPartialEq)
 
 
 printRustStructDeclaration :
@@ -1308,52 +1290,8 @@ printRustTypeNotParenthesized rustType =
         RustTypeTuple parts ->
             printRustTypeTuple parts
 
-        RustTypeRecord fields ->
-            printRustTypeRecord fields
-
         RustTypeFunction typeFunction ->
             printRustTypeFunction typeFunction
-
-
-printRustTypeRecordEmpty : Print
-printRustTypeRecordEmpty =
-    Print.exactly "()"
-
-
-printRustTypeRecord : FastDict.Dict String RustType -> Print
-printRustTypeRecord fields =
-    if fields |> FastDict.isEmpty then
-        printRustTypeRecordEmpty
-
-    else
-        printExactlyParenOpening
-            |> Print.followedBy
-                (Print.withIndentIncreasedBy 1
-                    (fields
-                        |> FastDict.toList
-                        |> Print.listMapAndIntersperseAndFlatten
-                            (\( fieldName, fieldValue ) ->
-                                let
-                                    fieldValuePrint : Print
-                                    fieldValuePrint =
-                                        fieldValue |> printRustTypeNotParenthesized
-                                in
-                                Print.exactly (fieldName ++ ":")
-                                    |> Print.followedBy
-                                        (Print.withIndentAtNextMultipleOf4
-                                            (Print.spaceOrLinebreakIndented
-                                                (fieldValuePrint |> Print.lineSpread)
-                                                |> Print.followedBy fieldValuePrint
-                                            )
-                                        )
-                            )
-                            (printExactlyComma
-                                |> Print.followedBy Print.linebreakIndented
-                            )
-                    )
-                )
-            |> Print.followedBy Print.linebreakIndented
-            |> Print.followedBy printExactlyParenClosing
 
 
 printRustTypeFunctionInput : List RustType -> Print
@@ -1470,11 +1408,6 @@ rustTypeExpandFunctionIntoReverse soFarReverse rustType =
             }
 
         RustTypeTuple _ ->
-            { inputs = soFarReverse |> List.reverse
-            , output = rustType
-            }
-
-        RustTypeRecord _ ->
             { inputs = soFarReverse |> List.reverse
             , output = rustType
             }
@@ -1790,9 +1723,6 @@ rustTypeIsSpaceSeparated rustType =
             False
 
         RustTypeTuple _ ->
-            False
-
-        RustTypeRecord _ ->
             False
 
         RustTypeFunction _ ->
@@ -3050,9 +2980,6 @@ variantToCoreRust reference =
 
 
 {-| Use `typeConstructReferenceToCoreRust` for types
-
-TODO on call, actually use requiresAllocator
-
 -}
 referenceToCoreRust :
     { moduleOrigin : String
@@ -5409,11 +5336,12 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                             "Result" ->
                                 False
 
-                            -- TODO "Dict" ->
-                            -- TODO     False
                             -- TODO
-                            -- TODO "Set" ->
-                            -- TODO     False
+                            -- "Dict" ->
+                            --     False
+                            --
+                            -- "Set" ->
+                            --     False
                             "Platform" ->
                                 False
 
@@ -9353,7 +9281,7 @@ expression context expressionTypedNode =
 rustExpressionAlloc : RustExpression -> RustExpression
 rustExpressionAlloc toAllocate =
     -- TODO find out in which cases a regular borrow is allowed (e.g. with constants)
-    -- but which closures for example?
+    -- but which closures for example? (I think those that do not capture context)
     RustExpressionCall
         { called = rustExpressionAllocFunction
         , arguments = [ toAllocate ]
@@ -9510,415 +9438,6 @@ locationToInfoString location =
     (location.row |> String.fromInt)
         ++ ":"
         ++ (location.column |> String.fromInt)
-
-
-{-| Rename declared and destructured variables including their uses and assignments
-
-TODO remove
-
--}
-rustExpressionAlterBindingNames :
-    (String -> String)
-    -> RustExpression
-    -> RustExpression
-rustExpressionAlterBindingNames variableNameChange rustExpression =
-    -- IGNORE TCO
-    case rustExpression of
-        RustExpressionUnit ->
-            RustExpressionUnit
-
-        RustExpressionF64 _ ->
-            rustExpression
-
-        RustExpressionChar _ ->
-            rustExpression
-
-        RustExpressionString _ ->
-            rustExpression
-
-        RustExpressionReferenceVariant _ ->
-            rustExpression
-
-        RustExpressionSelf ->
-            rustExpression
-
-        RustExpressionReference reference ->
-            case reference.qualification of
-                _ :: _ ->
-                    rustExpression
-
-                [] ->
-                    RustExpressionReference
-                        { qualification = []
-                        , name = reference.name |> variableNameChange
-                        }
-
-        RustExpressionNegateOperation inNegation ->
-            RustExpressionNegateOperation
-                (inNegation
-                    |> rustExpressionAlterBindingNames variableNameChange
-                )
-
-        RustExpressionBorrow borrowed ->
-            RustExpressionBorrow
-                (borrowed
-                    |> rustExpressionAlterBindingNames variableNameChange
-                )
-
-        RustExpressionRecordAccess recordAccess ->
-            RustExpressionRecordAccess
-                { record =
-                    recordAccess.record
-                        |> rustExpressionAlterBindingNames variableNameChange
-                , field = recordAccess.field
-                }
-
-        RustExpressionAs rustExpressionAs ->
-            RustExpressionAs
-                { type_ = rustExpressionAs.type_
-                , expression =
-                    rustExpressionAs.expression
-                        |> rustExpressionAlterBindingNames variableNameChange
-                }
-
-        RustExpressionClosure lambda ->
-            RustExpressionClosure
-                { parameters =
-                    lambda.parameters
-                        |> List.map
-                            (\parameter ->
-                                { type_ = parameter.type_
-                                , pattern =
-                                    parameter.pattern
-                                        |> rustPatternAlterBindingNames variableNameChange
-                                }
-                            )
-                , resultType = lambda.resultType
-                , result =
-                    lambda.result |> rustExpressionAlterBindingNames variableNameChange
-                }
-
-        RustExpressionIfElse ifElse ->
-            RustExpressionIfElse
-                { condition =
-                    ifElse.condition
-                        |> rustExpressionAlterBindingNames variableNameChange
-                , onTrue =
-                    ifElse.onTrue
-                        |> rustExpressionAlterBindingNames variableNameChange
-                , onFalse =
-                    ifElse.onFalse
-                        |> rustExpressionAlterBindingNames variableNameChange
-                }
-
-        RustExpressionTuple parts ->
-            RustExpressionTuple
-                { part0 =
-                    parts.part0 |> rustExpressionAlterBindingNames variableNameChange
-                , part1 =
-                    parts.part1 |> rustExpressionAlterBindingNames variableNameChange
-                , part2Up =
-                    parts.part2Up
-                        |> List.map
-                            (\part ->
-                                part |> rustExpressionAlterBindingNames variableNameChange
-                            )
-                }
-
-        RustExpressionArrayLiteral elements ->
-            RustExpressionArrayLiteral
-                (elements
-                    |> List.map
-                        (\element ->
-                            element |> rustExpressionAlterBindingNames variableNameChange
-                        )
-                )
-
-        RustExpressionStruct rustExpressionStruct ->
-            RustExpressionStruct
-                { name = rustExpressionStruct.name
-                , fields =
-                    rustExpressionStruct.fields
-                        |> FastDict.map
-                            (\_ fieldValue ->
-                                fieldValue |> rustExpressionAlterBindingNames variableNameChange
-                            )
-                }
-
-        RustExpressionCall call ->
-            RustExpressionCall
-                { called =
-                    call.called
-                        |> rustExpressionAlterBindingNames variableNameChange
-                , arguments =
-                    call.arguments
-                        |> List.map
-                            (\argument ->
-                                argument
-                                    |> rustExpressionAlterBindingNames variableNameChange
-                            )
-                }
-
-        RustExpressionMatch match ->
-            RustExpressionMatch
-                { matched =
-                    match.matched
-                        |> rustExpressionAlterBindingNames variableNameChange
-                , case0 =
-                    match.case0
-                        |> rustExpressionMatchCaseAlterBindingNames variableNameChange
-                , case1Up =
-                    match.case1Up
-                        |> List.map
-                            (\matchCase ->
-                                matchCase
-                                    |> rustExpressionMatchCaseAlterBindingNames variableNameChange
-                            )
-                }
-
-        RustExpressionAfterStatement rustExpressionAfterStatement ->
-            RustExpressionAfterStatement
-                { statement =
-                    rustExpressionAfterStatement.statement
-                        |> rustStatementAlterBindingNames variableNameChange
-                , result =
-                    rustExpressionAfterStatement.result
-                        |> rustExpressionAlterBindingNames variableNameChange
-                }
-
-
-rustExpressionMatchCaseAlterBindingNames :
-    (String -> String)
-    ->
-        { pattern : RustPattern
-        , result : RustExpression
-        }
-    ->
-        { pattern : RustPattern
-        , result : RustExpression
-        }
-rustExpressionMatchCaseAlterBindingNames variableNameChange rustCase =
-    { pattern =
-        rustCase.pattern
-            |> rustPatternAlterBindingNames variableNameChange
-    , result =
-        rustCase.result
-            |> rustExpressionAlterBindingNames variableNameChange
-    }
-
-
-{-| Rename declared and destructured variables including their uses and assignments
--}
-rustStatementAlterBindingNames :
-    (String -> String)
-    -> RustStatement
-    -> RustStatement
-rustStatementAlterBindingNames variableNameChange rustStatement =
-    -- IGNORE TCO
-    case rustStatement of
-        RustStatementLetDeclarationUninitialized existingName ->
-            RustStatementLetDeclarationUninitialized
-                { type_ = existingName.type_
-                , name = existingName.name |> variableNameChange
-                }
-
-        RustStatementLetDestructuring letDestructuring ->
-            RustStatementLetDestructuring
-                { pattern =
-                    letDestructuring.pattern
-                        |> rustPatternAlterBindingNames variableNameChange
-                , expression =
-                    letDestructuring.expression
-                        |> rustExpressionAlterBindingNames variableNameChange
-                }
-
-        RustStatementLetMutDeclaration varDeclaration ->
-            RustStatementLetMutDeclaration
-                { name = varDeclaration.name |> variableNameChange
-                , value =
-                    varDeclaration.value
-                        |> rustExpressionAlterBindingNames variableNameChange
-                }
-
-        RustStatementBindingAssignment assignment ->
-            RustStatementBindingAssignment
-                { name = assignment.name |> variableNameChange
-                , assignedValue =
-                    assignment.assignedValue
-                        |> rustExpressionAlterBindingNames variableNameChange
-                }
-
-        RustStatementRecordFieldAssignment assignment ->
-            RustStatementRecordFieldAssignment
-                { recordBindingName =
-                    assignment.recordBindingName |> variableNameChange
-                , fieldName = assignment.fieldName
-                , assignedValue =
-                    assignment.assignedValue
-                        |> rustExpressionAlterBindingNames variableNameChange
-                }
-
-        RustStatementLetDeclaration rustStatementLetDeclaration ->
-            RustStatementLetDeclaration
-                { name = rustStatementLetDeclaration.name |> variableNameChange
-                , resultType = rustStatementLetDeclaration.resultType
-                , result =
-                    rustStatementLetDeclaration.result
-                        |> rustExpressionAlterBindingNames variableNameChange
-                }
-
-        RustStatementFnDeclaration fnDeclaration ->
-            RustStatementFnDeclaration
-                { name = fnDeclaration.name |> variableNameChange
-                , parameters =
-                    fnDeclaration.parameters
-                        |> List.map
-                            (\parameter ->
-                                { type_ = parameter.type_
-                                , pattern =
-                                    parameter.pattern
-                                        |> rustPatternAlterBindingNames variableNameChange
-                                }
-                            )
-                , resultType = fnDeclaration.resultType
-                , lifetimeParameters = fnDeclaration.lifetimeParameters
-                , typeParameters = fnDeclaration.typeParameters
-                , result =
-                    fnDeclaration.result
-                        |> rustExpressionAlterBindingNames variableNameChange
-                }
-
-        RustStatementIfElse rustStatementIfElse ->
-            RustStatementIfElse
-                { condition =
-                    rustStatementIfElse.condition
-                        |> rustExpressionAlterBindingNames variableNameChange
-                , onTrue =
-                    rustStatementIfElse.onTrue
-                        |> List.map
-                            (\statement ->
-                                statement |> rustStatementAlterBindingNames variableNameChange
-                            )
-                , onFalse =
-                    rustStatementIfElse.onFalse
-                        |> List.map
-                            (\statement ->
-                                statement |> rustStatementAlterBindingNames variableNameChange
-                            )
-                }
-
-        RustStatementMatch match ->
-            RustStatementMatch
-                { matched =
-                    match.matched
-                        |> rustExpressionAlterBindingNames variableNameChange
-                , case0 =
-                    match.case0
-                        |> rustStatementMatchCaseAlterBindingNames variableNameChange
-                , case1Up =
-                    match.case1Up
-                        |> List.map
-                            (\matchCase ->
-                                matchCase
-                                    |> rustStatementMatchCaseAlterBindingNames variableNameChange
-                            )
-                }
-
-
-rustStatementMatchCaseAlterBindingNames :
-    (String -> String)
-    ->
-        { pattern : RustPattern
-        , statements : List RustStatement
-        }
-    ->
-        { pattern : RustPattern
-        , statements : List RustStatement
-        }
-rustStatementMatchCaseAlterBindingNames variableNameChange rustCase =
-    { pattern =
-        rustCase.pattern
-            |> rustPatternAlterBindingNames variableNameChange
-    , statements =
-        rustCase.statements
-            |> List.map
-                (\statement ->
-                    statement |> rustStatementAlterBindingNames variableNameChange
-                )
-    }
-
-
-rustPatternAlterBindingNames :
-    (String -> String)
-    -> RustPattern
-    -> RustPattern
-rustPatternAlterBindingNames variableNameChange inferredPattern =
-    -- IGNORE TCO
-    case inferredPattern of
-        RustPatternIgnore ->
-            RustPatternIgnore
-
-        RustPatternBool _ ->
-            inferredPattern
-
-        RustPatternChar _ ->
-            inferredPattern
-
-        RustPatternStringLiteral _ ->
-            inferredPattern
-
-        RustPatternInteger _ ->
-            inferredPattern
-
-        RustPatternVariable existingVariable ->
-            RustPatternVariable
-                (existingVariable |> variableNameChange)
-
-        RustPatternAlias rustPatternAlias ->
-            RustPatternAlias
-                { variable = rustPatternAlias.variable |> variableNameChange
-                , pattern =
-                    rustPatternAlias.pattern |> rustPatternAlterBindingNames variableNameChange
-                }
-
-        RustPatternStructNotExhaustive rustPatternStructNotExhaustive ->
-            RustPatternStructNotExhaustive
-                { name = rustPatternStructNotExhaustive.name
-                , fields =
-                    rustPatternStructNotExhaustive.fields
-                        |> FastDict.map
-                            (\_ fieldValue ->
-                                fieldValue
-                                    |> rustPatternAlterBindingNames variableNameChange
-                            )
-                }
-
-        RustPatternVariant variant ->
-            RustPatternVariant
-                { originTypeName = variant.originTypeName
-                , name = variant.name
-                , isReference = variant.isReference
-                , values =
-                    variant.values
-                        |> List.map
-                            (\value ->
-                                value
-                                    |> rustPatternAlterBindingNames variableNameChange
-                            )
-                }
-
-        RustPatternTuple tuple ->
-            RustPatternTuple
-                { part0 = tuple.part0 |> rustPatternAlterBindingNames variableNameChange
-                , part1 = tuple.part1 |> rustPatternAlterBindingNames variableNameChange
-                , part2Up =
-                    tuple.part2Up
-                        |> List.map
-                            (\part ->
-                                part
-                                    |> rustPatternAlterBindingNames variableNameChange
-                            )
-                }
 
 
 inferredLetDeclarationNodesSortFromMostToLeastDependedOn :
@@ -12897,12 +12416,6 @@ rustTypeContainedVariables rustType =
                             rustTypeContainedVariables
                     )
 
-        RustTypeRecord fields ->
-            fields
-                |> FastDict.values
-                |> listMapToFastSetsAndUnify
-                    rustTypeContainedVariables
-
         RustTypeConstruct typeConstruct ->
             typeConstruct.arguments
                 |> listMapToFastSetsAndUnify rustTypeContainedVariables
@@ -12949,13 +12462,6 @@ rustTypeIsConcrete rustType =
                 && (parts.part2Up
                         |> List.all rustTypeIsConcrete
                    )
-
-        RustTypeRecord fields ->
-            fields
-                |> fastDictAll
-                    (\_ fieldValue ->
-                        fieldValue |> rustTypeIsConcrete
-                    )
 
         RustTypeConstruct typeConstruct ->
             typeConstruct.arguments
