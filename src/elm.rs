@@ -11,11 +11,11 @@ pub enum ListList<'a, A> {
     Cons(A, &'a ListList<'a, A>),
 }
 
-pub struct ListIterator<'a, A> {
+pub struct ListListIterator<'a, A> {
     remaining_list: &'a ListList<'a, A>,
 }
 
-impl<'a, A> Iterator for ListIterator<'a, A> {
+impl<'a, A> Iterator for ListListIterator<'a, A> {
     type Item = &'a A;
     fn next(&mut self) -> Option<Self::Item> {
         match self.remaining_list {
@@ -29,8 +29,8 @@ impl<'a, A> Iterator for ListIterator<'a, A> {
 }
 
 impl<'a, A> ListList<'a, A> {
-    fn iter(&self) -> ListIterator<'_, A> {
-        ListIterator {
+    fn iter(&self) -> ListListIterator<'_, A> {
+        ListListIterator {
             remaining_list: self,
         }
     }
@@ -60,10 +60,10 @@ pub const fn basics_identity<A>(a: A) -> A {
 pub fn basics_always<Kept, Ignored>(kept: Kept, _: Ignored) -> Kept {
     kept
 }
-pub fn basics_apr<A, B, AToB: Fn(A) -> B>(food: A, eat: AToB) -> B {
+pub fn basics_apr<A, B>(food: A, eat: impl Fn(A) -> B) -> B {
     eat(food)
 }
-pub fn basics_apl<A, B, AToB: Fn(A) -> B>(eat: AToB, food: A) -> B {
+pub fn basics_apl<A, B>(eat: impl Fn(A) -> B, food: A) -> B {
     eat(food)
 }
 pub fn basics_composer<A, B, C, AToB: Fn(A) -> B, BToC: Fn(B) -> C>(
@@ -216,7 +216,7 @@ pub fn list_head<A: Clone>(list: &ListList<A>) -> Option<A> {
         ListList::Cons(head, _) => Option::Some(head.clone()),
     }
 }
-pub const fn list_tail<'a, A: Clone>(list: &'a ListList<A>) -> Option<&'a ListList<'a, A>> {
+pub const fn list_tail<'a, A>(list: &'a ListList<A>) -> Option<&'a ListList<'a, A>> {
     match list {
         ListList::Empty => Option::None,
         ListList::Cons(_, tail) => Option::Some(tail),
@@ -282,19 +282,13 @@ pub fn list_sum(list: &ListList<f64>) -> f64 {
 pub fn list_product(list: &ListList<f64>) -> f64 {
     list.iter().product()
 }
-pub fn list_all<A: Clone, IsExpected: Fn(A) -> bool>(
-    is_expected: IsExpected,
-    list: &ListList<A>,
-) -> bool {
+pub fn list_all<A: Clone>(is_expected: impl Fn(A) -> bool, list: &ListList<A>) -> bool {
     list.iter().all(|el| is_expected(el.clone()))
 }
-pub fn list_any<A: Clone, IsNeedle: Fn(A) -> bool>(
-    is_needle: IsNeedle,
-    list: &ListList<A>,
-) -> bool {
+pub fn list_any<A: Clone>(is_needle: impl Fn(A) -> bool, list: &ListList<A>) -> bool {
     list.iter().any(|el| is_needle(el.clone()))
 }
-pub fn list_member<A: Clone + PartialEq>(needle: A, list: &ListList<A>) -> bool {
+pub fn list_member<A: PartialEq>(needle: A, list: &ListList<A>) -> bool {
     list.iter().any(|el| el == &needle)
 }
 pub fn list_minimum<A: Clone + PartialOrd>(list: &ListList<A>) -> Option<A> {
@@ -311,22 +305,22 @@ pub fn list_take<'a, A: Clone>(
     ref_iterator_to_list(allocator, list.iter().take(keep_count as usize))
 }
 /// prefer `double_ended_iterator_to_list` where possible
-pub fn iterator_to_list<'a, A: Clone, AIterator: Iterator<Item = A>>(
+pub fn iterator_to_list<'a, A: Clone>(
     allocator: &'a Bump,
-    iterator: AIterator,
+    iterator: impl Iterator<Item = A>,
 ) -> &'a ListList<'a, A> {
     double_ended_iterator_to_list(allocator, iterator.collect::<Vec<A>>().into_iter())
 }
 /// prefer `double_ended_ref_iterator_to_list` where possible
-pub fn ref_iterator_to_list<'a, A: Clone, AIterator: Iterator<Item = &'a A>>(
+pub fn ref_iterator_to_list<'a, A: Clone>(
     allocator: &'a Bump,
-    iterator: AIterator,
+    iterator: impl Iterator<Item = &'a A>,
 ) -> &'a ListList<'a, A> {
     double_ended_ref_iterator_to_list(allocator, iterator.collect::<Vec<&A>>().into_iter())
 }
-pub fn list_drop<'a, A: Clone>(skip_count: f64, list: &'a ListList<'a, A>) -> &'a ListList<'a, A> {
-    let mut iterator = list.iter();
-    for () in std::iter::repeat_n((), skip_count as usize) {
+pub fn list_drop<'a, A>(skip_count: f64, list: &'a ListList<'a, A>) -> &'a ListList<'a, A> {
+    let mut iterator: ListListIterator<'a, A> = list.iter();
+    for _ in 1..=(skip_count as usize) {
         match iterator.next() {
             None => return &ListList::Empty,
             Some(_) => {}
@@ -339,6 +333,7 @@ pub fn list_intersperse<'a, A: Clone>(
     in_between: A,
     list: &ListList<A>,
 ) -> &'a ListList<'a, A> {
+    // Iterator::intersperse is still nightly-only
     match list {
         ListList::Empty => &ListList::Empty,
         ListList::Cons(head, tail) => list_cons(
@@ -359,9 +354,9 @@ pub fn list_concat<'a, A: Clone>(
 ) -> &'a ListList<'a, A> {
     ref_iterator_to_list(allocator, list.iter().flat_map(|inner| inner.iter()))
 }
-pub fn list_concat_map<'a, A: Clone, B: Clone, ElementToList: Fn(A) -> &'a ListList<'a, B>>(
+pub fn list_concat_map<'a, A: Clone, B: Clone>(
     allocator: &'a Bump,
-    element_to_list: ElementToList,
+    element_to_list: impl Fn(A) -> &'a ListList<'a, B>,
     list: &'a ListList<A>,
 ) -> &'a ListList<'a, B> {
     ref_iterator_to_list(
@@ -401,9 +396,9 @@ pub fn list_reverse<'a, A: Clone>(allocator: &'a Bump, list: &ListList<A>) -> &'
     }
     reverse_list
 }
-pub fn list_filter<'a, A: Clone, Keep: Fn(A) -> bool>(
+pub fn list_filter<'a, A: Clone>(
     allocator: &'a Bump,
-    keep: Keep,
+    keep: impl Fn(A) -> bool,
     list: &ListList<A>,
 ) -> &'a ListList<'a, A> {
     // can be optimized by just returning list when all elements were kept
@@ -414,9 +409,9 @@ pub fn list_filter<'a, A: Clone, Keep: Fn(A) -> bool>(
             .filter(|element| keep(element.clone())),
     )
 }
-pub fn list_map<'a, A: Clone, B: Clone, ElementChange: Fn(A) -> B>(
+pub fn list_map<'a, A: Clone, B: Clone>(
     allocator: &'a Bump,
-    element_change: ElementChange,
+    element_change: impl Fn(A) -> B,
     list: &ListList<A>,
 ) -> &'a ListList<'a, B> {
     iterator_to_list(allocator, list.iter().map(|el| element_change(el.clone())))
@@ -439,9 +434,9 @@ pub fn list_indexed_map<
             .map(|(index, element)| indexed_element_to_new(index as f64)(element.clone())),
     )
 }
-pub fn list_filter_map<'a, A: Clone, B: Clone, ElementToMaybe: Fn(A) -> Option<B>>(
+pub fn list_filter_map<'a, A: Clone, B: Clone>(
     allocator: &'a Bump,
-    element_to_maybe: ElementToMaybe,
+    element_to_maybe: impl Fn(A) -> Option<B>,
     list: &ListList<'a, A>,
 ) -> &'a ListList<'a, B> {
     iterator_to_list(
@@ -457,9 +452,9 @@ pub fn list_sort<'a, A: Clone + PartialOrd>(
     list_copy_as_vec.sort_by(|&a, &b| basics_compare(a, b));
     double_ended_ref_iterator_to_list(allocator, list_copy_as_vec.into_iter())
 }
-pub fn list_sort_by<'a, A: Clone, B: PartialOrd, ElementToComparable: Fn(A) -> B>(
+pub fn list_sort_by<'a, A: Clone, Comparable: PartialOrd>(
     allocator: &'a Bump,
-    element_to_comparable: ElementToComparable,
+    element_to_comparable: impl Fn(A) -> Comparable,
     list: &ListList<'a, A>,
 ) -> &'a ListList<'a, A> {
     let mut list_copy_as_vec: Vec<A> = list.iter().map(|el| el.clone()).collect();
@@ -509,9 +504,9 @@ pub fn list_unzip<'a, A: Clone, B: Clone>(
     }
     (a_list, b_list)
 }
-pub fn list_partition<'a, A: Clone, Decode: Fn(A) -> bool>(
+pub fn list_partition<'a, A: Clone>(
     allocator: &'a Bump,
-    decode: Decode,
+    decode: impl Fn(A) -> bool,
     list: &ListList<A>,
 ) -> (&'a ListList<'a, A>, &'a ListList<'a, A>) {
     let (yes, no): (Vec<A>, Vec<A>) = list
@@ -659,10 +654,10 @@ pub fn array_repeat<'a, A: Clone>(
 ) -> &'a ArrayArray<A> {
     allocator.alloc(std::vec::from_elem(element, length as usize))
 }
-pub fn array_initialize<'a, A, IndexToElement: Fn(f64) -> A>(
+pub fn array_initialize<'a, A>(
     allocator: &'a Bump,
     length: f64,
-    index_to_element: IndexToElement,
+    index_to_element: impl Fn(f64) -> A,
 ) -> &'a ArrayArray<A> {
     allocator.alloc(
         (0..(length as i64))
@@ -747,9 +742,9 @@ pub fn array_reverse<'a, A: Clone>(
     array_copy.reverse();
     allocator.alloc(array_copy)
 }
-pub fn array_filter<'a, A: Clone, Keep: Fn(A) -> bool>(
+pub fn array_filter<'a, A: Clone>(
     allocator: &'a Bump,
-    keep: Keep,
+    keep: impl Fn(A) -> bool,
     array: &'a ArrayArray<A>,
 ) -> &'a ArrayArray<A> {
     allocator.alloc(
@@ -760,9 +755,9 @@ pub fn array_filter<'a, A: Clone, Keep: Fn(A) -> bool>(
             .collect::<Vec<A>>(),
     )
 }
-pub fn array_map<'a, A: Clone, B, ElementChange: Fn(A) -> B>(
+pub fn array_map<'a, A: Clone, B>(
     allocator: &'a Bump,
-    element_change: ElementChange,
+    element_change: impl Fn(A) -> B,
     array: &'a ArrayArray<A>,
 ) -> &'a ArrayArray<B> {
     allocator.alloc(
@@ -799,9 +794,9 @@ pub fn array_sort<'a, A: Clone + PartialOrd>(
     array_copy.sort_by(|a, b| basics_compare(a, b));
     allocator.alloc(array_copy)
 }
-pub fn array_sort_by<'a, A: Clone, B: PartialOrd, ElementToComparable: Fn(A) -> B>(
+pub fn array_sort_by<'a, A: Clone, Comparable: PartialOrd>(
     allocator: &'a Bump,
-    element_to_comparable: ElementToComparable,
+    element_to_comparable: impl Fn(A) -> Comparable,
     array: &'a ArrayArray<A>,
 ) -> &'a ArrayArray<A> {
     let mut array_copy: Vec<A> = array.to_vec();
@@ -945,15 +940,15 @@ pub fn string_cons<'a>(allocator: &'a Bump, new_first_char: char, tail_string: &
     tail_string_copy.insert(0, new_first_char);
     allocator.alloc(tail_string_copy)
 }
-pub fn string_all<IsExpected: Fn(char) -> bool>(is_expected: IsExpected, string: &str) -> bool {
+pub fn string_all(is_expected: impl Fn(char) -> bool, string: &str) -> bool {
     string.chars().all(is_expected)
 }
-pub fn string_any<IsNeedle: Fn(char) -> bool>(is_needle: IsNeedle, string: &str) -> bool {
+pub fn string_any(is_needle: impl Fn(char) -> bool, string: &str) -> bool {
     string.chars().any(is_needle)
 }
-pub fn string_filter<'a, Keep: Fn(char) -> bool>(
+pub fn string_filter<'a>(
     allocator: &'a Bump,
-    keep: Keep,
+    keep: impl Fn(char) -> bool,
     string: &str,
 ) -> &'a str {
     allocator.alloc(
@@ -963,9 +958,9 @@ pub fn string_filter<'a, Keep: Fn(char) -> bool>(
             .collect::<String>(),
     )
 }
-pub fn string_map<'a, ElementChange: Fn(char) -> char>(
+pub fn string_map<'a>(
     allocator: &'a Bump,
-    element_change: ElementChange,
+    element_change: impl Fn(char) -> char,
     string: &str,
 ) -> &'a str {
     allocator.alloc(string.chars().map(element_change).collect::<String>())
@@ -1263,17 +1258,14 @@ pub fn debug_todo<Any>(message: &str) -> Any {
 pub fn maybe_with_default<A>(on_nothing: A, maybe: Option<A>) -> A {
     maybe.unwrap_or(on_nothing)
 }
-pub fn maybe_and_then<A, B, ValueToMaybe: Fn(A) -> Option<B>>(
-    value_to_maybe: ValueToMaybe,
+pub fn maybe_and_then<A, B>(
+    value_to_maybe: impl Fn(A) -> Option<B>,
     maybe: Option<A>,
 ) -> Option<B> {
     maybe.and_then(value_to_maybe)
 }
 
-pub fn maybe_map<A, B, ValueChange: Fn(A) -> B>(
-    value_change: ValueChange,
-    maybe: Option<A>,
-) -> Option<B> {
+pub fn maybe_map<A, B>(value_change: impl Fn(A) -> B, maybe: Option<A>) -> Option<B> {
     maybe.map(value_change)
 }
 pub fn maybe_map2<A, B, Combined, Combine: Fn(A) -> Combine1, Combine1: Fn(B) -> Combined>(
@@ -1359,20 +1351,20 @@ pub fn result_with_default<A, X>(value_on_err: A, result: ResultResult<X, A>) ->
 pub fn result_from_maybe<A, X>(error_on_nothing: X, maybe: Option<A>) -> ResultResult<X, A> {
     maybe.ok_or(error_on_nothing)
 }
-pub fn result_map_error<A, X, Y, ErrorChange: Fn(X) -> Y>(
-    error_change: ErrorChange,
+pub fn result_map_error<A, X, Y>(
+    error_change: impl Fn(X) -> Y,
     result: ResultResult<X, A>,
 ) -> ResultResult<Y, A> {
     result.map_err(error_change)
 }
-pub fn result_and_then<A, B, X, ValueToResult: Fn(A) -> ResultResult<X, B>>(
-    value_to_result: ValueToResult,
+pub fn result_and_then<A, B, X>(
+    value_to_result: impl Fn(A) -> ResultResult<X, B>,
     result: ResultResult<X, A>,
 ) -> ResultResult<X, B> {
     result.and_then(value_to_result)
 }
-pub fn result_map<A, B, X, ValueChange: Fn(A) -> B>(
-    value_change: ValueChange,
+pub fn result_map<A, B, X>(
+    value_change: impl Fn(A) -> B,
     result: ResultResult<X, A>,
 ) -> ResultResult<X, B> {
     result.map(value_change)
@@ -1771,7 +1763,7 @@ pub fn json_decode_succeed<'a, A: Clone>(
         decode: allocator.alloc(move |_| Result::Ok(value.clone())),
     }
 }
-pub fn json_decode_fail<'a, A: Clone>(
+pub fn json_decode_fail<'a, A>(
     allocator: &'a Bump,
     error_message: &'a str,
 ) -> JsonDecodeDecoder<'a, A> {
@@ -1808,9 +1800,16 @@ pub fn json_decode_map<'a, A, B>(
             .alloc(move |json| (decoder.decode)(json).map(|decoded| decoded_change(decoded))),
     }
 }
-pub fn json_decode_map2<'a, A, B, Combined, Combine1: Fn(B) -> Combined>(
+pub fn json_decode_map2<
+    'a,
+    A,
+    B,
+    Combined,
+    Combine: Fn(A) -> Combine1 + 'a,
+    Combine1: Fn(B) -> Combined,
+>(
     allocator: &'a Bump,
-    combine: impl Fn(A) -> Combine1 + 'a,
+    combine: Combine,
     a_decoder: JsonDecodeDecoder<'a, A>,
     b_decoder: JsonDecodeDecoder<'a, B>,
 ) -> JsonDecodeDecoder<'a, Combined> {
@@ -1828,11 +1827,12 @@ pub fn json_decode_map3<
     B,
     C,
     Combined,
+    Combine: Fn(A) -> Combine1 + 'a,
     Combine1: Fn(B) -> Combine2,
     Combine2: Fn(C) -> Combined,
 >(
     allocator: &'a Bump,
-    combine: impl Fn(A) -> Combine1 + 'a,
+    combine: Combine,
     a_decoder: JsonDecodeDecoder<'a, A>,
     b_decoder: JsonDecodeDecoder<'a, B>,
     c_decoder: JsonDecodeDecoder<'a, C>,
@@ -1852,12 +1852,13 @@ pub fn json_decode_map4<
     C,
     D,
     Combined,
+    Combine: Fn(A) -> Combine1 + 'a,
     Combine1: Fn(B) -> Combine2,
     Combine2: Fn(C) -> Combine3,
     Combine3: Fn(D) -> Combined,
 >(
     allocator: &'a Bump,
-    combine: impl Fn(A) -> Combine1 + 'a,
+    combine: Combine,
     a_decoder: JsonDecodeDecoder<'a, A>,
     b_decoder: JsonDecodeDecoder<'a, B>,
     c_decoder: JsonDecodeDecoder<'a, C>,
@@ -1882,13 +1883,14 @@ pub fn json_decode_map5<
     D,
     E,
     Combined,
+    Combine: Fn(A) -> Combine1 + 'a,
     Combine1: Fn(B) -> Combine2,
     Combine2: Fn(C) -> Combine3,
     Combine3: Fn(D) -> Combine4,
     Combine4: Fn(E) -> Combined,
 >(
     allocator: &'a Bump,
-    combine: impl Fn(A) -> Combine1 + 'a,
+    combine: Combine,
     a_decoder: JsonDecodeDecoder<'a, A>,
     b_decoder: JsonDecodeDecoder<'a, B>,
     c_decoder: JsonDecodeDecoder<'a, C>,
@@ -1915,6 +1917,7 @@ pub fn json_decode_map6<
     E,
     F,
     Combined,
+    Combine: Fn(A) -> Combine1 + 'a,
     Combine1: Fn(B) -> Combine2,
     Combine2: Fn(C) -> Combine3,
     Combine3: Fn(D) -> Combine4,
@@ -1922,7 +1925,7 @@ pub fn json_decode_map6<
     Combine5: Fn(F) -> Combined,
 >(
     allocator: &'a Bump,
-    combine: impl Fn(A) -> Combine1 + 'a,
+    combine: Combine,
     a_decoder: JsonDecodeDecoder<'a, A>,
     b_decoder: JsonDecodeDecoder<'a, B>,
     c_decoder: JsonDecodeDecoder<'a, C>,
@@ -1954,6 +1957,7 @@ pub fn json_decode_map7<
     F,
     G,
     Combined,
+    Combine: Fn(A) -> Combine1 + 'a,
     Combine1: Fn(B) -> Combine2,
     Combine2: Fn(C) -> Combine3,
     Combine3: Fn(D) -> Combine4,
@@ -1962,7 +1966,7 @@ pub fn json_decode_map7<
     Combine6: Fn(G) -> Combined,
 >(
     allocator: &'a Bump,
-    combine: impl Fn(A) -> Combine1 + 'a,
+    combine: Combine,
     a_decoder: JsonDecodeDecoder<'a, A>,
     b_decoder: JsonDecodeDecoder<'a, B>,
     c_decoder: JsonDecodeDecoder<'a, C>,
@@ -1996,6 +2000,7 @@ pub fn json_decode_map8<
     G,
     H,
     Combined,
+    Combine: Fn(A) -> Combine1 + 'a,
     Combine1: Fn(B) -> Combine2,
     Combine2: Fn(C) -> Combine3,
     Combine3: Fn(D) -> Combine4,
@@ -2005,7 +2010,7 @@ pub fn json_decode_map8<
     Combine7: Fn(H) -> Combined,
 >(
     allocator: &'a Bump,
-    combine: impl Fn(A) -> Combine1 + 'a,
+    combine: Combine,
     a_decoder: JsonDecodeDecoder<'a, A>,
     b_decoder: JsonDecodeDecoder<'a, B>,
     c_decoder: JsonDecodeDecoder<'a, C>,
@@ -2224,10 +2229,11 @@ pub fn json_decode_one_or_more<
     'a,
     A,
     Combined,
+    CombineHeadTail: Fn(A) -> CombineHeadTail1 + 'a,
     CombineHeadTail1: Fn(&'a ListList<'a, A>) -> Combined,
 >(
     allocator: &'a Bump,
-    combine_head_tail: impl Fn(A) -> CombineHeadTail1 + 'a,
+    combine_head_tail: CombineHeadTail,
     element_decoder: JsonDecodeDecoder<'a, A>,
 ) -> JsonDecodeDecoder<'a, Combined> {
     JsonDecodeDecoder {
