@@ -1909,7 +1909,7 @@ singleDoubleQuotedStringCharToEscaped character =
 
         otherCharacter ->
             if characterIsNotPrint otherCharacter then
-                "\\u" ++ characterHex otherCharacter
+                "\\u{" ++ characterHex otherCharacter ++ "}"
 
             else
                 String.fromChar otherCharacter
