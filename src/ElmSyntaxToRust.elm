@@ -29744,7 +29744,7 @@ impl<'a, A> ListList<'a, A> {
         }
     }
 }
-impl<'a, A: Clone + std::fmt::Debug> std::fmt::Debug for ListList<'a, A> {
+impl<'a, A: std::fmt::Debug> std::fmt::Debug for ListList<'a, A> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("List[")?;
         let mut is_tail_element: bool = false;
