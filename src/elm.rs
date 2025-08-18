@@ -242,6 +242,12 @@ pub fn list_repeat<'a, A: Clone>(
 pub fn list_range<'a>(allocator: &'a Bump, min: f64, max: f64) -> &'a ListList<'a, f64> {
     double_ended_iterator_to_list(allocator, ((min as i32)..=(max as i32)).map(|n| n as f64))
 }
+pub fn list<'a, A: Clone, const ElementCount: usize>(
+    allocator: &'a Bump,
+    elements: [A; ElementCount],
+) -> &'a ListList<'a, A> {
+    double_ended_iterator_to_list(allocator, elements.into_iter())
+}
 pub fn double_ended_iterator_to_list<'a, A: Clone, AIterator: DoubleEndedIterator<Item = A>>(
     allocator: &'a Bump,
     iterator: AIterator,
@@ -1118,7 +1124,7 @@ pub fn string_join<'a>(
     match segments {
         ListList::Empty => &"",
         &ListList::Cons(head_segment, tail_segments) => {
-            let mut string_builder: String = head_segment.to_owned();
+            let mut string_builder: String = head_segment.to_string();
             for segment in tail_segments.iter() {
                 string_builder.push_str(in_between);
                 string_builder.push_str(segment);
@@ -1666,36 +1672,36 @@ pub fn json_decode_error_to_string<'a>(allocator: &'a Bump, error: JsonDecodeErr
         Vec::new(),
     ))
 }
-pub fn json_decode_error_to_string_help<'a>(
+pub fn json_decode_error_to_string_help<'a, 'b>(
     allocator: &'a Bump,
-    error: JsonDecodeError<'a>,
-    mut context: Vec<&'a str>,
-) -> &'a str {
+    error: JsonDecodeError,
+    mut context: Vec<String>,
+) -> String {
     match error {
         JsonDecodeError::Field(field_name, &err) => {
-            let field_description: &'a str = match field_name.chars().next() {
+            let field_description: String = match field_name.chars().next() {
                 Option::Some(field_name_first_char) if field_name_first_char.is_alphanumeric() => {
-                    field_name
+                    String::from(field_name)
                 }
-                _ => allocator.alloc(format!("[{field_name}]")),
+                _ => format!("[{field_name}]"),
             };
             context.push(field_description);
             json_decode_error_to_string_help(allocator, err, context)
         }
         JsonDecodeError::Index(index, &err) => {
             let index_description: String = format!("[{}]", (index as usize).to_string());
-            context.push(allocator.alloc(index_description));
+            context.push(index_description);
             json_decode_error_to_string_help(allocator, err, context)
         }
         JsonDecodeError::OneOf(&errors) => match errors {
             ListList::Empty => {
                 if context.is_empty() {
-                    "Ran into a Json.Decode.oneOf with no possibilities!"
+                    String::from("Ran into a Json.Decode.oneOf with no possibilities!")
                 } else {
-                    allocator.alloc(format!(
+                    format!(
                         "Ran into a Json.Decode.oneOf with no possibilities at json{}",
                         context.concat()
-                    ))
+                    )
                 }
             }
             ListList::Cons(&err, ListList::Empty) => {
@@ -1711,25 +1717,23 @@ pub fn json_decode_error_to_string_help<'a>(
                     "{starter} failed in the following {} ways=>\n\n",
                     errors.iter().count().to_string()
                 );
-                allocator.alloc(
-                    introduction
-                        + &errors
-                            .iter()
-                            .enumerate()
-                            .map(move |(i, &&error)| {
-                                allocator.alloc(format!(
-                                    "\n\n{} {}",
-                                    (i as usize + 1).to_string(),
-                                    indent(json_decode_error_to_string_help(
-                                        allocator,
-                                        error,
-                                        Vec::new()
-                                    ))
-                                )) as &str
-                            })
-                            .collect::<Vec<&str>>()
-                            .join("\n\n"),
-                )
+                introduction
+                    + &errors
+                        .iter()
+                        .enumerate()
+                        .map(move |(i, &&error)| {
+                            format!(
+                                "\n\n{} {}",
+                                (i as usize + 1).to_string(),
+                                indent(&json_decode_error_to_string_help(
+                                    allocator,
+                                    error,
+                                    Vec::new()
+                                ))
+                            )
+                        })
+                        .collect::<Vec<String>>()
+                        .join("\n\n")
             }
         },
         JsonDecodeError::Failure(msg, json) => {
@@ -1741,10 +1745,10 @@ pub fn json_decode_error_to_string_help<'a>(
                     context.concat()
                 )
             };
-            return allocator.alloc(format!(
+            format!(
                 "{introduction}{}\n\n{msg}",
                 indent(json_encode_encode(allocator, 4_f64, json))
-            ));
+            )
         }
     }
 }
@@ -2126,14 +2130,12 @@ pub fn json_decode_nullable<'a, A>(
             JsonValue::Null => Result::Ok(Option::None),
             json_not_null => match (on_not_null_decoder.decode)(json_not_null) {
                 Result::Ok(decoded_on_not_null) => Result::Ok(Option::Some(decoded_on_not_null)),
-                Result::Err(on_not_null_error) => Result::Err(JsonDecodeError::OneOf(list_cons(
+                Result::Err(on_not_null_error) => Result::Err(JsonDecodeError::OneOf(list(
                     allocator,
-                    allocator.alloc(JsonDecodeError::Failure("Expecting NULL", json_not_null)),
-                    list_cons(
-                        allocator,
+                    [
+                        allocator.alloc(JsonDecodeError::Failure("Expecting NULL", json_not_null)),
                         allocator.alloc(on_not_null_error),
-                        &ListList::Empty,
-                    ),
+                    ],
                 ))),
             },
         }),
@@ -2307,7 +2309,7 @@ pub fn json_decode_field<'a, A>(
         decode: allocator.alloc(move |json| {
             ((json_decode_field_value(allocator, field_name)).decode)(json).and_then(|decoded| {
                 ((|json| (field_value_decoder.decode)(json))(decoded))
-                    .map_err(|err| JsonDecodeError::Field(field_name, allocator.alloc(err)))
+                    .map_err(|error| JsonDecodeError::Field(field_name, allocator.alloc(error)))
             })
         }),
     }
@@ -2480,7 +2482,7 @@ pub fn time_to_adjusted_minutes_help<'a>(
     eras: &'a ListList<'a, GeneratedOffsetStart<f64, f64>>,
 ) -> i64 {
     match eras {
-        &ListList::Empty => posix_minutes + default_offset,
+        ListList::Empty => posix_minutes + default_offset,
         &ListList::Cons(era, older_eras) => {
             if (era.start as i64) < posix_minutes {
                 posix_minutes + era.offset as i64
