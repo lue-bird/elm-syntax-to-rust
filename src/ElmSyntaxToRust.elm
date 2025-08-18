@@ -5409,12 +5409,11 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                             "Result" ->
                                 False
 
-                            "Dict" ->
-                                False
-
-                            "Set" ->
-                                False
-
+                            -- TODO "Dict" ->
+                            -- TODO     False
+                            -- TODO
+                            -- TODO "Set" ->
+                            -- TODO     False
                             "Platform" ->
                                 False
 
@@ -12680,7 +12679,7 @@ printRustFnGenerics typeVariablesToDeclare =
             ++ (typeVariablesToDeclare.typeParameters
                     |> List.map
                         (\typeParameter ->
-                            if typeParameter |> String.startsWith "comparable" then
+                            if typeParameter |> String.startsWith "Comparable" then
                                 typeParameter ++ ": Copy + PartialOrd"
 
                             else
