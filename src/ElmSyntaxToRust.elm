@@ -10452,7 +10452,7 @@ generatedAccessedRecordVariableName =
 
 generatedFieldValueParameterName : String -> String
 generatedFieldValueParameterName fieldName =
-    "generated_" ++ fieldName
+    "generated_" ++ (fieldName |> toSnakeCase)
 
 
 inferredReferenceToInfoString :
