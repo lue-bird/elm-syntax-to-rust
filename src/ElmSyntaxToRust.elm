@@ -6405,14 +6405,6 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                 , errors = []
                                                 }
 
-                                    inferredTypeDeclarationsMostToLeastDependedOn : List (Graph.SCC InferredChoiceTypeOrTypeAliasDeclaration)
-                                    inferredTypeDeclarationsMostToLeastDependedOn =
-                                        inferredTypeDeclarationsToMostToLeastDependedOn
-                                            { moduleOrigin = moduleName
-                                            , typeAliases = moduleDeclaredInferredTypeAliasesAndChoiceTypes.typeAliasDeclarations
-                                            , choiceTypes = moduleDeclaredInferredTypeAliasesAndChoiceTypes.choiceTypeDeclarations
-                                            }
-
                                     transpiledModuleDeclaredRustTypes :
                                         { rustEnumDeclarations :
                                             List
@@ -6436,7 +6428,11 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                 }
                                         }
                                     transpiledModuleDeclaredRustTypes =
-                                        inferredTypeDeclarationsMostToLeastDependedOn
+                                        inferredTypeDeclarationsToMostToLeastDependedOn
+                                            { moduleOrigin = moduleName
+                                            , typeAliases = moduleDeclaredInferredTypeAliasesAndChoiceTypes.typeAliasDeclarations
+                                            , choiceTypes = moduleDeclaredInferredTypeAliasesAndChoiceTypes.choiceTypeDeclarations
+                                            }
                                             |> List.foldl
                                                 (\inferredTypeDeclarationComponent soFar ->
                                                     case inferredTypeDeclarationComponent of
@@ -6709,7 +6705,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                         , rustEnumTypes = withCycleMembersSoFar.rustEnumTypes
                                                                         , rustConsts = withCycleMembersSoFar.rustConsts
                                                                         , rustFns =
-                                                                            withInferredValeAndFunctionDeclarationsSoFar.rustFns
+                                                                            withCycleMembersSoFar.rustFns
                                                                                 |> FastDict.insert rustName
                                                                                     { requiresAllocator = True }
                                                                         , declarations =
@@ -6752,7 +6748,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                         { errors =
                                             moduleDeclaredInferredTypeAliasesAndChoiceTypes.errors
                                                 ++ soFarAcrossModules.errors
-                                        , rustEnumTypes = soFarAcrossModules.rustEnumTypes
+                                        , rustEnumTypes = transpiledModuleDeclaredRustTypes.rustEnumTypes
                                         , rustConsts = soFarAcrossModules.rustConsts
                                         , rustFns = soFarAcrossModules.rustFns
                                         , declarations =
@@ -9006,10 +9002,8 @@ expression context expressionTypedNode =
                                 , arguments =
                                     [ RustExpressionReference
                                         { qualification = [], name = generatedAllocatorVariableName }
-                                    , RustExpressionBorrow
-                                        (RustExpressionArrayLiteral
-                                            (element0 :: element1 :: element2Up)
-                                        )
+                                    , RustExpressionArrayLiteral
+                                        (element0 :: element1 :: element2Up)
                                     ]
                                 }
                 )
