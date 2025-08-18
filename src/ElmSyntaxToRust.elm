@@ -11811,22 +11811,20 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                 |> FastDict.get moduleNameToAccess
                 |> Maybe.map .typeAliases
 
-        introducedTypeParameters : List String
-        introducedTypeParameters =
+        allTypeParameters : List { name : String, useRange : Elm.Syntax.Range.Range }
+        allTypeParameters =
             inferredLetDeclarationValueOrFunctionNode.declaration.type_
                 |> inferredTypeContainedVariables
                 |> FastDict.foldl
                     (\variableName variableUseRange soFar ->
-                        if
-                            Basics.not (variableName |> String.startsWith "number")
-                                && (inferredLetDeclarationValueOrFunctionNode.range
-                                        |> rangeIncludesRange variableUseRange
-                                   )
-                        then
-                            (variableName |> toPascalCaseRustName) :: soFar
+                        if variableName |> String.startsWith "number" then
+                            soFar
 
                         else
-                            soFar
+                            { name = variableName |> toPascalCaseRustName
+                            , useRange = variableUseRange
+                            }
+                                :: soFar
                     )
                     []
 
@@ -11850,7 +11848,14 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
     in
     if
         (rustFullTypeAsFunction.inputs |> List.isEmpty)
-            && (introducedTypeParameters |> List.isEmpty)
+            && Basics.not
+                (List.any
+                    (\variable ->
+                        inferredLetDeclarationValueOrFunctionNode.range
+                            |> rangeIncludesRange variable.useRange
+                    )
+                    allTypeParameters
+                )
     then
         -- using lifetime parameters from the outer scope _is_ allowed
         Result.map
@@ -12017,7 +12022,7 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                                 )
                             |> FastSet.toList
                     , typeParameters =
-                        introducedTypeParameters
+                        allTypeParameters |> List.map .name
                     , result = resultWithAdditionalParameters
                     }
             )
