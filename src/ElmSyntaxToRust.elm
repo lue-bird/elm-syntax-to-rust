@@ -4346,34 +4346,34 @@ referenceToCoreRust reference =
         "Json.Encode" ->
             case reference.name of
                 "encode" ->
-                    Just { qualification = [], name = "json_encode_encode", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_encode_encode", requiresAllocator = True }
 
                 "null" ->
-                    Just { qualification = [], name = "json_encode_null", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_encode_null", requiresAllocator = False }
 
                 "bool" ->
-                    Just { qualification = [], name = "json_encode_bool", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_encode_bool", requiresAllocator = False }
 
                 "string" ->
-                    Just { qualification = [], name = "json_encode_string", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_encode_string", requiresAllocator = False }
 
                 "int" ->
-                    Just { qualification = [], name = "json_encode_int", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_encode_int", requiresAllocator = False }
 
                 "float" ->
-                    Just { qualification = [], name = "json_encode_float", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_encode_float", requiresAllocator = False }
 
                 "list" ->
-                    Just { qualification = [], name = "json_encode_list", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_encode_list", requiresAllocator = True }
 
                 "array" ->
-                    Just { qualification = [], name = "json_encode_array", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_encode_array", requiresAllocator = True }
 
                 "set" ->
                     Just { qualification = [], name = "json_encode_set", requiresAllocator = Debug.todo "" }
 
                 "object" ->
-                    Just { qualification = [], name = "json_encode_object", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_encode_object", requiresAllocator = True }
 
                 "dict" ->
                     Just { qualification = [], name = "json_encode_dict", requiresAllocator = Debug.todo "" }
@@ -4384,100 +4384,100 @@ referenceToCoreRust reference =
         "Json.Decode" ->
             case reference.name of
                 "string" ->
-                    Just { qualification = [], name = "json_decode_string", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_string", requiresAllocator = False }
 
                 "bool" ->
-                    Just { qualification = [], name = "json_decode_bool", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_bool", requiresAllocator = False }
 
                 "int" ->
-                    Just { qualification = [], name = "json_decode_int", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_int", requiresAllocator = False }
 
                 "float" ->
-                    Just { qualification = [], name = "json_decode_float", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_float", requiresAllocator = False }
 
                 "nullable" ->
-                    Just { qualification = [], name = "json_decode_nullable", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_nullable", requiresAllocator = True }
 
                 "list" ->
-                    Just { qualification = [], name = "json_decode_list", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_list", requiresAllocator = True }
 
                 "array" ->
-                    Just { qualification = [], name = "json_decode_array", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_array", requiresAllocator = True }
 
                 "dict" ->
                     Just { qualification = [], name = "json_decode_dict", requiresAllocator = Debug.todo "" }
 
                 "keyValuePairs" ->
-                    Just { qualification = [], name = "json_decode_key_value_pairs", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_key_value_pairs", requiresAllocator = True }
 
                 "oneOrMore" ->
-                    Just { qualification = [], name = "json_decode_one_or_more", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_one_or_more", requiresAllocator = True }
 
                 "field" ->
-                    Just { qualification = [], name = "json_decode_field", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_field", requiresAllocator = True }
 
                 "at" ->
-                    Just { qualification = [], name = "json_decode_at", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_at", requiresAllocator = True }
 
                 "index" ->
-                    Just { qualification = [], name = "json_decode_index", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_index", requiresAllocator = True }
 
                 "maybe" ->
-                    Just { qualification = [], name = "json_decode_maybe", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_maybe", requiresAllocator = True }
 
                 "oneOf" ->
-                    Just { qualification = [], name = "json_decode_one_of", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_one_of", requiresAllocator = True }
 
                 "decodeString" ->
                     Just { qualification = [], name = "json_decode_decode_string", requiresAllocator = Debug.todo "" }
 
                 "decodeValue" ->
-                    Just { qualification = [], name = "json_decode_decode_value", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_decode_value", requiresAllocator = True }
 
                 "errorToString" ->
-                    Just { qualification = [], name = "json_decode_error_to_string", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_error_to_string", requiresAllocator = True }
 
                 "map" ->
-                    Just { qualification = [], name = "json_decode_map", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_map", requiresAllocator = True }
 
                 "map2" ->
-                    Just { qualification = [], name = "json_decode_map2", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_map2", requiresAllocator = True }
 
                 "map3" ->
-                    Just { qualification = [], name = "json_decode_map3", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_map3", requiresAllocator = True }
 
                 "map4" ->
-                    Just { qualification = [], name = "json_decode_map4", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_map4", requiresAllocator = True }
 
                 "map5" ->
-                    Just { qualification = [], name = "json_decode_map5", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_map5", requiresAllocator = True }
 
                 "map6" ->
-                    Just { qualification = [], name = "json_decode_map6", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_map6", requiresAllocator = True }
 
                 "map7" ->
-                    Just { qualification = [], name = "json_decode_map7", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_map7", requiresAllocator = True }
 
                 "map8" ->
-                    Just { qualification = [], name = "json_decode_map8", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_map8", requiresAllocator = True }
 
                 "lazy" ->
-                    Just { qualification = [], name = "json_decode_lazy", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_lazy", requiresAllocator = True }
 
                 "value" ->
-                    Just { qualification = [], name = "json_decode_value", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_value", requiresAllocator = False }
 
                 "null" ->
-                    Just { qualification = [], name = "json_decode_null", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_null", requiresAllocator = True }
 
                 "succeed" ->
-                    Just { qualification = [], name = "json_decode_succeed", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_succeed", requiresAllocator = True }
 
                 "fail" ->
-                    Just { qualification = [], name = "json_decode_fail", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_fail", requiresAllocator = True }
 
                 "andThen" ->
-                    Just { qualification = [], name = "json_decode_and_then", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_and_then", requiresAllocator = True }
 
                 _ ->
                     Nothing
@@ -31205,6 +31205,945 @@ pub fn result_map5<
     Result::Ok(combine(a_result?)(b_result?)(c_result?)(d_result?)(
         e_result?,
     ))
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum JsonValue<'a> {
+    Null,
+    Bool(bool),
+    Number(f64),
+    String(&'a str),
+    Array(&'a [JsonValue<'a>]),
+    Object(&'a std::collections::BTreeMap<&'a str, JsonValue<'a>>),
+}
+pub fn json_encode_encode<'a>(
+    allocator: &'a Bump,
+    indent_size: f64,
+    json: JsonValue<'a>,
+) -> &'a str {
+    allocator.alloc(json_encode_encode_from(
+        allocator,
+        indent_size as usize,
+        0,
+        String::new(),
+        json,
+    ))
+}
+
+pub fn json_encode_encode_from<'a>(
+    allocator: &'a Bump,
+    indent_size: usize,
+    current_indent: usize,
+    mut so_far: String,
+    json: JsonValue<'a>,
+) -> String {
+    match json {
+        JsonValue::Null => so_far.push_str("null"),
+        JsonValue::Bool(bool) => so_far.push_str(match bool {
+            true => "true",
+            false => "false",
+        }),
+        JsonValue::Number(number) => so_far.push_str(&number.to_string()),
+        JsonValue::String(string) => {
+            so_far.push_str("\\"");
+            // can be optimized
+            for char in string.chars() {
+                match char {
+                    '"' => so_far.push_str("\\\\\\""),
+                    '/' => so_far.push_str("\\\\/"),
+                    '\\\\' => so_far.push_str("\\\\\\\\"),
+                    '\\u{08}' => so_far.push_str("\\\\b"),
+                    '\\u{0C}' => so_far.push_str("\\\\f"),
+                    '\\n' => so_far.push_str("\\\\n"),
+                    '\\r' => so_far.push_str("\\\\r"),
+                    '\\t' => so_far.push_str("\\\\t"),
+                    unicode_char if char.is_control() => {
+                        so_far.push_str("u");
+                        so_far.push_str(&format!("{:04x}", unicode_char as usize))
+                    }
+                    normal_char => so_far.push(normal_char),
+                }
+            }
+            so_far.push_str("\\"");
+        }
+        JsonValue::Array(json_elements) => {
+            let mut json_elements_iterator = json_elements.iter();
+            match json_elements_iterator.next() {
+                Option::None => {
+                    so_far.push_str("[]");
+                }
+                Option::Some(&first_json_element) => {
+                    let linebreak_indented: &str = if indent_size == 0 {
+                        ""
+                    } else {
+                        &("\\n".to_string() + &" ".repeat(current_indent * indent_size))
+                    };
+                    let inner_linebreak_indented: &str = if indent_size == 0 {
+                        ""
+                    } else {
+                        &("\\n".to_string() + &" ".repeat((current_indent + 1) * indent_size))
+                    };
+                    so_far.push('[');
+                    so_far.push_str(inner_linebreak_indented);
+                    so_far = json_encode_encode_from(
+                        allocator,
+                        indent_size,
+                        current_indent + 1,
+                        so_far,
+                        first_json_element,
+                    );
+                    for &json_element in json_elements_iterator {
+                        so_far.push(',');
+                        so_far.push_str(inner_linebreak_indented);
+                        so_far = json_encode_encode_from(
+                            allocator,
+                            indent_size,
+                            current_indent + 1,
+                            so_far,
+                            json_element,
+                        );
+                    }
+                    so_far.push_str(linebreak_indented);
+                    so_far.push(']');
+                }
+            }
+        }
+        JsonValue::Object(json_fields) => {
+            let mut json_elements_iterator = json_fields.iter();
+            match json_elements_iterator.next() {
+                Option::None => {
+                    so_far.push_str("{}");
+                }
+                Option::Some((&first_field_name, &first_field_json)) => {
+                    let linebreak_indented: &str = if indent_size == 0 {
+                        ""
+                    } else {
+                        &("\\n".to_string() + &" ".repeat(current_indent * indent_size))
+                    };
+                    let inner_linebreak_indented: &str = if indent_size == 0 {
+                        ""
+                    } else {
+                        &("\\n".to_string() + &" ".repeat((current_indent + 1) * indent_size))
+                    };
+                    let between_field_name_and_value = if indent_size == 0 { ":" } else { ": " };
+                    so_far.push('{');
+                    so_far.push_str(inner_linebreak_indented);
+                    so_far.push_str(first_field_name);
+                    so_far.push_str(between_field_name_and_value);
+                    so_far = json_encode_encode_from(
+                        allocator,
+                        indent_size,
+                        current_indent + 1,
+                        so_far,
+                        first_field_json,
+                    );
+                    for (&field_name, &field_value) in json_elements_iterator {
+                        so_far.push(',');
+                        so_far.push_str(inner_linebreak_indented);
+                        so_far.push_str(field_name);
+                        so_far.push_str(between_field_name_and_value);
+                        so_far = json_encode_encode_from(
+                            allocator,
+                            indent_size,
+                            current_indent + 1,
+                            so_far,
+                            field_value,
+                        );
+                    }
+                    so_far.push_str(linebreak_indented);
+                    so_far.push('}');
+                }
+            }
+        }
+    }
+    so_far
+}
+pub fn json_encode_null<'a>() -> JsonValue<'a> {
+    JsonValue::Null
+}
+pub fn json_encode_bool<'a>(bool: bool) -> JsonValue<'a> {
+    JsonValue::Bool(bool)
+}
+pub fn json_encode_string<'a>(string: &'a str) -> JsonValue<'a> {
+    JsonValue::String(string)
+}
+pub fn json_encode_int<'a>(int: f64) -> JsonValue<'a> {
+    JsonValue::Number(int)
+}
+pub fn json_encode_float<'a>(float: f64) -> JsonValue<'a> {
+    JsonValue::Number(float)
+}
+pub fn json_encode_list<'a, A: Clone>(
+    allocator: &'a Bump,
+    element_to_json: impl Fn(A) -> JsonValue<'a>,
+    list: &'a ListList<'a, A>,
+) -> JsonValue<'a> {
+    JsonValue::Array(
+        allocator.alloc(
+            list.iter()
+                .map(|el| element_to_json(el.clone()))
+                .collect::<Vec<JsonValue>>(),
+        ),
+    )
+}
+pub fn json_encode_array<'a, A: Clone>(
+    allocator: &'a Bump,
+    element_to_json: impl Fn(A) -> JsonValue<'a>,
+    array: &'a ArrayArray<A>,
+) -> JsonValue<'a> {
+    JsonValue::Array(
+        allocator.alloc(
+            array
+                .iter()
+                .map(|el| element_to_json(el.clone()))
+                .collect::<Vec<JsonValue>>(),
+        ),
+    )
+}
+pub fn json_encode_object<'a, A: Clone>(
+    allocator: &'a Bump,
+    entries: &'a ListList<'a, (&str, JsonValue)>,
+) -> JsonValue<'a> {
+    JsonValue::Object(
+        allocator.alloc(
+            entries
+                .iter()
+                .map(|entry| entry.clone())
+                // .map(|el| element_to_json(el.clone()))
+                .collect::<std::collections::BTreeMap<&str, JsonValue>>(),
+        ),
+    )
+}
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum JsonDecodeError<'a> {
+    Field(&'a str, &'a JsonDecodeError<'a>),
+    Index(f64, &'a JsonDecodeError<'a>),
+    OneOf(&'a ListList<'a, &'a JsonDecodeError<'a>>),
+    Failure(&'a str, JsonValue<'a>),
+}
+#[derive(Copy, Clone)]
+pub struct JsonDecodeDecoder<'a, A> {
+    decode: &'a dyn Fn(JsonValue<'a>) -> ResultResult<JsonDecodeError<'a>, A>,
+}
+pub fn json_decode_error_to_string<'a>(allocator: &'a Bump, error: JsonDecodeError<'a>) -> &'a str {
+    allocator.alloc(json_decode_error_to_string_help(
+        allocator,
+        error,
+        Vec::new(),
+    ))
+}
+pub fn json_decode_error_to_string_help<'a>(
+    allocator: &'a Bump,
+    error: JsonDecodeError<'a>,
+    mut context: Vec<&'a str>,
+) -> &'a str {
+    match error {
+        JsonDecodeError::Field(field_name, &err) => {
+            let field_description: &'a str = match field_name.chars().next() {
+                Option::Some(field_name_first_char) if field_name_first_char.is_alphanumeric() => {
+                    field_name
+                }
+                _ => allocator.alloc(format!("[{field_name}]")),
+            };
+            context.push(field_description);
+            json_decode_error_to_string_help(allocator, err, context)
+        }
+        JsonDecodeError::Index(index, &err) => {
+            let index_description: String = format!("[{}]", (index as usize).to_string());
+            context.push(allocator.alloc(index_description));
+            json_decode_error_to_string_help(allocator, err, context)
+        }
+        JsonDecodeError::OneOf(&errors) => match errors {
+            ListList::Empty => {
+                if context.is_empty() {
+                    "Ran into a Json.Decode.oneOf with no possibilities!"
+                } else {
+                    allocator.alloc(format!(
+                        "Ran into a Json.Decode.oneOf with no possibilities at json{}",
+                        context.concat()
+                    ))
+                }
+            }
+            ListList::Cons(&err, ListList::Empty) => {
+                json_decode_error_to_string_help(allocator, err, context)
+            }
+            _ => {
+                let starter: &str = if context.is_empty() {
+                    "Json.Decode.oneOf"
+                } else {
+                    &format!("The Json.Decode.oneOf at json{}", context.concat())
+                };
+                let introduction: String = format!(
+                    "{starter} failed in the following {} ways=>\\n\\n",
+                    errors.iter().count().to_string()
+                );
+                allocator.alloc(
+                    introduction
+                        + &errors
+                            .iter()
+                            .enumerate()
+                            .map(move |(i, &&error)| {
+                                allocator.alloc(format!(
+                                    "\\n\\n{} {}",
+                                    (i as usize + 1).to_string(),
+                                    indent(json_decode_error_to_string_help(
+                                        allocator,
+                                        error,
+                                        Vec::new()
+                                    ))
+                                )) as &str
+                            })
+                            .collect::<Vec<&str>>()
+                            .join("\\n\\n"),
+                )
+            }
+        },
+        JsonDecodeError::Failure(msg, json) => {
+            let introduction: &str = if context.is_empty() {
+                "Problem with the given value=>\\n\\n"
+            } else {
+                &format!(
+                    "Problem with the value at json{}=>\\n\\n    ",
+                    context.concat()
+                )
+            };
+            return allocator.alloc(format!(
+                "{introduction}{}\\n\\n{msg}",
+                indent(json_encode_encode(allocator, 4_f64, json))
+            ));
+        }
+    }
+}
+fn indent(string: &str) -> String {
+    string.split("\\n").collect::<Vec<&str>>().join("\\n    ")
+}
+
+pub fn json_decode_decode_value<'a, A>(
+    allocator: &'a Bump,
+    decoder: JsonDecodeDecoder<'a, A>,
+    json: JsonValue<'a>,
+) -> ResultResult<&'a JsonDecodeError<'a>, A> {
+    (decoder.decode)(json).map_err(|error| allocator.alloc(error) as &_)
+}
+pub fn json_decode_succeed<'a, A: Clone>(
+    allocator: &'a Bump,
+    value: A,
+) -> JsonDecodeDecoder<'a, A> {
+    JsonDecodeDecoder {
+        decode: allocator.alloc(move |_| Result::Ok(value.clone())),
+    }
+}
+pub fn json_decode_fail<'a, A: Clone>(
+    allocator: &'a Bump,
+    error_message: &'a str,
+) -> JsonDecodeDecoder<'a, A> {
+    JsonDecodeDecoder {
+        decode: allocator.alloc(|json| Result::Err(JsonDecodeError::Failure(error_message, json))),
+    }
+}
+pub fn json_decode_lazy<'a, A>(
+    allocator: &'a Bump,
+    build: impl Fn() -> JsonDecodeDecoder<'a, A> + 'a,
+) -> JsonDecodeDecoder<'a, A> {
+    JsonDecodeDecoder {
+        decode: allocator.alloc(move |json| (build().decode)(json)),
+    }
+}
+pub fn json_decode_and_then<'a, A, B>(
+    allocator: &'a Bump,
+    decoder_on_succeed: impl Fn(A) -> JsonDecodeDecoder<'a, B> + 'a,
+    decoder: JsonDecodeDecoder<'a, A>,
+) -> JsonDecodeDecoder<'a, B> {
+    JsonDecodeDecoder {
+        decode: allocator.alloc(move |json| {
+            (decoder.decode)(json).and_then(|decoded| (decoder_on_succeed(decoded).decode)(json))
+        }),
+    }
+}
+pub fn json_decode_map<'a, A, B>(
+    allocator: &'a Bump,
+    decoded_change: impl Fn(A) -> B + 'a,
+    decoder: JsonDecodeDecoder<'a, A>,
+) -> JsonDecodeDecoder<'a, B> {
+    JsonDecodeDecoder {
+        decode: allocator
+            .alloc(move |json| (decoder.decode)(json).map(|decoded| decoded_change(decoded))),
+    }
+}
+pub fn json_decode_map2<'a, A, B, Combined, Combine1: Fn(B) -> Combined>(
+    allocator: &'a Bump,
+    combine: impl Fn(A) -> Combine1 + 'a,
+    a_decoder: JsonDecodeDecoder<'a, A>,
+    b_decoder: JsonDecodeDecoder<'a, B>,
+) -> JsonDecodeDecoder<'a, Combined> {
+    JsonDecodeDecoder {
+        decode: allocator.alloc(move |json| {
+            Result::Ok(combine((a_decoder.decode)(json)?)((b_decoder.decode)(
+                json,
+            )?))
+        }),
+    }
+}
+pub fn json_decode_map3<
+    'a,
+    A,
+    B,
+    C,
+    Combined,
+    Combine1: Fn(B) -> Combine2,
+    Combine2: Fn(C) -> Combined,
+>(
+    allocator: &'a Bump,
+    combine: impl Fn(A) -> Combine1 + 'a,
+    a_decoder: JsonDecodeDecoder<'a, A>,
+    b_decoder: JsonDecodeDecoder<'a, B>,
+    c_decoder: JsonDecodeDecoder<'a, C>,
+) -> JsonDecodeDecoder<'a, Combined> {
+    JsonDecodeDecoder {
+        decode: allocator.alloc(move |json| {
+            Result::Ok(combine((a_decoder.decode)(json)?)((b_decoder.decode)(
+                json,
+            )?)((c_decoder.decode)(json)?))
+        }),
+    }
+}
+pub fn json_decode_map4<
+    'a,
+    A,
+    B,
+    C,
+    D,
+    Combined,
+    Combine1: Fn(B) -> Combine2,
+    Combine2: Fn(C) -> Combine3,
+    Combine3: Fn(D) -> Combined,
+>(
+    allocator: &'a Bump,
+    combine: impl Fn(A) -> Combine1 + 'a,
+    a_decoder: JsonDecodeDecoder<'a, A>,
+    b_decoder: JsonDecodeDecoder<'a, B>,
+    c_decoder: JsonDecodeDecoder<'a, C>,
+    d_decoder: JsonDecodeDecoder<'a, D>,
+) -> JsonDecodeDecoder<'a, Combined> {
+    JsonDecodeDecoder {
+        decode: allocator.alloc(move |json| {
+            Result::Ok(combine((a_decoder.decode)(json)?)((b_decoder.decode)(
+                json,
+            )?)((c_decoder.decode)(json)?)((d_decoder
+                .decode)(
+                json
+            )?))
+        }),
+    }
+}
+pub fn json_decode_map5<
+    'a,
+    A,
+    B,
+    C,
+    D,
+    E,
+    Combined,
+    Combine1: Fn(B) -> Combine2,
+    Combine2: Fn(C) -> Combine3,
+    Combine3: Fn(D) -> Combine4,
+    Combine4: Fn(E) -> Combined,
+>(
+    allocator: &'a Bump,
+    combine: impl Fn(A) -> Combine1 + 'a,
+    a_decoder: JsonDecodeDecoder<'a, A>,
+    b_decoder: JsonDecodeDecoder<'a, B>,
+    c_decoder: JsonDecodeDecoder<'a, C>,
+    d_decoder: JsonDecodeDecoder<'a, D>,
+    e_decoder: JsonDecodeDecoder<'a, E>,
+) -> JsonDecodeDecoder<'a, Combined> {
+    JsonDecodeDecoder {
+        decode: allocator.alloc(move |json| {
+            Result::Ok(combine((a_decoder.decode)(json)?)((b_decoder.decode)(
+                json,
+            )?)((c_decoder.decode)(json)?)((d_decoder
+                .decode)(
+                json
+            )?)((e_decoder.decode)(json)?))
+        }),
+    }
+}
+pub fn json_decode_map6<
+    'a,
+    A,
+    B,
+    C,
+    D,
+    E,
+    F,
+    Combined,
+    Combine1: Fn(B) -> Combine2,
+    Combine2: Fn(C) -> Combine3,
+    Combine3: Fn(D) -> Combine4,
+    Combine4: Fn(E) -> Combine5,
+    Combine5: Fn(F) -> Combined,
+>(
+    allocator: &'a Bump,
+    combine: impl Fn(A) -> Combine1 + 'a,
+    a_decoder: JsonDecodeDecoder<'a, A>,
+    b_decoder: JsonDecodeDecoder<'a, B>,
+    c_decoder: JsonDecodeDecoder<'a, C>,
+    d_decoder: JsonDecodeDecoder<'a, D>,
+    e_decoder: JsonDecodeDecoder<'a, E>,
+    f_decoder: JsonDecodeDecoder<'a, F>,
+) -> JsonDecodeDecoder<'a, Combined> {
+    JsonDecodeDecoder {
+        decode: allocator.alloc(move |json| {
+            Result::Ok(combine((a_decoder.decode)(json)?)((b_decoder.decode)(
+                json,
+            )?)((c_decoder.decode)(json)?)((d_decoder
+                .decode)(
+                json
+            )?)((e_decoder.decode)(json)?)((f_decoder
+                .decode)(
+                json
+            )?))
+        }),
+    }
+}
+pub fn json_decode_map7<
+    'a,
+    A,
+    B,
+    C,
+    D,
+    E,
+    F,
+    G,
+    Combined,
+    Combine1: Fn(B) -> Combine2,
+    Combine2: Fn(C) -> Combine3,
+    Combine3: Fn(D) -> Combine4,
+    Combine4: Fn(E) -> Combine5,
+    Combine5: Fn(F) -> Combine6,
+    Combine6: Fn(G) -> Combined,
+>(
+    allocator: &'a Bump,
+    combine: impl Fn(A) -> Combine1 + 'a,
+    a_decoder: JsonDecodeDecoder<'a, A>,
+    b_decoder: JsonDecodeDecoder<'a, B>,
+    c_decoder: JsonDecodeDecoder<'a, C>,
+    d_decoder: JsonDecodeDecoder<'a, D>,
+    e_decoder: JsonDecodeDecoder<'a, E>,
+    f_decoder: JsonDecodeDecoder<'a, F>,
+    g_decoder: JsonDecodeDecoder<'a, G>,
+) -> JsonDecodeDecoder<'a, Combined> {
+    JsonDecodeDecoder {
+        decode: allocator.alloc(move |json| {
+            Result::Ok(combine((a_decoder.decode)(json)?)((b_decoder.decode)(
+                json,
+            )?)((c_decoder.decode)(json)?)((d_decoder
+                .decode)(
+                json
+            )?)((e_decoder.decode)(json)?)((f_decoder
+                .decode)(
+                json
+            )?)((g_decoder.decode)(json)?))
+        }),
+    }
+}
+pub fn json_decode_map8<
+    'a,
+    A,
+    B,
+    C,
+    D,
+    E,
+    F,
+    G,
+    H,
+    Combined,
+    Combine1: Fn(B) -> Combine2,
+    Combine2: Fn(C) -> Combine3,
+    Combine3: Fn(D) -> Combine4,
+    Combine4: Fn(E) -> Combine5,
+    Combine5: Fn(F) -> Combine6,
+    Combine6: Fn(G) -> Combine7,
+    Combine7: Fn(H) -> Combined,
+>(
+    allocator: &'a Bump,
+    combine: impl Fn(A) -> Combine1 + 'a,
+    a_decoder: JsonDecodeDecoder<'a, A>,
+    b_decoder: JsonDecodeDecoder<'a, B>,
+    c_decoder: JsonDecodeDecoder<'a, C>,
+    d_decoder: JsonDecodeDecoder<'a, D>,
+    e_decoder: JsonDecodeDecoder<'a, E>,
+    f_decoder: JsonDecodeDecoder<'a, F>,
+    g_decoder: JsonDecodeDecoder<'a, G>,
+    h_decoder: JsonDecodeDecoder<'a, H>,
+) -> JsonDecodeDecoder<'a, Combined> {
+    JsonDecodeDecoder {
+        decode: allocator.alloc(move |json| {
+            Result::Ok(combine((a_decoder.decode)(json)?)((b_decoder.decode)(
+                json,
+            )?)((c_decoder.decode)(json)?)((d_decoder
+                .decode)(
+                json
+            )?)((e_decoder.decode)(json)?)((f_decoder
+                .decode)(
+                json
+            )?)((g_decoder.decode)(json)?)((h_decoder
+                .decode)(
+                json
+            )?))
+        }),
+    }
+}
+pub fn json_decode_maybe<'a, A>(
+    allocator: &'a Bump,
+    decoder: JsonDecodeDecoder<'a, A>,
+) -> JsonDecodeDecoder<'a, Option<A>> {
+    JsonDecodeDecoder {
+        decode: allocator.alloc(|json| {
+            Result::Ok(match (decoder.decode)(json) {
+                Result::Err(_) => Option::None,
+                Result::Ok(decoded) => Option::Some(decoded),
+            })
+        }),
+    }
+}
+pub fn json_decode_one_of<'a, A>(
+    allocator: &'a Bump,
+    options: ListList<'a, JsonDecodeDecoder<'a, A>>,
+) -> JsonDecodeDecoder<'a, A> {
+    JsonDecodeDecoder {
+        decode: allocator.alloc(move |json| {
+            let mut option_decode_errors: Vec<&'a JsonDecodeError<'a>> = Vec::new();
+            for next_option_decoder in options.iter() {
+                match (next_option_decoder.decode)(json) {
+                    Result::Ok(value) => return Result::Ok(value),
+                    Result::Err(option_decode_error) => {
+                        option_decode_errors.push(allocator.alloc(option_decode_error))
+                    }
+                }
+            }
+            Result::Err(JsonDecodeError::OneOf(double_ended_iterator_to_list(
+                allocator,
+                option_decode_errors.into_iter(),
+            )))
+        }),
+    }
+}
+pub fn json_decode_value<'a>() -> JsonDecodeDecoder<'a, JsonValue<'a>> {
+    JsonDecodeDecoder {
+        decode: &|json| Result::Ok(json),
+    }
+}
+pub fn json_decode_null<'a, A: Clone>(allocator: &'a Bump, value: A) -> JsonDecodeDecoder<'a, A> {
+    JsonDecodeDecoder {
+        decode: allocator.alloc(move |json| match json {
+            JsonValue::Null => Result::Ok(value.clone()),
+            json_not_null => Result::Err(JsonDecodeError::Failure("Expecting NULL", json_not_null)),
+        }),
+    }
+}
+pub fn json_decode_bool<'a>() -> JsonDecodeDecoder<'a, bool> {
+    JsonDecodeDecoder {
+        decode: &|json| match json {
+            JsonValue::Bool(decoded) => Result::Ok(decoded),
+            json_not_bool => {
+                Result::Err(JsonDecodeError::Failure("Expecting a BOOL", json_not_bool))
+            }
+        },
+    }
+}
+pub fn json_decode_int<'a>() -> JsonDecodeDecoder<'a, f64> {
+    JsonDecodeDecoder {
+        decode: &|json| match json {
+            JsonValue::Number(decoded) if decoded.trunc() == decoded => Result::Ok(decoded),
+            json_not_int => Result::Err(JsonDecodeError::Failure("Expecting a INT", json_not_int)),
+        },
+    }
+}
+pub fn json_decode_float<'a>() -> JsonDecodeDecoder<'a, f64> {
+    JsonDecodeDecoder {
+        decode: &|json| match json {
+            JsonValue::Number(decoded) => Result::Ok(decoded),
+            json_not_number => Result::Err(JsonDecodeError::Failure(
+                "Expecting a NUMBER",
+                json_not_number,
+            )),
+        },
+    }
+}
+pub fn json_decode_string<'a>() -> JsonDecodeDecoder<'a, &'a str> {
+    JsonDecodeDecoder {
+        decode: &|json| match json {
+            JsonValue::String(decoded) => Result::Ok(decoded),
+            json_not_string => Result::Err(JsonDecodeError::Failure(
+                "Expecting a STRING",
+                json_not_string,
+            )),
+        },
+    }
+}
+
+pub fn json_decode_nullable<'a, A>(
+    allocator: &'a Bump,
+    on_not_null_decoder: JsonDecodeDecoder<'a, A>,
+) -> JsonDecodeDecoder<'a, Option<A>> {
+    JsonDecodeDecoder {
+        decode: allocator.alloc(|json| match json {
+            JsonValue::Null => Result::Ok(Option::None),
+            json_not_null => match (on_not_null_decoder.decode)(json_not_null) {
+                Result::Ok(decoded_on_not_null) => Result::Ok(Option::Some(decoded_on_not_null)),
+                Result::Err(on_not_null_error) => Result::Err(JsonDecodeError::OneOf(list_cons(
+                    allocator,
+                    allocator.alloc(JsonDecodeError::Failure("Expecting NULL", json_not_null)),
+                    list_cons(
+                        allocator,
+                        allocator.alloc(on_not_null_error),
+                        &ListList::Empty,
+                    ),
+                ))),
+            },
+        }),
+    }
+}
+pub fn json_decode_index<'a, A>(
+    allocator: &'a Bump,
+    index: f64,
+    element_decoder: JsonDecodeDecoder<'a, A>,
+) -> JsonDecodeDecoder<'a, A> {
+    JsonDecodeDecoder {
+        decode: allocator.alloc(move |json| match json {
+            JsonValue::Array(decoded_array) => match decoded_array.get(index as usize) {
+                Option::Some(&decoded_element) => (element_decoder.decode)(decoded_element),
+                Option::None => Result::Err(JsonDecodeError::Failure(
+                    "Expecting an ARRAY with an element at index {index}",
+                    json,
+                )),
+            },
+            json_not_array => Result::Err(JsonDecodeError::Failure(
+                "Expecting an ARRAY",
+                json_not_array,
+            )),
+        }),
+    }
+}
+pub fn json_decode_array<'a, A>(
+    allocator: &'a Bump,
+    element_decoder: JsonDecodeDecoder<'a, A>,
+) -> JsonDecodeDecoder<'a, &'a [A]> {
+    JsonDecodeDecoder {
+        decode: allocator.alloc(move |json| match json {
+            JsonValue::Array(array_of_json_elements) => {
+                let mut decoded_array: Vec<A> = Vec::with_capacity(array_of_json_elements.len());
+                for (index, &value_json) in array_of_json_elements.iter().enumerate() {
+                    match (element_decoder.decode)(value_json) {
+                        Result::Err(value_error) => {
+                            return Result::Err(JsonDecodeError::Index(
+                                index as f64,
+                                allocator.alloc(value_error),
+                            ));
+                        }
+                        Result::Ok(decoded_value) => decoded_array.push(decoded_value),
+                    }
+                }
+                Result::Ok(allocator.alloc(decoded_array).as_slice())
+            }
+            json_not_array => Result::Err(JsonDecodeError::Failure(
+                "Expecting an ARRAY",
+                json_not_array,
+            )),
+        }),
+    }
+}
+pub fn json_decode_list<'a, A>(
+    allocator: &'a Bump,
+    element_decoder: JsonDecodeDecoder<'a, A>,
+) -> JsonDecodeDecoder<'a, &'a ListList<'a, A>> {
+    JsonDecodeDecoder {
+        decode: allocator.alloc(move |json| match json {
+            JsonValue::Array(array_of_json_elements) => {
+                let mut decoded_list = &ListList::Empty;
+                for (index, &value_json) in array_of_json_elements.iter().enumerate().rev() {
+                    match (element_decoder.decode)(value_json) {
+                        Result::Err(value_error) => {
+                            return Result::Err(JsonDecodeError::Index(
+                                index as f64,
+                                allocator.alloc(value_error),
+                            ));
+                        }
+                        Result::Ok(decoded_value) => {
+                            decoded_list = list_cons(allocator, decoded_value, decoded_list)
+                        }
+                    }
+                }
+                Result::Ok(decoded_list)
+            }
+            json_not_array => Result::Err(JsonDecodeError::Failure(
+                "Expecting an ARRAY",
+                json_not_array,
+            )),
+        }),
+    }
+}
+pub fn json_decode_one_or_more<
+    'a,
+    A,
+    Combined,
+    CombineHeadTail1: Fn(&'a ListList<'a, A>) -> Combined,
+>(
+    allocator: &'a Bump,
+    combine_head_tail: impl Fn(A) -> CombineHeadTail1 + 'a,
+    element_decoder: JsonDecodeDecoder<'a, A>,
+) -> JsonDecodeDecoder<'a, Combined> {
+    JsonDecodeDecoder {
+        decode: allocator.alloc(move |json| match json {
+            JsonValue::Array(array_of_json_elements) => {
+                let mut decoded_list: ListList<'a, A> = ListList::Empty;
+                for (index, &value_json) in array_of_json_elements.iter().enumerate().rev() {
+                    match (element_decoder.decode)(value_json) {
+                        Result::Err(value_error) => {
+                            return Result::Err(JsonDecodeError::Index(
+                                index as f64,
+                                allocator.alloc(value_error),
+                            ));
+                        }
+                        Result::Ok(decoded_value) => {
+                            decoded_list =
+                                ListList::Cons(decoded_value, allocator.alloc(decoded_list))
+                        }
+                    }
+                }
+                match decoded_list {
+                    ListList::Empty => Result::Err(JsonDecodeError::Failure(
+                        "Expecting an ARRAY with at least ONE element",
+                        json,
+                    )),
+                    ListList::Cons(decoded_head, decoded_tail) => {
+                        Result::Ok(combine_head_tail(decoded_head)(decoded_tail))
+                    }
+                }
+            }
+            json_not_array => Result::Err(JsonDecodeError::Failure(
+                "Expecting an ARRAY",
+                json_not_array,
+            )),
+        }),
+    }
+}
+pub fn json_decode_field_value<'a>(
+    allocator: &'a Bump,
+    field_name: &'a str,
+) -> JsonDecodeDecoder<'a, JsonValue<'a>> {
+    JsonDecodeDecoder {
+        decode: allocator.alloc(move |json| match json {
+            JsonValue::Object(decoded_object) => match decoded_object.get(field_name) {
+                Option::Some(&decoded_field_value) => Result::Ok(decoded_field_value),
+                Option::None => {
+                    let mut field_name_chars: std::str::Chars<'a> = field_name.chars();
+                    let field_description = match field_name_chars.next() {
+                        Option::Some(field_name_first_char)
+                            if field_name_first_char.is_ascii_alphanumeric()
+                                && field_name_chars
+                                    .all(|tail_char| tail_char.is_ascii_alphanumeric()) =>
+                        {
+                            field_name
+                        }
+                        _ => &format!("[{field_name}]"),
+                    };
+                    Result::Err(JsonDecodeError::Failure(
+                        allocator.alloc(format!(
+                            "Expecting an OBJECT with a field {field_description}"
+                        )),
+                        json,
+                    ))
+                }
+            },
+            json_not_object => Result::Err(JsonDecodeError::Failure(
+                "Expecting an OBJECT",
+                json_not_object,
+            )),
+        }),
+    }
+}
+pub fn json_decode_field<'a, A>(
+    allocator: &'a Bump,
+    field_name: &'a str,
+    field_value_decoder: JsonDecodeDecoder<'a, A>,
+) -> JsonDecodeDecoder<'a, A> {
+    JsonDecodeDecoder {
+        decode: allocator.alloc(move |json| {
+            ((json_decode_field_value(allocator, field_name)).decode)(json).and_then(|decoded| {
+                ((|json| (field_value_decoder.decode)(json))(decoded))
+                    .map_err(|err| JsonDecodeError::Field(field_name, allocator.alloc(err)))
+            })
+        }),
+    }
+}
+pub fn at<'a, A>(
+    allocator: &'a Bump,
+    path: &'a ListList<'a, &'a str>,
+    inner_decoder: JsonDecodeDecoder<'a, A>,
+) -> JsonDecodeDecoder<'a, A> {
+    JsonDecodeDecoder {
+        decode: allocator.alloc(move |json| {
+            let mut successfully_decoded_field_names = Vec::new();
+            let mut remaining_json: JsonValue = json;
+            for next_field_name in path.iter() {
+                match (json_decode_field_value(allocator, next_field_name).decode)(remaining_json) {
+                    Result::Ok(fiel_value_json) => {
+                        remaining_json = fiel_value_json;
+                        successfully_decoded_field_names.push(next_field_name)
+                    }
+                    Result::Err(field_value_decode_error) => {
+                        return Result::Err(successfully_decoded_field_names.into_iter().fold(
+                            field_value_decode_error,
+                            |so_far, field_name| {
+                                JsonDecodeError::Field(field_name, allocator.alloc(so_far))
+                            },
+                        ));
+                    }
+                }
+            }
+            (inner_decoder.decode)(remaining_json).map_err(|inner_error| {
+                successfully_decoded_field_names.into_iter().fold(
+                    inner_error,
+                    |so_far, field_name| {
+                        JsonDecodeError::Field(field_name, allocator.alloc(so_far))
+                    },
+                )
+            })
+        }),
+    }
+}
+pub fn json_decode_key_value_pairs<'a, A>(
+    allocator: &'a Bump,
+    value_decoder: JsonDecodeDecoder<'a, A>,
+) -> JsonDecodeDecoder<'a, &'a ListList<'a, (&'a str, A)>> {
+    JsonDecodeDecoder {
+        decode: allocator.alloc(move |json| match json {
+            JsonValue::Object(key_value_map) => {
+                let mut decoded_entries: &ListList<'a, (&str, A)> = &ListList::Empty;
+                for (&key, &value_json) in key_value_map.iter().rev() {
+                    match (value_decoder.decode)(value_json) {
+                        Result::Err(value_error) => {
+                            return Result::Err(JsonDecodeError::Field(
+                                key,
+                                allocator.alloc(value_error),
+                            ));
+                        }
+                        Result::Ok(decoded_value) => {
+                            decoded_entries =
+                                list_cons(allocator, (key, decoded_value), decoded_entries)
+                        }
+                    }
+                }
+                Result::Ok(decoded_entries)
+            }
+            json_not_array => Result::Err(JsonDecodeError::Failure(
+                "Expecting an OBJECT",
+                json_not_array,
+            )),
+        }),
+    }
 }
 
 pub type BytesBytes<'a> = &'a [u8];

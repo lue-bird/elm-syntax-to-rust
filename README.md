@@ -2,6 +2,7 @@
 > I'm also just learning rust so any tips (e.g. in issues) are appreciated
 >
 > TODO
+> - avoid generally referencing "reference enums" like `ListList` as `&`. Instead, pass them by value and dereference with `&variable` only when pattern matching. This will simplify default declarations etc and lead to less allocations and allocators being passed around
 > - constrain type variables as `: Clone` instead of `: Copy` and make `.clone()` explicit. A consequence is that current closure and match-arm pattern variables are prefixed with `ref` (because a closure is otherwise considered FnOnce and a match arm cannot generally move)
 > - replace immutable string type by `&mut Cow<str>` and array by `&mut Cow<[A]>` to make appending strings or setting array elements cheap. As a result, when a variable's type contains a string/array, use `alloc(_.clone())` every use but the last and pattern match with `(Owned("x") | Borrowed("x"))`
 > - optional: if lambda is called with a function, always inline that function
@@ -44,7 +45,7 @@ pub fn sample_plus2<'a>(allocator: &'a Bump, n: f64) -> f64 {
 
 -   not supported are
     -   ports that use non-json values like `port sendMessage : String -> Cmd msg`, glsl
-    -   `elm/file`, `elm/http`, `elm/browser`, `elm-explorations/markdown`, `elm-explorations/webgl`, `elm-explorations/benchmark` (currently also `elm/json`, `elm/random`, `Bytes.Encode`, `Bytes.Decode`, `elm/regex`, `elm/virtual-dom`, `elm-explorations/linear-algebra` TODO)
+    -   `elm/file`, `elm/http`, `elm/browser`, `elm-explorations/markdown`, `elm-explorations/webgl`, `elm-explorations/benchmark` (currently also `Json.Encode.set`, `Json.Encode.dict`, `Json.Decode.decodeString`, `Json.Decode.dict`, `elm/random`, `Bytes.Encode`, `Bytes.Decode`, `elm/regex`, `elm/virtual-dom`, `elm-explorations/linear-algebra` TODO)
     -   `Task`, `Process`, `Platform.Task`, `Platform.ProcessId`, `Platform.Router`, `Platform.sendToApp`, `Platform.sendToSelf`, `Random.generate`, `Time.now`, `Time.every`, `Time.here`, `Time.getZoneName`, `Bytes.getHostEndianness`
     -   extensible record types outside of module-level value/function declarations. For example, these declarations might not work:
         ```elm
