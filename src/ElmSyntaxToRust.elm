@@ -80,7 +80,10 @@ type RustPattern
     | RustPatternStringLiteral String
     | RustPatternVariable String
     | RustPatternAlias { variable : String, pattern : RustPattern }
-    | RustPatternRecord (FastDict.Dict String RustPattern)
+    | RustPatternStructNotExhaustive
+        { name : String
+        , fields : FastDict.Dict String RustPattern
+        }
     | RustPatternVariant
         { originTypeName : List String
         , name : String
@@ -131,7 +134,10 @@ type RustExpression
         , part2Up : List RustExpression
         }
     | RustExpressionArrayLiteral (List RustExpression)
-    | RustExpressionRecord (FastDict.Dict String RustExpression)
+    | RustExpressionStruct
+        { name : String
+        , fields : FastDict.Dict String RustExpression
+        }
     | RustExpressionCall
         { called : RustExpression
         , arguments : List RustExpression
@@ -1211,27 +1217,19 @@ typeNotVariable context inferredTypeNotVariable =
                 }
 
         ElmSyntaxTypeInfer.TypeRecord recordFields ->
-            let
-                rustFields : FastDict.Dict String RustType
-                rustFields =
-                    recordFields
-                        |> FastDict.foldr
-                            (\name valueType soFar ->
-                                soFar
-                                    |> FastDict.insert
-                                        (name |> toSnakeCaseRustName)
-                                        (valueType |> type_ context)
-                            )
-                            FastDict.empty
-            in
             RustTypeConstruct
                 { qualification = []
                 , name =
-                    generatedRecordTypeName
-                        (rustFields |> FastDict.keys)
+                    generatedRecordStructTypeName
+                        (recordFields |> FastDict.keys)
                 , isFunction = False
                 , arguments =
-                    rustFields |> FastDict.values
+                    recordFields
+                        |> FastDict.foldr
+                            (\_ valueType soFar ->
+                                (valueType |> type_ context) :: soFar
+                            )
+                            []
                 , lifetimeArguments = []
                 }
 
@@ -1246,27 +1244,19 @@ typeNotVariable context inferredTypeNotVariable =
             --     ((typeRange |> rangeToInfoString)
             --         ++ " extensible record types are not supported"
             --     )
-            let
-                rustFields : FastDict.Dict String RustType
-                rustFields =
-                    typeRecordExtension.fields
-                        |> FastDict.foldr
-                            (\name valueType soFar ->
-                                soFar
-                                    |> FastDict.insert
-                                        (name |> toSnakeCaseRustName)
-                                        (valueType |> type_ context)
-                            )
-                            FastDict.empty
-            in
             RustTypeConstruct
                 { qualification = []
                 , name =
-                    generatedRecordTypeName
-                        (rustFields |> FastDict.keys)
+                    generatedRecordStructTypeName
+                        (typeRecordExtension.fields |> FastDict.keys)
                 , isFunction = False
                 , arguments =
-                    rustFields |> FastDict.values
+                    typeRecordExtension.fields
+                        |> FastDict.foldr
+                            (\_ valueType soFar ->
+                                (valueType |> type_ context) :: soFar
+                            )
+                            []
                 , lifetimeArguments = []
                 }
 
@@ -2275,77 +2265,27 @@ pattern context patternInferred =
                 }
 
         ElmSyntaxTypeInfer.PatternRecord patternFields ->
-            let
-                allFields : FastDict.Dict String ElmSyntaxTypeInfer.Type
-                allFields =
-                    case patternInferred.type_ of
-                        ElmSyntaxTypeInfer.TypeVariable _ ->
+            RustPatternStructNotExhaustive
+                { name =
+                    generatedRecordStructTypeName
+                        (patternFields |> List.map .value |> List.sort)
+                , fields =
+                    patternFields
+                        |> List.foldl
+                            (\field soFar ->
+                                let
+                                    rustFieldName : String
+                                    rustFieldName =
+                                        field.value |> toSnakeCaseRustName
+                                in
+                                soFar
+                                    |> FastDict.insert rustFieldName
+                                        (RustPatternVariable
+                                            rustFieldName
+                                        )
+                            )
                             FastDict.empty
-
-                        ElmSyntaxTypeInfer.TypeNotVariable patternTypeNotVariable ->
-                            case patternTypeNotVariable of
-                                ElmSyntaxTypeInfer.TypeUnit ->
-                                    FastDict.empty
-
-                                ElmSyntaxTypeInfer.TypeConstruct _ ->
-                                    FastDict.empty
-
-                                ElmSyntaxTypeInfer.TypeTuple _ ->
-                                    FastDict.empty
-
-                                ElmSyntaxTypeInfer.TypeTriple _ ->
-                                    FastDict.empty
-
-                                ElmSyntaxTypeInfer.TypeRecord patternTypeRecordFields ->
-                                    patternTypeRecordFields
-
-                                ElmSyntaxTypeInfer.TypeRecordExtension _ ->
-                                    FastDict.empty
-
-                                ElmSyntaxTypeInfer.TypeFunction _ ->
-                                    FastDict.empty
-
-                combinedFieldNames : FastDict.Dict String RustPattern
-                combinedFieldNames =
-                    FastDict.merge
-                        (\fieldName _ soFar ->
-                            soFar
-                                |> FastDict.insert
-                                    (fieldName |> toSnakeCaseRustName)
-                                    RustPatternIgnore
-                        )
-                        (\fieldName _ () soFar ->
-                            let
-                                rustFieldName : String
-                                rustFieldName =
-                                    fieldName |> toSnakeCaseRustName
-                            in
-                            soFar
-                                |> FastDict.insert rustFieldName
-                                    (RustPatternVariable rustFieldName)
-                        )
-                        (\fieldName () soFar ->
-                            let
-                                rustFieldName : String
-                                rustFieldName =
-                                    fieldName |> toSnakeCaseRustName
-                            in
-                            soFar
-                                |> FastDict.insert
-                                    rustFieldName
-                                    (RustPatternVariable rustFieldName)
-                        )
-                        allFields
-                        (patternFields
-                            |> List.foldl
-                                (\fieldNameTypedNode soFar ->
-                                    soFar |> FastDict.insert fieldNameTypedNode.value ()
-                                )
-                                FastDict.empty
-                        )
-                        FastDict.empty
-            in
-            RustPatternRecord combinedFieldNames
+                }
 
         ElmSyntaxTypeInfer.PatternListCons listCons ->
             rustPatternListCons
@@ -5181,8 +5121,8 @@ printRustPatternNotParenthesized rustPattern =
                         )
                     )
 
-        RustPatternRecord recordFields ->
-            printRustPatternRecord recordFields
+        RustPatternStructNotExhaustive rustPatternStructNotExhaustive ->
+            printRustPatternStructNotExhaustive rustPatternStructNotExhaustive
 
         RustPatternVariant patternVariant ->
             Print.exactly
@@ -5234,15 +5174,17 @@ printRustPatternFalse =
     Print.exactly "false"
 
 
-printRustPatternRecord : FastDict.Dict String RustPattern -> Print
-printRustPatternRecord recordFields =
+printRustPatternStructNotExhaustive :
+    { name : String
+    , fields : FastDict.Dict String RustPattern
+    }
+    -> Print
+printRustPatternStructNotExhaustive rustPatternStruct =
     Print.exactly
-        (generatedRecordTypeName
-            (recordFields |> FastDict.keys)
-        )
+        (rustPatternStruct.name ++ " { ")
         |> Print.followedBy printExactlyCurlyOpening
         |> Print.followedBy
-            (recordFields
+            (rustPatternStruct.fields
                 |> FastDict.toList
                 |> Print.listMapAndIntersperseAndFlatten
                     (\( fieldName, fieldValuePattern ) ->
@@ -5255,7 +5197,7 @@ printRustPatternRecord recordFields =
                     )
                     printExactlyComma
             )
-        |> Print.followedBy printExactlyCurlyClosing
+        |> Print.followedBy (Print.exactly ", .. }")
 
 
 printExactlyCommaSpace : Print
@@ -5268,16 +5210,20 @@ printExactlyComma =
     Print.exactly ","
 
 
-printRustExpressionRecord : FastDict.Dict String RustExpression -> Print
-printRustExpressionRecord rustRecordFields =
-    if rustRecordFields |> FastDict.isEmpty then
+printRustExpressionStruct :
+    { name : String
+    , fields : FastDict.Dict String RustExpression
+    }
+    -> Print
+printRustExpressionStruct rustExpressionStruct =
+    if rustExpressionStruct.fields |> FastDict.isEmpty then
         printExactlyRustExpressionRecordEmpty
 
     else
         let
             fieldsPrint : Print
             fieldsPrint =
-                rustRecordFields
+                rustExpressionStruct.fields
                     |> FastDict.toList
                     |> Print.listMapAndIntersperseAndFlatten
                         (\( fieldName, fieldValue ) ->
@@ -5300,10 +5246,7 @@ printRustExpressionRecord rustRecordFields =
                         )
         in
         Print.exactly
-            (generatedRecordTypeName
-                (rustRecordFields |> FastDict.keys)
-                ++ " {"
-            )
+            (rustExpressionStruct.name ++ " {")
             |> Print.followedBy
                 (Print.spaceOrLinebreakIndented
                     (fieldsPrint |> Print.lineSpread)
@@ -6867,17 +6810,17 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                     elmRecordFieldsNotAlreadyInDefaultDeclarations ->
                                         soFar
                                             |> FastDict.insert
-                                                (generatedRecordTypeName elmRecordFieldsNotAlreadyInDefaultDeclarations)
+                                                (generatedRecordStructTypeName elmRecordFieldsNotAlreadyInDefaultDeclarations)
                                                 { parameters =
                                                     elmRecordFieldsNotAlreadyInDefaultDeclarations
                                                         |> List.map toPascalCaseRustName
                                                 , fields =
                                                     elmRecordFieldsNotAlreadyInDefaultDeclarations
                                                         |> List.map
-                                                            (\rustRecordField ->
-                                                                ( rustRecordField |> toSnakeCaseRustName
+                                                            (\elmRecordField ->
+                                                                ( elmRecordField |> toSnakeCaseRustName
                                                                 , RustTypeVariable
-                                                                    (rustRecordField |> toPascalCaseRustName)
+                                                                    (elmRecordField |> toPascalCaseRustName)
                                                                 )
                                                             )
                                                         |> FastDict.fromList
@@ -6893,10 +6836,10 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
             }
 
 
-generatedRecordTypeName : List String -> String
-generatedRecordTypeName rustFieldNames =
+generatedRecordStructTypeName : List String -> String
+generatedRecordStructTypeName elmFieldNames =
     "Generated"
-        ++ (rustFieldNames
+        ++ (elmFieldNames
                 |> List.map stringFirstCharToUpper
                 |> String.concat
            )
@@ -7511,8 +7454,8 @@ rustExpressionIsConst context rustExpression =
                         element |> rustExpressionIsConst context
                     )
 
-        RustExpressionRecord fields ->
-            fields
+        RustExpressionStruct rustExpressionStruct ->
+            rustExpressionStruct.fields
                 |> fastDictAll
                     (\_ fieldValue ->
                         fieldValue |> rustExpressionIsConst context
@@ -8406,103 +8349,103 @@ expression context expressionTypedNode =
                     |> Maybe.andThen .recordFieldOrder
             of
                 Just fieldOrder ->
-                    case fieldOrder of
-                        [] ->
-                            Ok (RustExpressionRecord FastDict.empty)
+                    let
+                        parameterTypes : List ElmSyntaxTypeInfer.Type
+                        parameterTypes =
+                            inferredTypeExpandToFunction
+                                expressionTypedNode.type_
+                                |> .inputs
 
-                        fieldName0 :: fieldName1Up ->
-                            let
-                                parameterTypes : List ElmSyntaxTypeInfer.Type
-                                parameterTypes =
-                                    inferredTypeExpandToFunction
-                                        expressionTypedNode.type_
-                                        |> .inputs
+                        resultRecordFields : FastDict.Dict String RustExpression
+                        resultRecordFields =
+                            fieldOrder
+                                |> List.foldl
+                                    (\fieldName soFar ->
+                                        let
+                                            rustFieldName : String
+                                            rustFieldName =
+                                                fieldName |> toSnakeCaseRustName
+                                        in
+                                        soFar
+                                            |> FastDict.insert
+                                                rustFieldName
+                                                (RustExpressionReference
+                                                    { qualification = []
+                                                    , name = generatedFieldValueParameterName rustFieldName
+                                                    }
+                                                )
+                                    )
+                                    FastDict.empty
 
-                                resultRecordFields : FastDict.Dict String RustExpression
-                                resultRecordFields =
-                                    (fieldName0 :: fieldName1Up)
-                                        |> List.foldl
-                                            (\fieldName soFar ->
-                                                let
-                                                    rustFieldName : String
-                                                    rustFieldName =
-                                                        fieldName |> toSnakeCaseRustName
-                                                in
-                                                soFar
-                                                    |> FastDict.insert
-                                                        rustFieldName
-                                                        (RustExpressionReference
-                                                            { qualification = []
-                                                            , name = generatedFieldValueParameterName rustFieldName
-                                                            }
-                                                        )
-                                            )
-                                            FastDict.empty
-
-                                typeAliasesInModule :
-                                    String
-                                    ->
-                                        Maybe
-                                            (FastDict.Dict
-                                                String
-                                                { parameters : List String
-                                                , recordFieldOrder : Maybe (List String)
-                                                , type_ : ElmSyntaxTypeInfer.Type
-                                                }
-                                            )
-                                typeAliasesInModule moduleNameToAccess =
-                                    context.moduleInfo
-                                        |> FastDict.get moduleNameToAccess
-                                        |> Maybe.map .typeAliases
-                            in
-                            Ok
-                                (List.map2
-                                    (\fieldName fieldType ->
-                                        { name = generatedFieldValueParameterName fieldName
-                                        , type_ = fieldType
+                        typeAliasesInModule :
+                            String
+                            ->
+                                Maybe
+                                    (FastDict.Dict
+                                        String
+                                        { parameters : List String
+                                        , recordFieldOrder : Maybe (List String)
+                                        , type_ : ElmSyntaxTypeInfer.Type
                                         }
                                     )
-                                    (fieldName0 :: fieldName1Up)
-                                    parameterTypes
-                                    |> List.foldr
-                                        (\parameter resultSoFar ->
-                                            let
-                                                parameterType : RustType
-                                                parameterType =
-                                                    parameter.type_
-                                                        |> type_
-                                                            { typeAliasesInModule = typeAliasesInModule
-                                                            , rustEnumTypes = context.rustEnumTypes
-                                                            }
-                                            in
-                                            { expression =
-                                                rustExpressionClosureReference
-                                                    { parameters =
-                                                        [ { pattern = RustPatternVariable parameter.name
-                                                          , type_ = parameterType |> Just
-                                                          }
-                                                        ]
-                                                    , resultType = Just resultSoFar.type_
-                                                    , result = resultSoFar.expression
-                                                    }
-                                            , type_ =
-                                                rustTypeBorrowDynFn
-                                                    { input = [ parameterType ]
-                                                    , output = resultSoFar.type_
-                                                    }
-                                            }
-                                        )
-                                        { type_ =
-                                            expressionTypedNode.type_
+                        typeAliasesInModule moduleNameToAccess =
+                            context.moduleInfo
+                                |> FastDict.get moduleNameToAccess
+                                |> Maybe.map .typeAliases
+                    in
+                    Ok
+                        (List.map2
+                            (\fieldName fieldType ->
+                                { name = generatedFieldValueParameterName fieldName
+                                , type_ = fieldType
+                                }
+                            )
+                            fieldOrder
+                            parameterTypes
+                            |> List.foldr
+                                (\parameter resultSoFar ->
+                                    let
+                                        parameterType : RustType
+                                        parameterType =
+                                            parameter.type_
                                                 |> type_
                                                     { typeAliasesInModule = typeAliasesInModule
                                                     , rustEnumTypes = context.rustEnumTypes
                                                     }
-                                        , expression =
-                                            RustExpressionRecord resultRecordFields
-                                        }
-                                    |> .expression
+                                    in
+                                    { expression =
+                                        rustExpressionClosureReference
+                                            { parameters =
+                                                [ { pattern = RustPatternVariable parameter.name
+                                                  , type_ = parameterType |> Just
+                                                  }
+                                                ]
+                                            , resultType = Just resultSoFar.type_
+                                            , result = resultSoFar.expression
+                                            }
+                                    , type_ =
+                                        rustTypeBorrowDynFn
+                                            { input = [ parameterType ]
+                                            , output = resultSoFar.type_
+                                            }
+                                    }
                                 )
+                                { type_ =
+                                    expressionTypedNode.type_
+                                        |> type_
+                                            { typeAliasesInModule = typeAliasesInModule
+                                            , rustEnumTypes = context.rustEnumTypes
+                                            }
+                                , expression =
+                                    RustExpressionStruct
+                                        { name =
+                                            generatedRecordStructTypeName
+                                                (fieldOrder |> List.sort)
+                                        , fields = resultRecordFields
+                                        }
+                                }
+                            |> .expression
+                        )
 
                 Nothing ->
                     Err
@@ -9029,19 +8972,15 @@ expression context expressionTypedNode =
         ElmSyntaxTypeInfer.ExpressionRecord fieldNodes ->
             Result.map
                 (\fields ->
-                    let
-                        fieldResults : FastDict.Dict String RustExpression
-                        fieldResults =
-                            fields
-                                |> List.foldl
-                                    (\( fieldName, fieldValue ) soFar ->
-                                        soFar
-                                            |> FastDict.insert fieldName
-                                                fieldValue
-                                    )
-                                    FastDict.empty
-                    in
-                    RustExpressionRecord fieldResults
+                    RustExpressionStruct
+                        { name =
+                            generatedRecordStructTypeName
+                                (fieldNodes
+                                    |> List.map .name
+                                    |> List.sort
+                                )
+                        , fields = fields |> FastDict.fromList
+                        }
                 )
                 (fieldNodes
                     |> listMapAndCombineOk
@@ -9099,30 +9038,41 @@ expression context expressionTypedNode =
                                             )
                                             FastDict.empty
                             in
-                            RustExpressionRecord
-                                (allFields
-                                    |> FastDict.map
-                                        (\fieldName _ ->
-                                            case fieldsToSetDict |> FastDict.get fieldName of
-                                                Just valueToSet ->
-                                                    valueToSet
+                            RustExpressionStruct
+                                { name =
+                                    generatedRecordStructTypeName
+                                        (allFields |> FastDict.keys)
+                                , fields =
+                                    allFields
+                                        |> FastDict.foldl
+                                            (\fieldName _ soFar ->
+                                                let
+                                                    rustFieldName : String
+                                                    rustFieldName =
+                                                        fieldName |> toSnakeCaseRustName
+                                                in
+                                                soFar
+                                                    |> FastDict.insert rustFieldName
+                                                        (case fieldsToSetDict |> FastDict.get fieldName of
+                                                            Just valueToSet ->
+                                                                valueToSet
 
-                                                Nothing ->
-                                                    RustExpressionRecordAccess
-                                                        { record = rustOriginalRecordVariableReferenceExpression
-                                                        , field = fieldName
-                                                        }
-                                        )
-                                )
+                                                            Nothing ->
+                                                                RustExpressionRecordAccess
+                                                                    { record = rustOriginalRecordVariableReferenceExpression
+                                                                    , field = rustFieldName
+                                                                    }
+                                                        )
+                                            )
+                                            FastDict.empty
+                                }
                         )
                         ((recordUpdate.field0 :: recordUpdate.field1Up)
                             |> listMapAndCombineOk
                                 (\field ->
                                     Result.map
                                         (\fieldValue ->
-                                            ( field.name |> toSnakeCaseRustName
-                                            , fieldValue
-                                            )
+                                            ( field.name, fieldValue )
                                         )
                                         (field.value
                                             |> expression
@@ -9685,14 +9635,16 @@ rustExpressionAlterBindingNames variableNameChange rustExpression =
                         )
                 )
 
-        RustExpressionRecord fields ->
-            RustExpressionRecord
-                (fields
-                    |> FastDict.map
-                        (\_ fieldValue ->
-                            fieldValue |> rustExpressionAlterBindingNames variableNameChange
-                        )
-                )
+        RustExpressionStruct rustExpressionStruct ->
+            RustExpressionStruct
+                { name = rustExpressionStruct.name
+                , fields =
+                    rustExpressionStruct.fields
+                        |> FastDict.map
+                            (\_ fieldValue ->
+                                fieldValue |> rustExpressionAlterBindingNames variableNameChange
+                            )
+                }
 
         RustExpressionCall call ->
             RustExpressionCall
@@ -9930,15 +9882,17 @@ rustPatternAlterBindingNames variableNameChange inferredPattern =
                     rustPatternAlias.pattern |> rustPatternAlterBindingNames variableNameChange
                 }
 
-        RustPatternRecord fields ->
-            RustPatternRecord
-                (fields
-                    |> FastDict.map
-                        (\_ fieldValue ->
-                            fieldValue
-                                |> rustPatternAlterBindingNames variableNameChange
-                        )
-                )
+        RustPatternStructNotExhaustive rustPatternStructNotExhaustive ->
+            RustPatternStructNotExhaustive
+                { name = rustPatternStructNotExhaustive.name
+                , fields =
+                    rustPatternStructNotExhaustive.fields
+                        |> FastDict.map
+                            (\_ fieldValue ->
+                                fieldValue
+                                    |> rustPatternAlterBindingNames variableNameChange
+                            )
+                }
 
         RustPatternVariant variant ->
             RustPatternVariant
@@ -10746,7 +10700,7 @@ rustExpressionCallCondense call =
                 , arguments = [ call.argument ]
                 }
 
-        RustExpressionRecord _ ->
+        RustExpressionStruct _ ->
             RustExpressionCall
                 { called = call.called
                 , arguments = [ call.argument ]
@@ -10829,8 +10783,8 @@ rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck rustExpressi
                             |> rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                     )
 
-        RustExpressionRecord fields ->
-            fields
+        RustExpressionStruct rustExpressionStruct ->
+            rustExpressionStruct.fields
                 |> fastDictAny
                     (\_ fieldValue ->
                         fieldValue
@@ -10949,7 +10903,7 @@ rustExpressionInnermostLambdaResult rustExpression =
         RustExpressionArrayLiteral _ ->
             { statements = [], result = rustExpression }
 
-        RustExpressionRecord _ ->
+        RustExpressionStruct _ ->
             { statements = [], result = rustExpression }
 
         RustExpressionIfElse _ ->
@@ -11090,8 +11044,8 @@ rustExpressionIsConstant rustExpression =
         RustExpressionArrayLiteral elements ->
             elements |> List.isEmpty
 
-        RustExpressionRecord fields ->
-            fields |> FastDict.isEmpty
+        RustExpressionStruct rustExpressionStruct ->
+            rustExpressionStruct.fields |> FastDict.isEmpty
 
         RustExpressionCall _ ->
             False
@@ -11180,8 +11134,8 @@ rustExpressionCountUsesOfReference referenceToCountUsesOf rustExpression =
                         element |> rustExpressionCountUsesOfReference referenceToCountUsesOf
                     )
 
-        RustExpressionRecord fields ->
-            fields
+        RustExpressionStruct rustExpressionStruct ->
+            rustExpressionStruct.fields
                 |> FastDict.foldl
                     (\_ fieldValue soFar ->
                         soFar
@@ -11417,14 +11371,16 @@ rustExpressionSubstituteReferences referenceToExpression rustExpression =
                         )
                 )
 
-        RustExpressionRecord fields ->
-            RustExpressionRecord
-                (fields
-                    |> FastDict.map
-                        (\_ fieldValue ->
-                            fieldValue |> rustExpressionSubstituteReferences referenceToExpression
-                        )
-                )
+        RustExpressionStruct rustExpressionStruct ->
+            RustExpressionStruct
+                { name = rustExpressionStruct.name
+                , fields =
+                    rustExpressionStruct.fields
+                        |> FastDict.map
+                            (\_ fieldValue ->
+                                fieldValue |> rustExpressionSubstituteReferences referenceToExpression
+                            )
+                }
 
         RustExpressionCall call ->
             RustExpressionCall
@@ -15239,7 +15195,7 @@ rustExpressionIsSpaceSeparated rustExpression =
         RustExpressionArrayLiteral _ ->
             False
 
-        RustExpressionRecord _ ->
+        RustExpressionStruct _ ->
             False
 
         RustExpressionCall _ ->
@@ -15300,8 +15256,8 @@ printRustExpressionNotParenthesized rustExpression =
         RustExpressionAfterStatement rustExpressionAfterStatement ->
             printRustExpressionAfterStatement rustExpressionAfterStatement
 
-        RustExpressionRecord fields ->
-            printRustExpressionRecord fields
+        RustExpressionStruct rustExpressionStruct ->
+            printRustExpressionStruct rustExpressionStruct
 
         RustExpressionArrayLiteral elements ->
             printRustExpressionArrayLiteral elements
@@ -15557,7 +15513,7 @@ rustPatternIsSpaceSeparated rustPattern =
         RustPatternVariable _ ->
             False
 
-        RustPatternRecord _ ->
+        RustPatternStructNotExhaustive _ ->
             False
 
         RustPatternVariant _ ->
