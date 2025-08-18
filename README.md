@@ -3,6 +3,7 @@
 >
 > TODO
 > - avoid generally referencing "reference enums" like `ListList` as `&`. Instead, pass them by value and dereference each *argument* containing "reference types" in the same cycle with `&variable` when pattern matching and constructing a variant borrow with `alloc`. This will simplify default declarations etc and lead to less allocations and allocators being passed around
+> - for fns: switch to introducing type parameters with Fn constraints instead of taking `&dyn Fn` (at least for direct parameters), then possibly also avoid `alloc` for lambdas in direct call (not easy generally because the lambda could be additionally nested, so either walk the original type (meh) or just be satisfied removing only the outermost layer)
 > - constrain type variables as `: Clone` instead of `: Copy` and make `.clone()` explicit. A consequence is that current closure and match-arm pattern variables are prefixed with `ref` (because a closure is otherwise considered FnOnce and a match arm cannot generally move)
 > - replace immutable string type by `&mut Cow<str>` and array by `&mut Cow<[A]>` to make appending strings or setting array elements cheap. As a result, when a variable's type contains a string/array, use `alloc(_.clone())` every use but the last and pattern match with `(Owned("x") | Borrowed("x"))`. Also consider the same pattern for `Dict` (as `BTreeMap`) and `Set` (as `BTreeSet`)
 > - optional: if lambda is called with a function, always inline that function
