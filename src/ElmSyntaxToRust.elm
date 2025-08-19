@@ -7679,7 +7679,7 @@ expression context expressionTypedNode =
                                 ]
                             , resultType =
                                 Just
-                                    (expressionTypedNode.type_
+                                    (typeFunction.output
                                         |> type_
                                             { typeAliasesInModule = typeAliasesInModule
                                             , rustEnumTypes = context.rustEnumTypes
