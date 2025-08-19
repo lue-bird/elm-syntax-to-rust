@@ -1797,10 +1797,10 @@ pub fn json_decode_fail<'a, A>(
 }
 pub fn json_decode_lazy<'a, A>(
     allocator: &'a Bump,
-    build: impl Fn() -> JsonDecodeDecoder<'a, A> + 'a,
+    build: impl Fn(()) -> JsonDecodeDecoder<'a, A> + 'a,
 ) -> JsonDecodeDecoder<'a, A> {
     JsonDecodeDecoder {
-        decode: allocator.alloc(move |json| (build().decode)(json)),
+        decode: allocator.alloc(move |json| (build(()).decode)(json)),
     }
 }
 pub fn json_decode_and_then<'a, A, B>(
