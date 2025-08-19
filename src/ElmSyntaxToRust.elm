@@ -30842,7 +30842,7 @@ pub fn json_encode_array<'a, A: Clone>(
         ),
     )
 }
-pub fn json_encode_object<'a, A: Clone>(
+pub fn json_encode_object<'a>(
     allocator: &'a Bump,
     entries: &'a ListList<'a, (&str, JsonValue)>,
 ) -> JsonValue<'a> {
