@@ -252,7 +252,6 @@ modulesPlusImplicitlyImportedToModuleContext :
                 ElmSyntaxTypeInfer.Type
             )
     }
-    -> List String
     ->
         FastDict.Dict
             {- module origin -} String
@@ -268,9 +267,8 @@ modulesPlusImplicitlyImportedToModuleContext :
                     , type_ : ElmSyntaxTypeInfer.Type
                     }
             }
-modulesPlusImplicitlyImportedToModuleContext context moduleNames =
-    implicitlyImportedModules
-        ++ moduleNames
+modulesPlusImplicitlyImportedToModuleContext context =
+    (implicitlyImportedModules ++ (context.types |> FastDict.keys))
         |> -- this can have duplicate names but since we below use
            -- Dict.insert and looking up each module's information is cheap
            -- we can save the hassle of deduplicating here
@@ -1105,6 +1103,17 @@ typeNotVariable context inferredTypeNotVariable =
                         isTypeAlias =
                             case context.typeAliasesInModule typeConstruct.moduleOrigin of
                                 Nothing ->
+                                    let
+                                        () =
+                                            if
+                                                (typeConstruct.moduleOrigin == "Elm.Syntax.Range")
+                                                    && (typeConstruct.name == "Range")
+                                            then
+                                                Debug.log "Elm.Syntax.Range.Range not recognized as alias, the whole module was missing!" ()
+
+                                            else
+                                                ()
+                                    in
                                     False
 
                                 Just inModule ->
@@ -6079,6 +6088,31 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                         |> FastDict.get moduleNameToAccess
                         |> Maybe.map .typeAliases
 
+                moduleInfo :
+                    FastDict.Dict
+                        {- module origin -} String
+                        { portsIncoming : FastSet.Set String
+                        , portsOutgoing : FastSet.Set String
+                        , valueAndFunctionAnnotations :
+                            FastDict.Dict
+                                String
+                                ElmSyntaxTypeInfer.Type
+                        , typeAliases :
+                            FastDict.Dict
+                                String
+                                { parameters : List String
+                                , recordFieldOrder : Maybe (List String)
+                                , type_ : ElmSyntaxTypeInfer.Type
+                                }
+                        }
+                moduleInfo =
+                    modulesPlusImplicitlyImportedToModuleContext
+                        { ports = moduleDeclaredPorts
+                        , types = modulesInferred.types
+                        , valueAndFunctionAnnotations =
+                            modulesInferred.valueAndFunctionAnnotations
+                        }
+
                 transpiledRustDeclarations :
                     { errors : List String
                     , rustEnumTypes :
@@ -6131,40 +6165,6 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                         moduleInferred.module_.moduleDefinition
                                             |> Elm.Syntax.Node.value
                                             |> moduleHeaderName
-
-                                    createdModuleContext :
-                                        FastDict.Dict
-                                            {- module origin -} String
-                                            { portsIncoming : FastSet.Set String
-                                            , portsOutgoing : FastSet.Set String
-                                            , valueAndFunctionAnnotations :
-                                                FastDict.Dict
-                                                    String
-                                                    ElmSyntaxTypeInfer.Type
-                                            , typeAliases :
-                                                FastDict.Dict
-                                                    String
-                                                    { parameters : List String
-                                                    , recordFieldOrder : Maybe (List String)
-                                                    , type_ : ElmSyntaxTypeInfer.Type
-                                                    }
-                                            }
-                                    createdModuleContext =
-                                        moduleName
-                                            :: (moduleInferred.module_.imports
-                                                    |> List.map
-                                                        (\(Elm.Syntax.Node.Node _ syntaxImport) ->
-                                                            syntaxImport.moduleName
-                                                                |> Elm.Syntax.Node.value
-                                                                |> String.join "."
-                                                        )
-                                               )
-                                            |> modulesPlusImplicitlyImportedToModuleContext
-                                                { ports = moduleDeclaredPorts
-                                                , types = modulesInferred.types
-                                                , valueAndFunctionAnnotations =
-                                                    modulesInferred.valueAndFunctionAnnotations
-                                                }
 
                                     moduleDeclaredInferredTypeAliasesAndChoiceTypes :
                                         { typeAliasDeclarations :
@@ -6471,7 +6471,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                     case
                                                         valueOrFunctionDeclarationInferred
                                                             |> valueOrFunctionDeclaration
-                                                                { moduleInfo = createdModuleContext
+                                                                { moduleInfo = moduleInfo
                                                                 , rustEnumTypes = transpiledModuleDeclaredRustTypes.rustEnumTypes
                                                                 , rustConsts = withInferredValeAndFunctionDeclarationsSoFar.rustConsts
                                                                 , rustFns = withInferredValeAndFunctionDeclarationsSoFar.rustFns
@@ -6555,7 +6555,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                 case
                                                                     valueOrFunctionDeclarationInferred
                                                                         |> valueOrFunctionDeclaration
-                                                                            { moduleInfo = createdModuleContext
+                                                                            { moduleInfo = moduleInfo
                                                                             , rustEnumTypes = transpiledModuleDeclaredRustTypes.rustEnumTypes
                                                                             , rustConsts = withCycleMembersSoFar.rustConsts
                                                                             , rustFns = withCycleMembersSoFar.rustFns
@@ -8276,11 +8276,10 @@ expression context expressionTypedNode =
             of
                 Just fieldOrder ->
                     let
-                        parameterTypes : List ElmSyntaxTypeInfer.Type
-                        parameterTypes =
+                        inferredTypeFunction : { inputs : List ElmSyntaxTypeInfer.Type, output : ElmSyntaxTypeInfer.Type }
+                        inferredTypeFunction =
                             inferredTypeExpandToFunction
                                 expressionTypedNode.type_
-                                |> .inputs
 
                         resultRecordFields : FastDict.Dict String RustExpression
                         resultRecordFields =
@@ -8327,7 +8326,7 @@ expression context expressionTypedNode =
                                 }
                             )
                             fieldOrder
-                            parameterTypes
+                            inferredTypeFunction.inputs
                             |> List.foldr
                                 (\parameter resultSoFar ->
                                     let
@@ -8357,7 +8356,7 @@ expression context expressionTypedNode =
                                     }
                                 )
                                 { type_ =
-                                    expressionTypedNode.type_
+                                    inferredTypeFunction.output
                                         |> type_
                                             { typeAliasesInModule = typeAliasesInModule
                                             , rustEnumTypes = context.rustEnumTypes
