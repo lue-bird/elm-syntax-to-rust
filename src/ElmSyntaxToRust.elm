@@ -5046,7 +5046,7 @@ printRustPatternNotParenthesized rustPattern =
             let
                 patternPrint : Print
                 patternPrint =
-                    rustPatternAlias.pattern |> printRustPatternParenthesizedIfSpaceSeparated
+                    rustPatternAlias.pattern |> printRustPatternNotParenthesized
             in
             Print.exactly (rustPatternAlias.variable ++ " @")
                 |> Print.followedBy
@@ -14996,54 +14996,6 @@ printExactlyCurlyOpening =
     Print.exactly "{"
 
 
-rustPatternIsSpaceSeparated : RustPattern -> Bool
-rustPatternIsSpaceSeparated rustPattern =
-    case rustPattern of
-        RustPatternAlias _ ->
-            True
-
-        RustPatternIgnore ->
-            False
-
-        RustPatternBool _ ->
-            False
-
-        RustPatternInteger _ ->
-            False
-
-        RustPatternChar _ ->
-            False
-
-        RustPatternStringLiteral _ ->
-            False
-
-        RustPatternVariable _ ->
-            False
-
-        RustPatternStructNotExhaustive _ ->
-            False
-
-        RustPatternVariant _ ->
-            False
-
-        RustPatternTuple _ ->
-            False
-
-
-printRustPatternParenthesizedIfSpaceSeparated : RustPattern -> Print
-printRustPatternParenthesizedIfSpaceSeparated rustPattern =
-    let
-        notParenthesizedPrint : Print
-        notParenthesizedPrint =
-            rustPattern |> printRustPatternNotParenthesized
-    in
-    if rustPattern |> rustPatternIsSpaceSeparated then
-        printParenthesized notParenthesizedPrint
-
-    else
-        notParenthesizedPrint
-
-
 printRustExpressionClosure :
     { parameters :
         List
@@ -15538,7 +15490,7 @@ printRustLetDestructuring letDestructuring =
         |> Print.followedBy
             (Print.withIndentAtNextMultipleOf4
                 (letDestructuring.pattern
-                    |> printRustPatternParenthesizedIfSpaceSeparated
+                    |> printRustPatternNotParenthesized
                     |> Print.followedBy printExactlySpaceEquals
                     |> Print.followedBy
                         (Print.linebreakIndented
