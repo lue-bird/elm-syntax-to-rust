@@ -485,7 +485,6 @@ pub fn list_append<'a, A: Clone>(
     left: &ListList<A>,
     right: &'a ListList<'a, A>,
 ) -> &'a ListList<'a, A> {
-    // can be optimized
     let mut combined_list: &ListList<A> = right;
     for next_right_last_element in left.iter().collect::<Vec<&A>>().into_iter().rev() {
         combined_list = list_cons(allocator, next_right_last_element.clone(), combined_list)
@@ -1641,7 +1640,6 @@ pub fn json_encode_object<'a, A: Clone>(
             entries
                 .iter()
                 .map(|entry| entry.clone())
-                // .map(|el| element_to_json(el.clone()))
                 .collect::<std::collections::BTreeMap<&str, JsonValue>>(),
         ),
     )
@@ -1675,7 +1673,6 @@ pub fn json_decode_error_to_string_help<'a>(
     so_far: &mut String,
     indent: usize,
 ) {
-    // TODO actually use indent
     let mut current_error = error;
     'the_loop: loop {
         match current_error {
