@@ -2193,10 +2193,20 @@ pattern context patternInferred =
                 }
 
         ElmSyntaxTypeInfer.PatternRecord patternFields ->
+            let
+                allRecordFieldsIncludingOmitted : List String
+                allRecordFieldsIncludingOmitted =
+                    case patternInferred.type_ of
+                        ElmSyntaxTypeInfer.TypeNotVariable (ElmSyntaxTypeInfer.TypeRecord inferredTypeRecord) ->
+                            inferredTypeRecord |> FastDict.keys
+
+                        _ ->
+                            -- error?
+                            patternFields |> List.map .value |> List.sort
+            in
             RustPatternStructNotExhaustive
                 { name =
-                    generatedRecordStructTypeName
-                        (patternFields |> List.map .value |> List.sort)
+                    generatedRecordStructTypeName allRecordFieldsIncludingOmitted
                 , fields =
                     patternFields
                         |> List.foldl
