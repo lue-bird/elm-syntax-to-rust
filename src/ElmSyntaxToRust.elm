@@ -12049,7 +12049,7 @@ okReferenceComposeR =
     Ok
         { qualification = []
         , name = "basics_composer"
-        , requiresAllocator = False
+        , requiresAllocator = True
         }
 
 
@@ -12064,7 +12064,7 @@ okReferenceComposeL =
     Ok
         { qualification = []
         , name = "basics_composel"
-        , requiresAllocator = False
+        , requiresAllocator = True
         }
 
 
@@ -29287,17 +29287,19 @@ pub fn basics_apr<A, B>(food: A, eat: impl Fn(A) -> B) -> B {
 pub fn basics_apl<A, B>(eat: impl Fn(A) -> B, food: A) -> B {
     eat(food)
 }
-pub fn basics_composer<A, B, C, AToB: Fn(A) -> B, BToC: Fn(B) -> C>(
-    earlier: AToB,
-    later: BToC,
-) -> impl Fn(A) -> C {
-    move |food| later(earlier(food))
+pub fn basics_composer<'a, A, B, C>(
+    allocator: &'a Bump,
+    earlier: impl Fn(A) -> B + 'a,
+    later: impl Fn(B) -> C + 'a,
+) -> &'a dyn Fn(A) -> C {
+    allocator.alloc(move |food| later(earlier(food)))
 }
-pub fn basics_composel<A, B, C, AToB: Fn(A) -> B, BToC: Fn(B) -> C>(
-    later: BToC,
-    earlier: AToB,
-) -> impl Fn(A) -> C {
-    move |food| later(earlier(food))
+pub fn basics_composel<'a, A, B, C>(
+    allocator: &'a Bump,
+    later: impl Fn(B) -> C + 'a,
+    earlier: impl Fn(A) -> B + 'a,
+) -> &'a dyn Fn(A) -> C {
+    allocator.alloc(move |food| later(earlier(food)))
 }
 pub fn basics_eq<A: PartialEq>(a: A, b: A) -> bool {
     a == b
