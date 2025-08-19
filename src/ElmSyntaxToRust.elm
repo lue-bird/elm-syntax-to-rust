@@ -5157,7 +5157,8 @@ printRustExpressionStruct rustExpressionStruct =
                             let
                                 fieldValuePrint : Print
                                 fieldValuePrint =
-                                    printRustExpressionNotParenthesized fieldValue
+                                    printRustExpressionNotParenthesizedCurlyEmbracedIfAfterStatement
+                                        fieldValue
                             in
                             Print.exactly (fieldName ++ ":")
                                 |> Print.followedBy
@@ -5175,12 +5176,11 @@ printRustExpressionStruct rustExpressionStruct =
         Print.exactly
             (rustExpressionStruct.name ++ " {")
             |> Print.followedBy
-                (Print.spaceOrLinebreakIndented
-                    (fieldsPrint |> Print.lineSpread)
-                )
-            |> Print.followedBy
                 (Print.withIndentAtNextMultipleOf4
-                    fieldsPrint
+                    (Print.spaceOrLinebreakIndented
+                        (fieldsPrint |> Print.lineSpread)
+                        |> Print.followedBy fieldsPrint
+                    )
                 )
             |> Print.followedBy
                 (Print.spaceOrLinebreakIndented
@@ -5221,13 +5221,12 @@ printCurlyEmbraced : Print -> Print
 printCurlyEmbraced inner =
     printExactlyCurlyOpening
         |> Print.followedBy
-            (Print.withIndentIncreasedBy 1
-                inner
+            (Print.withIndentAtNextMultipleOf4
+                (Print.linebreakIndented
+                    |> Print.followedBy inner
+                )
             )
-        |> Print.followedBy
-            (Print.emptyOrLinebreakIndented
-                (inner |> Print.lineSpread)
-            )
+        |> Print.followedBy Print.linebreakIndented
         |> Print.followedBy printExactlyCurlyClosing
 
 
@@ -12317,7 +12316,7 @@ printRustFnDeclaration rustValueOrFunctionDeclaration =
                     |> Print.followedBy printExactlySpaceCurlyOpening
                     |> Print.followedBy Print.linebreakIndented
                     |> Print.followedBy
-                        (printRustExpressionNotParenthesized
+                        (printRustExpressionNotParenthesizedNotCurlyEmbracedIfAfterStatement
                             rustValueOrFunctionDeclaration.result
                         )
                 )
@@ -12342,11 +12341,6 @@ printRustLetDeclaration rustLetDeclaration =
         resultTypeFullLineSpread : Print.LineSpread
         resultTypeFullLineSpread =
             resultTypePrint |> Print.lineSpread
-
-        resultPrint : Print
-        resultPrint =
-            printRustExpressionNotParenthesized
-                rustLetDeclaration.result
     in
     Print.exactly
         ("pub const " ++ rustLetDeclaration.name)
@@ -12360,15 +12354,12 @@ printRustLetDeclaration rustLetDeclaration =
                             )
                         )
                     |> Print.followedBy
-                        (case rustLetDeclaration.result of
-                            RustExpressionAfterStatement _ ->
-                                printExactlySpaceEquals
-                                    |> Print.followedBy
-                                        (printCurlyEmbraced resultPrint)
-
-                            _ ->
-                                printExactlySpaceEqualsLinebreakIndented
-                                    |> Print.followedBy resultPrint
+                        (Print.exactly " =")
+                    |> Print.followedBy
+                        Print.linebreakIndented
+                    |> Print.followedBy
+                        (printRustExpressionNotParenthesizedCurlyEmbracedIfAfterStatement
+                            rustLetDeclaration.result
                         )
                 )
             )
@@ -12565,7 +12556,7 @@ printRustLocalFnDeclaration rustFnDeclaration =
                     |> Print.followedBy printExactlySpaceCurlyOpening
                     |> Print.followedBy Print.linebreakIndented
                     |> Print.followedBy
-                        (printRustExpressionNotParenthesized
+                        (printRustExpressionNotParenthesizedNotCurlyEmbracedIfAfterStatement
                             rustFnDeclaration.result
                         )
                 )
@@ -12598,7 +12589,7 @@ printRustLocalLetDeclaration rustLetDeclaration =
                     )
                     |> Print.followedBy printExactlySpaceEqualsLinebreakIndented
                     |> Print.followedBy
-                        (printRustExpressionNotParenthesized
+                        (printRustExpressionNotParenthesizedCurlyEmbracedIfAfterStatement
                             rustLetDeclaration.result
                         )
                 )
@@ -14648,80 +14639,72 @@ printRustExpressionParenthesizedIfSpaceSeparated rustExpression =
     let
         notParenthesizedPrint : Print
         notParenthesizedPrint =
-            printRustExpressionNotParenthesized rustExpression
+            printRustExpressionNotParenthesizedNotCurlyEmbracedIfAfterStatement
+                rustExpression
     in
-    if rustExpression |> rustExpressionIsSpaceSeparated then
-        printParenthesized notParenthesizedPrint
-
-    else
-        notParenthesizedPrint
-
-
-rustExpressionIsSpaceSeparated : RustExpression -> Bool
-rustExpressionIsSpaceSeparated rustExpression =
     case rustExpression of
         RustExpressionUnit ->
-            False
+            notParenthesizedPrint
 
         RustExpressionChar _ ->
-            False
+            notParenthesizedPrint
 
         RustExpressionF64 _ ->
-            False
+            notParenthesizedPrint
 
         RustExpressionString _ ->
-            False
+            notParenthesizedPrint
 
         RustExpressionSelf ->
-            False
+            notParenthesizedPrint
 
         RustExpressionReference _ ->
-            False
+            notParenthesizedPrint
 
         RustExpressionReferenceVariant _ ->
-            False
+            notParenthesizedPrint
 
         RustExpressionNegateOperation _ ->
-            False
+            notParenthesizedPrint
 
         RustExpressionBorrow _ ->
-            False
+            notParenthesizedPrint
 
         RustExpressionRecordAccess _ ->
-            False
-
-        RustExpressionAs _ ->
-            True
+            notParenthesizedPrint
 
         RustExpressionTuple _ ->
-            False
-
-        RustExpressionIfElse _ ->
-            True
-
-        RustExpressionMatch _ ->
-            True
+            notParenthesizedPrint
 
         RustExpressionArrayLiteral _ ->
-            False
+            notParenthesizedPrint
 
         RustExpressionStruct _ ->
-            False
+            notParenthesizedPrint
 
         RustExpressionCall _ ->
-            False
+            notParenthesizedPrint
+
+        RustExpressionAs _ ->
+            printParenthesized notParenthesizedPrint
+
+        RustExpressionIfElse _ ->
+            printParenthesized notParenthesizedPrint
+
+        RustExpressionMatch _ ->
+            printParenthesized notParenthesizedPrint
 
         RustExpressionClosure _ ->
-            True
+            printParenthesized notParenthesizedPrint
 
         RustExpressionAfterStatement _ ->
-            True
+            printCurlyEmbraced notParenthesizedPrint
 
 
 {-| Print a [`RustExpression`](#RustExpression)
 -}
-printRustExpressionNotParenthesized : RustExpression -> Print
-printRustExpressionNotParenthesized rustExpression =
+printRustExpressionNotParenthesizedNotCurlyEmbracedIfAfterStatement : RustExpression -> Print
+printRustExpressionNotParenthesizedNotCurlyEmbracedIfAfterStatement rustExpression =
     -- IGNORE TCO
     case rustExpression of
         RustExpressionUnit ->
@@ -14805,6 +14788,22 @@ printRustExpressionNotParenthesized rustExpression =
             printRustExpressionMatch match
 
 
+printRustExpressionNotParenthesizedCurlyEmbracedIfAfterStatement : RustExpression -> Print
+printRustExpressionNotParenthesizedCurlyEmbracedIfAfterStatement rustExpression =
+    let
+        notCurlyEmbracedPrint : Print
+        notCurlyEmbracedPrint =
+            printRustExpressionNotParenthesizedNotCurlyEmbracedIfAfterStatement
+                rustExpression
+    in
+    case rustExpression of
+        RustExpressionAfterStatement _ ->
+            printCurlyEmbraced notCurlyEmbracedPrint
+
+        _ ->
+            notCurlyEmbracedPrint
+
+
 printRustExpressionAs : { type_ : RustType, expression : RustExpression } -> Print
 printRustExpressionAs rustExpressionAs =
     let
@@ -14846,18 +14845,18 @@ printRustExpressionTuple parts =
     let
         part0Print : Print
         part0Print =
-            printRustExpressionNotParenthesized
+            printRustExpressionNotParenthesizedCurlyEmbracedIfAfterStatement
                 parts.part0
 
         part1Print : Print
         part1Print =
-            printRustExpressionNotParenthesized
+            printRustExpressionNotParenthesizedCurlyEmbracedIfAfterStatement
                 parts.part1
 
         part2UpPrints : List Print
         part2UpPrints =
             parts.part2Up
-                |> List.map printRustExpressionNotParenthesized
+                |> List.map printRustExpressionNotParenthesizedCurlyEmbracedIfAfterStatement
 
         lineSpread : Print.LineSpread
         lineSpread =
@@ -14918,7 +14917,7 @@ printRustExpressionCall call =
                 argumentPrints : List Print
                 argumentPrints =
                     (argument0 :: argument1Up)
-                        |> List.map printRustExpressionNotParenthesized
+                        |> List.map printRustExpressionNotParenthesizedCurlyEmbracedIfAfterStatement
 
                 argumentsLineSpread : Print.LineSpread
                 argumentsLineSpread =
@@ -14973,7 +14972,7 @@ printRustExpressionArrayLiteral elements =
                 elementsPrint =
                     (element0 :: element1Up)
                         |> Print.listMapAndIntersperseAndFlatten
-                            printRustExpressionNotParenthesized
+                            printRustExpressionNotParenthesizedCurlyEmbracedIfAfterStatement
                             printExactlyCommaLinebreakIndented
             in
             printExactlyAngledOpeningSpace
@@ -15070,7 +15069,7 @@ printRustExpressionClosure lambda =
 
         resultPrint : Print
         resultPrint =
-            printRustExpressionNotParenthesized
+            printRustExpressionNotParenthesizedNotCurlyEmbracedIfAfterStatement
                 lambda.result
 
         parameterPrints : List Print
@@ -15170,7 +15169,7 @@ printRustExpressionAfterStatement rustExpressionAfterStatement =
     printRustStatement rustExpressionAfterStatement.statement
         |> Print.followedBy Print.linebreakIndented
         |> Print.followedBy
-            (printRustExpressionNotParenthesized
+            (printRustExpressionNotParenthesizedNotCurlyEmbracedIfAfterStatement
                 rustExpressionAfterStatement.result
             )
 
@@ -15185,7 +15184,7 @@ printRustExpressionIfElse syntaxIfElse =
     let
         conditionPrint : Print
         conditionPrint =
-            printRustExpressionNotParenthesized
+            printRustExpressionNotParenthesizedCurlyEmbracedIfAfterStatement
                 syntaxIfElse.condition
 
         conditionLineSpread : Print.LineSpread
@@ -15206,7 +15205,7 @@ printRustExpressionIfElse syntaxIfElse =
             (Print.withIndentAtNextMultipleOf4
                 (Print.linebreakIndented
                     |> Print.followedBy
-                        (printRustExpressionNotParenthesized syntaxIfElse.onTrue)
+                        (printRustExpressionNotParenthesizedNotCurlyEmbracedIfAfterStatement syntaxIfElse.onTrue)
                 )
             )
         |> Print.followedBy Print.linebreakIndented
@@ -15215,7 +15214,7 @@ printRustExpressionIfElse syntaxIfElse =
             (Print.withIndentAtNextMultipleOf4
                 (Print.linebreakIndented
                     |> Print.followedBy
-                        (printRustExpressionNotParenthesized syntaxIfElse.onFalse)
+                        (printRustExpressionNotParenthesizedNotCurlyEmbracedIfAfterStatement syntaxIfElse.onFalse)
                 )
             )
         |> Print.followedBy Print.linebreakIndented
@@ -15237,7 +15236,7 @@ printRustStatementIfElse ifElse =
     let
         conditionPrint : Print
         conditionPrint =
-            printRustExpressionNotParenthesized
+            printRustExpressionNotParenthesizedCurlyEmbracedIfAfterStatement
                 ifElse.condition
 
         conditionLineSpread : Print.LineSpread
@@ -15296,7 +15295,7 @@ printRustStatementMatch rustMatch =
     let
         matchedPrint : Print
         matchedPrint =
-            printRustExpressionNotParenthesized
+            printRustExpressionNotParenthesizedCurlyEmbracedIfAfterStatement
                 rustMatch.matched
 
         matchedPrintLineSpread : Print.LineSpread
@@ -15369,7 +15368,7 @@ printRustExpressionMatch rustMatch =
     let
         matchedPrint : Print
         matchedPrint =
-            printRustExpressionNotParenthesized
+            printRustExpressionNotParenthesizedCurlyEmbracedIfAfterStatement
                 rustMatch.matched
 
         matchedPrintLineSpread : Print.LineSpread
@@ -15417,7 +15416,7 @@ printRustExpressionMatchCase branch =
             (Print.withIndentAtNextMultipleOf4
                 (Print.linebreakIndented
                     |> Print.followedBy
-                        (printRustExpressionNotParenthesized
+                        (printRustExpressionNotParenthesizedNotCurlyEmbracedIfAfterStatement
                             branch.result
                         )
                 )
@@ -15453,7 +15452,7 @@ printRustStatement rustStatement =
             let
                 assignedValuePrint : Print
                 assignedValuePrint =
-                    printRustExpressionNotParenthesized
+                    printRustExpressionNotParenthesizedCurlyEmbracedIfAfterStatement
                         varDeclarationInitialized.value
             in
             Print.exactly ("let mut " ++ varDeclarationInitialized.name ++ " =")
@@ -15472,7 +15471,9 @@ printRustStatement rustStatement =
                     (Print.withIndentAtNextMultipleOf4
                         (Print.linebreakIndented
                             |> Print.followedBy
-                                (printRustExpressionNotParenthesized assignment.assignedValue)
+                                (printRustExpressionNotParenthesizedCurlyEmbracedIfAfterStatement
+                                    assignment.assignedValue
+                                )
                         )
                     )
 
@@ -15480,7 +15481,8 @@ printRustStatement rustStatement =
             let
                 assignedValuePrint : Print
                 assignedValuePrint =
-                    printRustExpressionNotParenthesized assignment.assignedValue
+                    printRustExpressionNotParenthesizedCurlyEmbracedIfAfterStatement
+                        assignment.assignedValue
             in
             Print.exactly
                 (assignment.recordBindingName
@@ -15543,7 +15545,7 @@ printRustLetDestructuring letDestructuring =
                     |> Print.followedBy
                         (Print.linebreakIndented
                             |> Print.followedBy
-                                (printRustExpressionNotParenthesized
+                                (printRustExpressionNotParenthesizedCurlyEmbracedIfAfterStatement
                                     letDestructuring.expression
                                 )
                         )
