@@ -1103,17 +1103,6 @@ typeNotVariable context inferredTypeNotVariable =
                         isTypeAlias =
                             case context.typeAliasesInModule typeConstruct.moduleOrigin of
                                 Nothing ->
-                                    let
-                                        () =
-                                            if
-                                                (typeConstruct.moduleOrigin == "Elm.Syntax.Range")
-                                                    && (typeConstruct.name == "Range")
-                                            then
-                                                Debug.log "Elm.Syntax.Range.Range not recognized as alias, the whole module was missing!" ()
-
-                                            else
-                                                ()
-                                    in
                                     False
 
                                 Just inModule ->
