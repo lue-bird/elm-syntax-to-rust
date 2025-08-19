@@ -1658,94 +1658,121 @@ pub struct JsonDecodeDecoder<'a, A> {
     decode: &'a dyn Fn(JsonValue<'a>) -> ResultResult<JsonDecodeError<'a>, A>,
 }
 pub fn json_decode_error_to_string<'a>(allocator: &'a Bump, error: JsonDecodeError<'a>) -> &'a str {
+    let mut builder = String::new();
     allocator.alloc(json_decode_error_to_string_help(
         allocator,
         error,
-        Vec::new(),
-    ))
+        String::new(),
+        &mut builder,
+        0,
+    ));
+    allocator.alloc(builder)
 }
-pub fn json_decode_error_to_string_help<'a, 'b>(
+pub fn json_decode_error_to_string_help<'a>(
     allocator: &'a Bump,
     error: JsonDecodeError,
-    mut context: Vec<String>,
-) -> String {
-    match error {
-        JsonDecodeError::Field(field_name, &err) => {
-            let field_description: String = match field_name.chars().next() {
-                Option::Some(field_name_first_char) if field_name_first_char.is_alphanumeric() => {
-                    String::from(field_name)
-                }
-                _ => format!("[{field_name}]"),
-            };
-            context.push(field_description);
-            json_decode_error_to_string_help(allocator, err, context)
-        }
-        JsonDecodeError::Index(index, &err) => {
-            let index_description: String = format!("[{}]", (index as usize).to_string());
-            context.push(index_description);
-            json_decode_error_to_string_help(allocator, err, context)
-        }
-        JsonDecodeError::OneOf(&errors) => match errors {
-            ListList::Empty => {
-                if context.is_empty() {
-                    String::from("Ran into a Json.Decode.oneOf with no possibilities!")
-                } else {
-                    format!(
-                        "Ran into a Json.Decode.oneOf with no possibilities at json{}",
-                        context.concat()
-                    )
-                }
-            }
-            ListList::Cons(&err, ListList::Empty) => {
-                json_decode_error_to_string_help(allocator, err, context)
-            }
-            _ => {
-                let starter: &str = if context.is_empty() {
-                    "Json.Decode.oneOf"
-                } else {
-                    &format!("The Json.Decode.oneOf at json{}", context.concat())
+    mut context: String,
+    so_far: &mut String,
+    indent: usize,
+) {
+    // TODO actually use indent
+    let mut current_error = error;
+    'the_loop: loop {
+        match current_error {
+            JsonDecodeError::Field(field_name, &field_value_error) => {
+                let field_description: String = match field_name.chars().next() {
+                    Option::Some(field_name_first_char)
+                        if field_name_first_char.is_alphanumeric() =>
+                    {
+                        ".".to_string() + field_name
+                    }
+
+                    _ => format!("[{field_name}]"),
                 };
-                let introduction: String = format!(
-                    "{starter} failed in the following {} ways=>\n\n",
-                    errors.iter().count().to_string()
-                );
-                introduction
-                    + &errors
-                        .iter()
-                        .enumerate()
-                        .map(move |(i, &&error)| {
-                            format!(
-                                "\n\n{} {}",
-                                (i as usize + 1).to_string(),
-                                indent(&json_decode_error_to_string_help(
-                                    allocator,
-                                    error,
-                                    Vec::new()
-                                ))
-                            )
-                        })
-                        .collect::<Vec<String>>()
-                        .join("\n\n")
+                context.push_str(&field_description);
+                current_error = field_value_error;
             }
-        },
-        JsonDecodeError::Failure(msg, json) => {
-            let introduction: &str = if context.is_empty() {
-                "Problem with the given value=>\n\n"
-            } else {
-                &format!(
-                    "Problem with the value at json{}=>\n\n    ",
-                    context.concat()
-                )
-            };
-            format!(
-                "{introduction}{}\n\n{msg}",
-                indent(json_encode_encode(allocator, 4_f64, json))
-            )
+            JsonDecodeError::Index(index, &element_error) => {
+                let index_description: String = format!("[{}]", (index as usize).to_string());
+                context.push_str(&index_description);
+                current_error = element_error;
+            }
+            JsonDecodeError::OneOf(&errors) => match errors {
+                ListList::Empty => {
+                    if context.is_empty() {
+                        so_far.push_str("Ran into a Json.Decode.oneOf with no possibilities!")
+                    } else {
+                        so_far
+                            .push_str("Ran into a Json.Decode.oneOf with no possibilities at json");
+                        so_far.push_str(&context);
+                    };
+                    break 'the_loop;
+                }
+                ListList::Cons(&only_option_error, ListList::Empty) => {
+                    current_error = only_option_error;
+                }
+                _ => {
+                    let linebreak_indented: String = "\n".to_string() + &" ".repeat(indent);
+                    if context.is_empty() {
+                        so_far.push_str("Json.Decode.oneOf");
+                    } else {
+                        so_far.push_str("The Json.Decode.oneOf at json");
+                        so_far.push_str(&context);
+                    }
+                    so_far.push_str(" failed in the following ");
+                    so_far.push_str(&errors.iter().count().to_string());
+                    so_far.push_str(" ways=>");
+                    so_far.push_str(&linebreak_indented);
+                    so_far.push_str(&linebreak_indented);
+                    for (i, &&error) in errors.iter().enumerate() {
+                        so_far.push_str(&linebreak_indented);
+                        so_far.push_str(&linebreak_indented);
+                        so_far.push_str(&linebreak_indented);
+                        so_far.push_str(&linebreak_indented);
+                        so_far.push_str(&(i as usize + 1).to_string());
+                        so_far.push(' ');
+                        json_decode_error_to_string_help(
+                            allocator,
+                            error,
+                            String::new(),
+                            so_far,
+                            indent + 4,
+                        );
+                    }
+                    break 'the_loop;
+                }
+            },
+            JsonDecodeError::Failure(message, json) => {
+                let linebreak_indented: String = "\n".to_string() + &" ".repeat(indent);
+                if context.is_empty() {
+                    so_far.push_str("Problem with the given value=>");
+                    so_far.push_str(&linebreak_indented);
+                    so_far.push_str(&linebreak_indented);
+                } else {
+                    so_far.push_str("Problem with the value at json");
+                    so_far.push_str(&context);
+                    so_far.push_str("=>");
+                    so_far.push_str(&linebreak_indented);
+                    so_far.push_str(&linebreak_indented);
+                    so_far.push_str("    ");
+                };
+                so_far.push_str(&indent_by(
+                    indent + 4,
+                    json_encode_encode(allocator, 4_f64, json),
+                ));
+                so_far.push_str(&linebreak_indented);
+                so_far.push_str(&linebreak_indented);
+                so_far.push_str(message);
+                break 'the_loop;
+            }
         }
     }
 }
-fn indent(string: &str) -> String {
-    string.split("\n").collect::<Vec<&str>>().join("\n    ")
+fn indent_by(indent: usize, string: &str) -> String {
+    string
+        .split("\n")
+        .collect::<Vec<&str>>()
+        .join(&("\n".to_string() + &" ".repeat(indent)))
 }
 
 pub fn json_decode_decode_value<'a, A>(
