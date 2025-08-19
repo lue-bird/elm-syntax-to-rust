@@ -5110,7 +5110,6 @@ printRustPatternStructNotExhaustive :
 printRustPatternStructNotExhaustive rustPatternStruct =
     Print.exactly
         (rustPatternStruct.name ++ " { ")
-        |> Print.followedBy printExactlyCurlyOpening
         |> Print.followedBy
             (rustPatternStruct.fields
                 |> FastDict.toList
