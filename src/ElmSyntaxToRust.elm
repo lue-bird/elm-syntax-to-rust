@@ -2402,7 +2402,7 @@ typeConstructReferenceToCoreRust reference =
             -- "Value" is the only possible reference.name
             Just
                 { qualification = []
-                , name = "JsonEncodeValue"
+                , name = "JsonValue"
                 , lifetimeParameters = [ generatedLifetimeVariableName ]
                 , referenceOrValueType = ValueType
                 }
@@ -2412,7 +2412,7 @@ typeConstructReferenceToCoreRust reference =
                 "Value" ->
                     Just
                         { qualification = []
-                        , name = "JsonDecodeValue"
+                        , name = "JsonValue"
                         , lifetimeParameters = [ generatedLifetimeVariableName ]
                         , referenceOrValueType = ValueType
                         }
@@ -8516,7 +8516,7 @@ expression context expressionTypedNode =
                                                 RustTypeConstruct
                                                     { qualification = []
                                                     , isFunction = False
-                                                    , name = "JsonEncodeValue"
+                                                    , name = "JsonValue"
                                                     , arguments = []
                                                     , lifetimeArguments = [ generatedLifetimeVariableName ]
                                                     }
