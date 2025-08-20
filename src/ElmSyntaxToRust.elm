@@ -833,7 +833,7 @@ printRustStructDeclaration rustEnumType =
                                         valuePrint =
                                             value |> printRustTypeNotParenthesized
                                     in
-                                    Print.exactly (name ++ ":")
+                                    Print.exactly ("pub " ++ name ++ ":")
                                         |> Print.followedBy
                                             (Print.withIndentAtNextMultipleOf4
                                                 (Print.spaceOrLinebreakIndented
