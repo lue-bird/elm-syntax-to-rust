@@ -1,12 +1,5 @@
-> ⚠️ *pretty early* stage; likely has many situations it doesn't account for.
+> !early stage; likely has some bugs etc.
 > I'm also just learning rust so any tips (e.g. in issues) are appreciated
->
-> TODO
-> - avoid generally referencing "reference enums" like `ListList` as `&`. Instead, pass them by value and dereference each *argument* containing "reference types" in the same cycle with `&variable` when pattern matching and constructing a variant borrow with `alloc`. This will simplify default declarations etc and lead to less allocations and allocators being passed around
-> - for fns: switch to introducing type parameters with Fn constraints instead of taking `&dyn Fn` (at least for direct parameters), then possibly also avoid `alloc` for lambdas in direct call (not easy generally because the lambda could be additionally nested, so either walk the original type (meh) or just be satisfied removing only the outermost layer)
-> - constrain type variables as `: Clone` instead of `: Copy` and make `.clone()` explicit. A consequence is that current closure and match-arm pattern variables are prefixed with `ref` (because a closure is otherwise considered FnOnce and a match arm cannot generally move)
-> - replace immutable string type by `&mut Cow<str>` and array by `&mut Cow<[A]>` to make appending strings or setting array elements cheap. As a result, when a variable's type contains a string/array, use `alloc(_.clone())` every use but the last and pattern match with `(Owned("x") | Borrowed("x"))`. Also consider the same pattern for `Dict` (as `BTreeMap`) and `Set` (as `BTreeSet`)
-> - optional: if lambda is called with a function, always inline that function
 
 Print [`elm-syntax`](https://dark.elm.dmy.fr/packages/stil4m/elm-syntax/latest/) declarations as [rust](https://www.rust-lang.org/) code.
 To try it out, you can
@@ -34,10 +27,7 @@ plus2 n =
 -->
 Ok """...
 pub fn sample_plus2<'a>(allocator: &'a Bump, n: f64) -> f64 {
-    basics_add(
-        n,
-        list_sum(array_to_list(allocator, &[2_f64])),
-    )
+    basics_add(n, list_sum(list(allocator, [2_f64])))
 }
 """
 ```
@@ -116,3 +106,10 @@ Also note that since standard rust functions do not take allocators, yet, regula
 
 So overall, if you intend to let the transpiled code handle a memory-hungry long-running computation, it might run out of memory.
 Use it for classic arena-friendly loop steps like state → interface, request → response etc.
+
+### improvement ideas
+- avoid generally referencing "reference enums" like `ListList` as `&`. Instead, pass them by value and dereference each *argument* containing "reference types" in the same cycle with `&variable` when pattern matching and constructing a variant borrow with `alloc`. This will simplify default declarations etc and lead to less allocations and allocators being passed around
+- for fns: switch to introducing type parameters with Fn constraints instead of taking `&dyn Fn` (at least for direct parameters), then possibly also avoid `alloc` for lambdas in direct call (not easy generally because the lambda could be additionally nested, so either walk the original type (meh) or just be satisfied removing only the outermost layer)
+- constrain type variables as `: Clone` instead of `: Copy` and make `.clone()` explicit. A consequence is that current closure and match-arm pattern variables are prefixed with `ref` (because a closure is otherwise considered FnOnce and a match arm cannot generally move)
+- replace immutable string type by `&mut Cow<str>` and array by `&mut Cow<[A]>` to make appending strings or setting array elements cheap. As a result, when a variable's type contains a string/array, use `alloc(_.clone())` every use but the last and pattern match with `(Owned("x") | Borrowed("x"))`. Also consider the same pattern for `Dict` (as `BTreeMap`) and `Set` (as `BTreeSet`)
+- if lambda is called with a function, always inline that function
