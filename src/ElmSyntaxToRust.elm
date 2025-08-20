@@ -11479,6 +11479,18 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                                 )
                                 result
 
+                    capturedVariables : List { name : String, type_ : ElmSyntaxTypeInfer.Type }
+                    capturedVariables =
+                        inferredExpressionCapturedVariablesFromContext
+                            { bindings =
+                                context.variablesFromWithinDeclarationInScope
+                                    |> FastDict.remove inferredLetDeclarationValueOrFunctionNode.declaration.name
+                            , letDeclaredValueAndFunctionTypes =
+                                context.letDeclaredValueAndFunctionTypes
+                                    |> FastDict.remove inferredLetDeclarationValueOrFunctionNode.declaration.name
+                            }
+                            inferredLetDeclarationValueOrFunctionNode.declaration.result.value
+
                     parameters : List { pattern : RustPattern, type_ : RustType }
                     parameters =
                         { pattern =
@@ -11499,15 +11511,7 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                                 , type_ = rustTypeConstructBumpaloBump
                                 }
                         }
-                            :: (inferredExpressionCapturedVariablesFromContext
-                                    { bindings =
-                                        context.variablesFromWithinDeclarationInScope
-                                            |> FastDict.remove inferredLetDeclarationValueOrFunctionNode.declaration.name
-                                    , letDeclaredValueAndFunctionTypes =
-                                        context.letDeclaredValueAndFunctionTypes
-                                            |> FastDict.remove inferredLetDeclarationValueOrFunctionNode.declaration.name
-                                    }
-                                    inferredLetDeclarationValueOrFunctionNode.declaration.result.value
+                            :: (capturedVariables
                                     |> List.map
                                         (\parameter ->
                                             { pattern =
@@ -11572,7 +11576,29 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                                 )
                             |> FastSet.toList
                     , typeParameters =
-                        allTypeParameters |> List.map .name
+                        capturedVariables
+                            |> List.foldl
+                                (\capturedVariable withCapturedVariablesSoFar ->
+                                    capturedVariable.type_
+                                        |> inferredTypeContainedVariables
+                                        |> FastDict.foldl
+                                            (\variableName _ soFar ->
+                                                if variableName |> String.startsWith "number" then
+                                                    soFar
+
+                                                else
+                                                    soFar |> FastSet.insert (variableName |> toPascalCaseRustName)
+                                            )
+                                            withCapturedVariablesSoFar
+                                )
+                                (allTypeParameters
+                                    |> List.foldl
+                                        (\typeParameter soFar ->
+                                            soFar |> FastSet.insert typeParameter.name
+                                        )
+                                        FastSet.empty
+                                )
+                            |> FastSet.toList
                     , result = resultWithAdditionalParameters
                     }
             )
