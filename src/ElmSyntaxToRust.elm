@@ -109,11 +109,15 @@ type RustExpression
         { originTypeName : List String
         , name : String
         }
+    | RustExpressionReferenceMethod
+        { subject : RustExpression
+        , method : String
+        }
     | RustExpressionNegateOperation RustExpression
     | -- &
       RustExpressionBorrow RustExpression
-    | RustExpressionRecordAccess
-        { record : RustExpression
+    | RustExpressionStructAccess
+        { struct : RustExpression
         , field : String
         }
     | -- type hint or casting
@@ -7349,6 +7353,9 @@ rustExpressionIsConst context rustExpression =
         RustExpressionReferenceVariant _ ->
             True
 
+        RustExpressionReferenceMethod _ ->
+            False
+
         RustExpressionNegateOperation inNegation ->
             rustExpressionIsConst context inNegation
 
@@ -7358,7 +7365,7 @@ rustExpressionIsConst context rustExpression =
         RustExpressionAs rustExpressionAs ->
             rustExpressionIsConst context rustExpressionAs.expression
 
-        RustExpressionRecordAccess _ ->
+        RustExpressionStructAccess _ ->
             -- lack of knowledge if it's actually a method
             False
 
@@ -7677,7 +7684,7 @@ expression context expressionTypedNode =
                         (rustExpressionClosureReference
                             { parameters =
                                 [ { pattern =
-                                        RustPatternVariable generatedAccessedRecordVariableName
+                                        RustPatternVariable generatedAccessedStructVariableName
                                   , type_ =
                                         typeFunction.input
                                             |> type_
@@ -7696,11 +7703,11 @@ expression context expressionTypedNode =
                                             }
                                     )
                             , result =
-                                RustExpressionRecordAccess
-                                    { record =
+                                RustExpressionStructAccess
+                                    { struct =
                                         RustExpressionReference
                                             { qualification = []
-                                            , name = generatedAccessedRecordVariableName
+                                            , name = generatedAccessedStructVariableName
                                             }
                                     , field =
                                         fieldName
@@ -8747,8 +8754,8 @@ expression context expressionTypedNode =
         ElmSyntaxTypeInfer.ExpressionRecordAccess recordAccess ->
             Result.map
                 (\record ->
-                    RustExpressionRecordAccess
-                        { record = record
+                    RustExpressionStructAccess
+                        { struct = record
                         , field =
                             recordAccess.fieldName
                                 |> String.replace "." ""
@@ -8948,8 +8955,8 @@ expression context expressionTypedNode =
                                     }
                                         |> elmReferenceToSnakeCaseRustName
 
-                                rustOriginalRecordVariableReferenceExpression : RustExpression
-                                rustOriginalRecordVariableReferenceExpression =
+                                rustOriginalStructVariableReferenceExpression : RustExpression
+                                rustOriginalStructVariableReferenceExpression =
                                     RustExpressionReference
                                         { qualification = [], name = originalRecordVariable }
 
@@ -8982,8 +8989,8 @@ expression context expressionTypedNode =
                                                                 valueToSet
 
                                                             Nothing ->
-                                                                RustExpressionRecordAccess
-                                                                    { record = rustOriginalRecordVariableReferenceExpression
+                                                                RustExpressionStructAccess
+                                                                    { struct = rustOriginalStructVariableReferenceExpression
                                                                     , field = rustFieldName
                                                                     }
                                                         )
@@ -9287,13 +9294,13 @@ rustExpressionAlloc toAllocate =
 
 rustExpressionAllocFunction : RustExpression
 rustExpressionAllocFunction =
-    RustExpressionRecordAccess
-        { record =
+    RustExpressionReferenceMethod
+        { subject =
             RustExpressionReference
                 { qualification = []
                 , name = generatedAllocatorVariableName
                 }
-        , field = "alloc"
+        , method = "alloc"
         }
 
 
@@ -9914,8 +9921,8 @@ inferredTypeNotVariableIsConcreteRustType inferredTypeNotVariable =
                     )
 
 
-generatedAccessedRecordVariableName : String
-generatedAccessedRecordVariableName =
+generatedAccessedStructVariableName : String
+generatedAccessedStructVariableName =
     "generated_record"
 
 
@@ -10167,6 +10174,12 @@ rustExpressionCallCondense call =
                 , arguments = [ call.argument ]
                 }
 
+        RustExpressionReferenceMethod _ ->
+            RustExpressionCall
+                { called = call.called
+                , arguments = [ call.argument ]
+                }
+
         RustExpressionF64 _ ->
             RustExpressionCall
                 { called = call.called
@@ -10191,7 +10204,7 @@ rustExpressionCallCondense call =
                 , arguments = [ call.argument ]
                 }
 
-        RustExpressionRecordAccess _ ->
+        RustExpressionStructAccess _ ->
             RustExpressionCall
                 { called = call.called
                 , arguments = [ call.argument ]
@@ -10270,9 +10283,13 @@ rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck rustExpressi
             rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                 borrowed
 
-        RustExpressionRecordAccess recordAccess ->
+        RustExpressionStructAccess recordAccess ->
             rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
-                recordAccess.record
+                recordAccess.struct
+
+        RustExpressionReferenceMethod method ->
+            rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
+                method.subject
 
         RustExpressionAs rustExpressionAs ->
             rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
@@ -10406,10 +10423,13 @@ rustExpressionInnermostLambdaResult rustExpression =
         RustExpressionReferenceVariant _ ->
             { statements = [], result = rustExpression }
 
+        RustExpressionReferenceMethod _ ->
+            { statements = [], result = rustExpression }
+
         RustExpressionNegateOperation _ ->
             { statements = [], result = rustExpression }
 
-        RustExpressionRecordAccess _ ->
+        RustExpressionStructAccess _ ->
             { statements = [], result = rustExpression }
 
         RustExpressionTuple _ ->
@@ -10539,6 +10559,9 @@ rustExpressionIsConstant rustExpression =
         RustExpressionReferenceVariant _ ->
             True
 
+        RustExpressionReferenceMethod _ ->
+            False
+
         RustExpressionNegateOperation _ ->
             -- maybe?
             False
@@ -10547,7 +10570,7 @@ rustExpressionIsConstant rustExpression =
             -- maybe?
             False
 
-        RustExpressionRecordAccess _ ->
+        RustExpressionStructAccess _ ->
             False
 
         RustExpressionAs _ ->
@@ -10619,9 +10642,13 @@ rustExpressionCountUsesOfReference referenceToCountUsesOf rustExpression =
         RustExpressionBorrow borrowed ->
             rustExpressionCountUsesOfReference referenceToCountUsesOf borrowed
 
-        RustExpressionRecordAccess recordAccess ->
+        RustExpressionStructAccess recordAccess ->
             rustExpressionCountUsesOfReference referenceToCountUsesOf
-                recordAccess.record
+                recordAccess.struct
+
+        RustExpressionReferenceMethod method ->
+            rustExpressionCountUsesOfReference referenceToCountUsesOf
+                method.subject
 
         RustExpressionAs rustExpressionAs ->
             rustExpressionCountUsesOfReference referenceToCountUsesOf
@@ -10833,12 +10860,20 @@ rustExpressionSubstituteReferences referenceToExpression rustExpression =
                     |> rustExpressionSubstituteReferences referenceToExpression
                 )
 
-        RustExpressionRecordAccess recordAccess ->
-            RustExpressionRecordAccess
-                { record =
-                    recordAccess.record
+        RustExpressionStructAccess recordAccess ->
+            RustExpressionStructAccess
+                { struct =
+                    recordAccess.struct
                         |> rustExpressionSubstituteReferences referenceToExpression
                 , field = recordAccess.field
+                }
+
+        RustExpressionReferenceMethod reference ->
+            RustExpressionReferenceMethod
+                { method = reference.method
+                , subject =
+                    reference.subject
+                        |> rustExpressionSubstituteReferences referenceToExpression
                 }
 
         RustExpressionAs rustExpressionAs ->
@@ -14662,13 +14697,16 @@ printRustExpressionParenthesizedIfSpaceSeparated rustExpression =
         RustExpressionReferenceVariant _ ->
             notParenthesizedPrint
 
+        RustExpressionReferenceMethod _ ->
+            notParenthesizedPrint
+
         RustExpressionNegateOperation _ ->
             notParenthesizedPrint
 
         RustExpressionBorrow _ ->
             notParenthesizedPrint
 
-        RustExpressionRecordAccess _ ->
+        RustExpressionStructAccess _ ->
             notParenthesizedPrint
 
         RustExpressionTuple _ ->
@@ -14708,8 +14746,14 @@ printRustExpressionNotParenthesizedNotCurlyEmbracedIfAfterStatement rustExpressi
         RustExpressionUnit ->
             Print.exactly "()"
 
-        RustExpressionCall call ->
-            printRustExpressionCall call
+        RustExpressionChar charValue ->
+            printRustCharLiteral charValue
+
+        RustExpressionF64 double ->
+            Print.exactly (double |> f64Literal)
+
+        RustExpressionString string ->
+            printRustStringLiteral string
 
         RustExpressionSelf ->
             printRustExpressionSelf
@@ -14726,17 +14770,19 @@ printRustExpressionNotParenthesizedNotCurlyEmbracedIfAfterStatement rustExpressi
                     }
                 )
 
+        RustExpressionReferenceMethod reference ->
+            printRustExpressionParenthesizedIfSpaceSeparated
+                reference.subject
+                |> Print.followedBy
+                    (Print.exactly
+                        ("." ++ reference.method)
+                    )
+
+        RustExpressionCall call ->
+            printRustExpressionCall call
+
         RustExpressionIfElse ifElse ->
             printRustExpressionIfElse ifElse
-
-        RustExpressionChar charValue ->
-            printRustCharLiteral charValue
-
-        RustExpressionF64 double ->
-            Print.exactly (double |> f64Literal)
-
-        RustExpressionString string ->
-            printRustStringLiteral string
 
         RustExpressionTuple parts ->
             printRustExpressionTuple parts
@@ -14771,9 +14817,9 @@ printRustExpressionNotParenthesizedNotCurlyEmbracedIfAfterStatement rustExpressi
                         )
                     )
 
-        RustExpressionRecordAccess syntaxRecordAccess ->
+        RustExpressionStructAccess syntaxRecordAccess ->
             printRustExpressionParenthesizedIfSpaceSeparated
-                syntaxRecordAccess.record
+                syntaxRecordAccess.struct
                 |> Print.followedBy
                     (Print.exactly
                         ("." ++ syntaxRecordAccess.field)
@@ -14899,10 +14945,73 @@ printRustExpressionCall :
     -> Print
 printRustExpressionCall call =
     let
+        calledNotParenthesizedPrint : Print
+        calledNotParenthesizedPrint =
+            printRustExpressionNotParenthesizedNotCurlyEmbracedIfAfterStatement
+                call.called
+
         calledPrint : Print
         calledPrint =
-            printRustExpressionParenthesizedIfSpaceSeparated
-                call.called
+            case call.called of
+                RustExpressionUnit ->
+                    calledNotParenthesizedPrint
+
+                RustExpressionChar _ ->
+                    calledNotParenthesizedPrint
+
+                RustExpressionF64 _ ->
+                    calledNotParenthesizedPrint
+
+                RustExpressionString _ ->
+                    calledNotParenthesizedPrint
+
+                RustExpressionSelf ->
+                    calledNotParenthesizedPrint
+
+                RustExpressionReference _ ->
+                    calledNotParenthesizedPrint
+
+                RustExpressionReferenceVariant _ ->
+                    calledNotParenthesizedPrint
+
+                RustExpressionReferenceMethod _ ->
+                    calledNotParenthesizedPrint
+
+                RustExpressionTuple _ ->
+                    calledNotParenthesizedPrint
+
+                RustExpressionArrayLiteral _ ->
+                    calledNotParenthesizedPrint
+
+                RustExpressionStruct _ ->
+                    calledNotParenthesizedPrint
+
+                RustExpressionCall _ ->
+                    calledNotParenthesizedPrint
+
+                RustExpressionNegateOperation _ ->
+                    printParenthesized calledNotParenthesizedPrint
+
+                RustExpressionBorrow _ ->
+                    printParenthesized calledNotParenthesizedPrint
+
+                RustExpressionStructAccess _ ->
+                    printParenthesized calledNotParenthesizedPrint
+
+                RustExpressionAs _ ->
+                    printParenthesized calledNotParenthesizedPrint
+
+                RustExpressionIfElse _ ->
+                    printParenthesized calledNotParenthesizedPrint
+
+                RustExpressionMatch _ ->
+                    printParenthesized calledNotParenthesizedPrint
+
+                RustExpressionClosure _ ->
+                    printParenthesized calledNotParenthesizedPrint
+
+                RustExpressionAfterStatement _ ->
+                    printCurlyEmbraced calledNotParenthesizedPrint
     in
     case call.arguments of
         [] ->
@@ -15681,6 +15790,14 @@ use bumpalo::Bump;
                     )
                     Print.empty
                 |> Print.toString
+                |> -- TODO hacky way to make stil4m/elm-syntax compile
+                   -- because we have no way to know which type variable is equatable
+                   String.replace
+                    "list_extra_unique_help<'a, A: Copy>"
+                    "list_extra_unique_help<'a, A: Copy + PartialEq>"
+                |> String.replace
+                    "list_extra_unique<'a, A: Copy>"
+                    "list_extra_unique<'a, A: Copy + PartialEq>"
            )
         ++ "\n"
 
