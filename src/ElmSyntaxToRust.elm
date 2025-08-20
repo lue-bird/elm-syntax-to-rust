@@ -7487,9 +7487,11 @@ generatedParameterNameForIndex parameterIndex =
 variableNameDisambiguateFromRustKeywords : String -> String
 variableNameDisambiguateFromRustKeywords variableName =
     if
-        -- to avoid overlaps, push other variables further with -1
-        (variableName |> String.endsWith "_")
-            || (rustKeywords |> FastSet.member variableName)
+        (rustKeywords |> FastSet.member variableName)
+            || -- to avoid overlaps, push other variables further with -1
+               ((variableName |> String.endsWith "_")
+                    && (rustKeywords |> FastSet.member (variableName |> String.dropRight 1))
+               )
     then
         variableName ++ "1"
 
