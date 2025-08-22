@@ -9709,46 +9709,46 @@ expression context expressionTypedNode =
                     context.moduleInfo
                         |> FastDict.get moduleNameToAccess
                         |> Maybe.map .typeAliases
-
-                rustParameters :
-                    { patterns : List { type_ : RustType, pattern : RustPattern }
-                    , bindingsToDerefClone : List { name : String, type_ : RustType }
-                    }
-                rustParameters =
-                    (lambda.parameter0 :: lambda.parameter1Up)
-                        |> List.foldr
-                            (\parameter soFar ->
-                                let
-                                    rustParameter : { pattern : RustPattern, bindingsToDerefClone : List { name : String, type_ : RustType } }
-                                    rustParameter =
-                                        parameter
-                                            |> pattern
-                                                { typeAliasesInModule = typeAliasesInModule
-                                                , rustEnumTypes = context.rustEnumTypes
-                                                }
-                                in
-                                { patterns =
-                                    { type_ =
-                                        parameter.type_
-                                            |> type_
-                                                { typeAliasesInModule = typeAliasesInModule
-                                                , rustEnumTypes = context.rustEnumTypes
-                                                }
-                                    , pattern = rustParameter.pattern
-                                    }
-                                        :: soFar.patterns
-                                , bindingsToDerefClone =
-                                    rustParameter.bindingsToDerefClone
-                                        ++ soFar.bindingsToDerefClone
-                                }
-                            )
-                            { patterns = []
-                            , bindingsToDerefClone = []
-                            }
             in
             Result.map
                 (\result ->
-                    -- TODO optimize by fusing
+                    let
+                        rustParameters :
+                            { patterns : List { type_ : RustType, pattern : RustPattern }
+                            , bindingsToDerefClone : List { name : String, type_ : RustType }
+                            }
+                        rustParameters =
+                            (lambda.parameter0 :: lambda.parameter1Up)
+                                |> List.foldr
+                                    (\parameter soFar ->
+                                        let
+                                            rustParameter : { pattern : RustPattern, bindingsToDerefClone : List { name : String, type_ : RustType } }
+                                            rustParameter =
+                                                parameter
+                                                    |> pattern
+                                                        { typeAliasesInModule = typeAliasesInModule
+                                                        , rustEnumTypes = context.rustEnumTypes
+                                                        }
+                                        in
+                                        { patterns =
+                                            { type_ =
+                                                parameter.type_
+                                                    |> type_
+                                                        { typeAliasesInModule = typeAliasesInModule
+                                                        , rustEnumTypes = context.rustEnumTypes
+                                                        }
+                                            , pattern = rustParameter.pattern
+                                            }
+                                                :: soFar.patterns
+                                        , bindingsToDerefClone =
+                                            rustParameter.bindingsToDerefClone
+                                                ++ soFar.bindingsToDerefClone
+                                        }
+                                    )
+                                    { patterns = []
+                                    , bindingsToDerefClone = []
+                                    }
+                    in
                     rustParameters.patterns
                         |> List.foldr
                             (\parameter resultSoFar ->
@@ -11742,36 +11742,67 @@ rustExpressionCloneWhereNecessary context rustExpression =
 
         RustExpressionClosure closure ->
             let
-                rustVariablesInScopeIncludingFromLambdaParameters : List { name : String, type_ : RustType }
-                rustVariablesInScopeIncludingFromLambdaParameters =
-                    (closure.parameters
+                closureParameterIntroducedBindings : List { name : String, type_ : RustType }
+                closureParameterIntroducedBindings =
+                    closure.parameters
                         |> List.concatMap
                             (\parameter ->
                                 parameter.pattern |> rustPatternIntroducedBindings
                             )
                         |> rustTypedBindingsKeepThoseRequiringClone
-                    )
-                        ++ context.variablesInScope
             in
-            RustExpressionClosure
-                { parameters = closure.parameters
-                , resultType = closure.resultType
-                , result =
-                    -- TODO cloning every captured value is not enough.
-                    -- used cloned values probably have to be let declared
-                    -- before every closure result or closure
-                    closure.result
-                        |> rustExpressionCloneVariables
-                            (\variableName ->
-                                (-- SLOW O(n) for every contained reference in result
-                                 rustVariablesInScopeIncludingFromLambdaParameters
-                                    |> List.any (\lambdaBinding -> lambdaBinding.name == variableName)
+            rustExpressionPrependStatements
+                (closure.result
+                    |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                    |> FastSet.foldl
+                        (\closureResultLocalBinding soFar ->
+                            case
+                                -- SLOW O(n) for every contained reference in result
+                                context.variablesInScope
+                                    |> listMapAndFirstJust
+                                        (\scopeVariable ->
+                                            if scopeVariable.name == closureResultLocalBinding then
+                                                Just scopeVariable.type_
+
+                                            else
+                                                Nothing
+                                        )
+                            of
+                                Nothing ->
+                                    soFar
+
+                                Just capturedRustType ->
+                                    RustStatementLetDeclaration
+                                        { name = closureResultLocalBinding
+                                        , resultType = capturedRustType
+                                        , result =
+                                            rustExpressionClone
+                                                (RustExpressionReference
+                                                    { qualification = []
+                                                    , name = closureResultLocalBinding
+                                                    }
+                                                )
+                                        }
+                                        :: soFar
+                        )
+                        []
+                )
+                (RustExpressionClosure
+                    { parameters = closure.parameters
+                    , resultType = closure.resultType
+                    , result =
+                        closure.result
+                            |> rustExpressionCloneMultipleBindingUsesBeforeLast
+                                (closureParameterIntroducedBindings
+                                    |> List.map .name
                                 )
-                            )
-                        |> rustExpressionCloneWhereNecessary
-                            { variablesInScope = rustVariablesInScopeIncludingFromLambdaParameters
-                            }
-                }
+                            |> rustExpressionCloneWhereNecessary
+                                { variablesInScope =
+                                    closureParameterIntroducedBindings
+                                        ++ context.variablesInScope
+                                }
+                    }
+                )
 
         RustExpressionMatch match ->
             RustExpressionMatch
@@ -11943,6 +11974,8 @@ rustStatementCloneWhereNecessary context rustStatement =
                 , resultType = fnDeclaration.resultType
                 , result =
                     fnDeclaration.result
+                        |> rustExpressionCloneMultipleBindingUsesBeforeLast
+                            (parametersIntroducedBindings |> List.map .name)
                         |> rustExpressionCloneWhereNecessary
                             -- not including context because
                             -- all captured context variables are
@@ -13046,6 +13079,173 @@ rustExpressionClone rustExpression =
                 }
         , arguments = []
         }
+
+
+rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures : RustExpression -> FastSet.Set String
+rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures rustExpression =
+    case rustExpression of
+        RustExpressionUnit ->
+            FastSet.empty
+
+        RustExpressionChar _ ->
+            FastSet.empty
+
+        RustExpressionString _ ->
+            FastSet.empty
+
+        RustExpressionF64 _ ->
+            FastSet.empty
+
+        RustExpressionSelf ->
+            FastSet.empty
+
+        RustExpressionReferenceVariant _ ->
+            FastSet.empty
+
+        RustExpressionClosure _ ->
+            FastSet.empty
+
+        RustExpressionReference reference ->
+            case reference.qualification of
+                _ :: _ ->
+                    FastSet.empty
+
+                [] ->
+                    FastSet.singleton reference.name
+
+        RustExpressionReferenceMethod referenceMethod ->
+            rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures referenceMethod.subject
+
+        RustExpressionNegateOperation inNegation ->
+            rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures inNegation
+
+        RustExpressionBorrow inBorrow ->
+            rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures inBorrow
+
+        RustExpressionDeref inDeref ->
+            rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures inDeref
+
+        RustExpressionStructAccess structAccess ->
+            rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures structAccess.struct
+
+        RustExpressionAs rustExpressionAs ->
+            rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                rustExpressionAs.expression
+
+        RustExpressionTuple parts ->
+            parts.part0
+                |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                |> FastSet.union
+                    (parts.part1 |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures)
+                |> FastSet.union
+                    (parts.part2Up
+                        |> listMapToFastSetsAndUnify rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                    )
+
+        RustExpressionArrayLiteral elements ->
+            elements
+                |> listMapToFastSetsAndUnify rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+
+        RustExpressionStruct struct ->
+            struct.fields
+                |> FastDict.foldl
+                    (\_ fieldValue soFar ->
+                        soFar
+                            |> FastSet.union
+                                (rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures fieldValue)
+                    )
+                    FastSet.empty
+
+        RustExpressionCall call ->
+            call.called
+                |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                |> FastSet.union
+                    (call.arguments
+                        |> listMapToFastSetsAndUnify rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                    )
+
+        RustExpressionIfElse ifElse ->
+            ifElse.condition
+                |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                |> FastSet.union
+                    (ifElse.onTrue |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures)
+                |> FastSet.union
+                    (ifElse.onFalse
+                        |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                    )
+
+        RustExpressionMatch match ->
+            match.matched
+                |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                |> FastSet.union
+                    (match.cases
+                        |> listMapToFastSetsAndUnify
+                            (\matchCase ->
+                                matchCase.result
+                                    |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                            )
+                    )
+
+        RustExpressionAfterStatement expressionAfterStatement ->
+            expressionAfterStatement.statement
+                |> rustStatementUsedLocalBindingsOutsideOfFnsAndClosures
+                |> FastSet.union
+                    (expressionAfterStatement.result
+                        |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                    )
+
+
+rustStatementUsedLocalBindingsOutsideOfFnsAndClosures : RustStatement -> FastSet.Set String
+rustStatementUsedLocalBindingsOutsideOfFnsAndClosures rustStatement =
+    case rustStatement of
+        RustStatementFnDeclaration _ ->
+            FastSet.empty
+
+        RustStatementLetDeclarationUninitialized _ ->
+            FastSet.empty
+
+        RustStatementLetDestructuring letDestructuring ->
+            rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                letDestructuring.expression
+
+        RustStatementLetDeclaration statementLetDeclaration ->
+            rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                statementLetDeclaration.result
+
+        RustStatementLetMutDeclaration letMutDeclaration ->
+            rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                letMutDeclaration.value
+
+        RustStatementBindingAssignment assignment ->
+            rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                assignment.assignedValue
+
+        RustStatementIfElse ifElse ->
+            ifElse.condition
+                |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                |> FastSet.union
+                    (ifElse.onTrue
+                        |> listMapToFastSetsAndUnify
+                            rustStatementUsedLocalBindingsOutsideOfFnsAndClosures
+                    )
+                |> FastSet.union
+                    (ifElse.onFalse
+                        |> listMapToFastSetsAndUnify
+                            rustStatementUsedLocalBindingsOutsideOfFnsAndClosures
+                    )
+
+        RustStatementMatch match ->
+            match.matched
+                |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                |> FastSet.union
+                    (match.cases
+                        |> listMapToFastSetsAndUnify
+                            (\matchCase ->
+                                matchCase.statements
+                                    |> listMapToFastSetsAndUnify
+                                        rustStatementUsedLocalBindingsOutsideOfFnsAndClosures
+                            )
+                    )
 
 
 rustExpressionSubstituteReferences :
@@ -14475,10 +14675,10 @@ printRustFnGenerics typeVariablesToDeclare =
                         (\typeParameter ->
                             -- TODO Copy → Clone
                             if typeParameter |> String.startsWith "Comparable" then
-                                typeParameter ++ ": Copy + PartialOrd"
+                                typeParameter ++ ": Clone + PartialOrd"
 
                             else
-                                typeParameter ++ ": Copy"
+                                typeParameter ++ ": Clone"
                         )
                )
     of
