@@ -7908,12 +7908,12 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
                             |> bindingsToDerefCloneToRustStatements
                         )
                         resultWithAdditionalGeneratedArgumentsApplied
+                        |> rustExpressionCloneWhereNecessary
+                            { variablesInScope = allRustParameterIntroducedBindings }
                         |> rustExpressionCloneMultipleBindingUsesBeforeLast
                             (allRustParameterIntroducedBindings
                                 |> List.map .name
                             )
-                        |> rustExpressionCloneWhereNecessary
-                            { variablesInScope = allRustParameterIntroducedBindings }
                 , lifetimeParameters = [ generatedLifetimeVariableName ]
                 }
         )
@@ -11893,15 +11893,15 @@ rustExpressionCloneWhereNecessary context rustExpression =
                     , resultType = closure.resultType
                     , result =
                         closure.result
-                            |> rustExpressionCloneMultipleBindingUsesBeforeLast
-                                (closureParameterIntroducedBindings
-                                    |> List.map .name
-                                )
                             |> rustExpressionCloneWhereNecessary
                                 { variablesInScope =
                                     closureParameterIntroducedBindings
                                         ++ context.variablesInScope
                                 }
+                            |> rustExpressionCloneMultipleBindingUsesBeforeLast
+                                (closureParameterIntroducedBindings
+                                    |> List.map .name
+                                )
                     }
                 )
 
@@ -11924,15 +11924,15 @@ rustExpressionCloneWhereNecessary context rustExpression =
                                 { pattern = matchCase.pattern
                                 , result =
                                     matchCase.result
-                                        |> rustExpressionCloneMultipleBindingUsesBeforeLast
-                                            (casePatternIntroducedBindings
-                                                |> List.map .name
-                                            )
                                         |> rustExpressionCloneWhereNecessary
                                             { variablesInScope =
                                                 casePatternIntroducedBindings
                                                     ++ context.variablesInScope
                                             }
+                                        |> rustExpressionCloneMultipleBindingUsesBeforeLast
+                                            (casePatternIntroducedBindings
+                                                |> List.map .name
+                                            )
                                 }
                             )
                 }
@@ -11951,13 +11951,13 @@ rustExpressionCloneWhereNecessary context rustExpression =
                         |> rustStatementCloneWhereNecessary context
                 , result =
                     expressionAfterStatement.result
-                        |> rustExpressionCloneMultipleBindingUsesBeforeLast
-                            (statementIntroducedVariables |> List.map .name)
                         |> rustExpressionCloneWhereNecessary
                             { variablesInScope =
                                 statementIntroducedVariables
                                     ++ context.variablesInScope
                             }
+                        |> rustExpressionCloneMultipleBindingUsesBeforeLast
+                            (statementIntroducedVariables |> List.map .name)
                 }
 
 
@@ -12075,13 +12075,13 @@ rustStatementCloneWhereNecessary context rustStatement =
                 , resultType = fnDeclaration.resultType
                 , result =
                     fnDeclaration.result
-                        |> rustExpressionCloneMultipleBindingUsesBeforeLast
-                            (parametersIntroducedBindings |> List.map .name)
                         |> rustExpressionCloneWhereNecessary
                             -- not including context because
                             -- all captured context variables are
                             -- present in parameters
                             { variablesInScope = parametersIntroducedBindings }
+                        |> rustExpressionCloneMultipleBindingUsesBeforeLast
+                            (parametersIntroducedBindings |> List.map .name)
                 }
 
 
