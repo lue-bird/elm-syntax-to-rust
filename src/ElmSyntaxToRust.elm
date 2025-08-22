@@ -2352,8 +2352,10 @@ pattern context patternInferred =
                                     rustPatternListEmpty
                     in
                     { pattern =
-                        rustTailPattern
-                            |> rustPatternMapBindings generatedPatternRefBindingName
+                        rustPatternListCons rustHead.pattern
+                            (rustTailPattern
+                                |> rustPatternMapBindings generatedPatternRefBindingName
+                            )
                     , bindingsToDerefClone =
                         rustHead.bindingsToDerefClone
                             ++ (rustTailPattern |> rustPatternIntroducedBindings)
@@ -6856,31 +6858,32 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
 
                                                         Graph.CyclicSCC inferredTypeDeclarationCycle ->
                                                             let
-                                                                cycleEnumMemberNames : FastSet.Set String
-                                                                cycleEnumMemberNames =
+                                                                cycleMemberNames : FastSet.Set String
+                                                                cycleMemberNames =
                                                                     inferredTypeDeclarationCycle
                                                                         |> List.foldl
                                                                             (\inferredTypeDeclaration cycleMemberNamesSoFar ->
-                                                                                case inferredTypeDeclaration of
-                                                                                    InferredTypeAliasDeclaration _ ->
-                                                                                        cycleMemberNamesSoFar
+                                                                                cycleMemberNamesSoFar
+                                                                                    |> FastSet.insert
+                                                                                        ({ moduleOrigin = moduleName
+                                                                                         , name =
+                                                                                            case inferredTypeDeclaration of
+                                                                                                InferredTypeAliasDeclaration inferredTypeAliasDeclaration ->
+                                                                                                    inferredTypeAliasDeclaration.name
 
-                                                                                    InferredChoiceTypeDeclaration inferredChoiceTypeDeclaration ->
-                                                                                        cycleMemberNamesSoFar
-                                                                                            |> FastSet.insert
-                                                                                                ({ moduleOrigin = moduleName
-                                                                                                 , name = inferredChoiceTypeDeclaration.name
-                                                                                                 }
-                                                                                                    |> elmReferenceToPascalCaseRustName
-                                                                                                )
+                                                                                                InferredChoiceTypeDeclaration inferredChoiceTypeDeclaration ->
+                                                                                                    inferredChoiceTypeDeclaration.name
+                                                                                         }
+                                                                                            |> elmReferenceToPascalCaseRustName
+                                                                                        )
                                                                             )
                                                                             FastSet.empty
 
-                                                                rustTypeIncludesCycleEnumMember : RustType -> Bool
-                                                                rustTypeIncludesCycleEnumMember rustType =
+                                                                rustTypeIncludesCycleMember : RustType -> Bool
+                                                                rustTypeIncludesCycleMember rustType =
                                                                     rustType
                                                                         |> rustTypeIncludesAnyLocalTypeConstruct
-                                                                            cycleEnumMemberNames
+                                                                            cycleMemberNames
                                                             in
                                                             inferredTypeDeclarationCycle
                                                                 |> List.foldl
@@ -6954,7 +6957,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                                             values
                                                                                                                 |> List.indexedMap
                                                                                                                     (\valueIndex value ->
-                                                                                                                        if value |> rustTypeIncludesCycleEnumMember then
+                                                                                                                        if value |> rustTypeIncludesCycleMember then
                                                                                                                             Just valueIndex
 
                                                                                                                         else
@@ -6974,7 +6977,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                                     values
                                                                                                         |> List.map
                                                                                                             (\value ->
-                                                                                                                if value |> rustTypeIncludesCycleEnumMember then
+                                                                                                                if value |> rustTypeIncludesCycleMember then
                                                                                                                     RustTypeBorrow
                                                                                                                         { lifetimeVariable =
                                                                                                                             Just generatedLifetimeVariableName
@@ -11653,7 +11656,7 @@ rustExpressionCloneWhereNecessary context rustExpression =
                 }
 
         RustExpressionNegateOperation inNegation ->
-            RustExpressionBorrow
+            RustExpressionNegateOperation
                 (inNegation
                     |> rustExpressionCloneWhereNecessary context
                 )
@@ -11750,43 +11753,46 @@ rustExpressionCloneWhereNecessary context rustExpression =
                                 parameter.pattern |> rustPatternIntroducedBindings
                             )
                         |> rustTypedBindingsKeepThoseRequiringClone
+
+                capturedClones : List RustStatement
+                capturedClones =
+                    closure.result
+                        |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                        |> FastSet.foldl
+                            (\closureResultLocalBinding soFar ->
+                                case
+                                    -- SLOW O(n) for every contained reference in result
+                                    context.variablesInScope
+                                        |> listMapAndFirstJust
+                                            (\scopeVariable ->
+                                                if scopeVariable.name == closureResultLocalBinding then
+                                                    Just scopeVariable.type_
+
+                                                else
+                                                    Nothing
+                                            )
+                                of
+                                    Nothing ->
+                                        soFar
+
+                                    Just capturedRustType ->
+                                        RustStatementLetDeclaration
+                                            { name = closureResultLocalBinding
+                                            , resultType = capturedRustType
+                                            , result =
+                                                rustExpressionClone
+                                                    (RustExpressionReference
+                                                        { qualification = []
+                                                        , name = closureResultLocalBinding
+                                                        }
+                                                    )
+                                            }
+                                            :: soFar
+                            )
+                            []
             in
             rustExpressionPrependStatements
-                (closure.result
-                    |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
-                    |> FastSet.foldl
-                        (\closureResultLocalBinding soFar ->
-                            case
-                                -- SLOW O(n) for every contained reference in result
-                                context.variablesInScope
-                                    |> listMapAndFirstJust
-                                        (\scopeVariable ->
-                                            if scopeVariable.name == closureResultLocalBinding then
-                                                Just scopeVariable.type_
-
-                                            else
-                                                Nothing
-                                        )
-                            of
-                                Nothing ->
-                                    soFar
-
-                                Just capturedRustType ->
-                                    RustStatementLetDeclaration
-                                        { name = closureResultLocalBinding
-                                        , resultType = capturedRustType
-                                        , result =
-                                            rustExpressionClone
-                                                (RustExpressionReference
-                                                    { qualification = []
-                                                    , name = closureResultLocalBinding
-                                                    }
-                                                )
-                                        }
-                                        :: soFar
-                        )
-                        []
-                )
+                capturedClones
                 (RustExpressionClosure
                     { parameters = closure.parameters
                     , resultType = closure.resultType
@@ -12486,6 +12492,8 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
 
         RustExpressionClosure closure ->
             -- having the closure own the value would make it FnOnce
+            -- TODO handling it here with rustExpressionCloneBindingUses
+            -- seems really, really sus to me
             { bindingWasUsed = False
             , withClones =
                 RustExpressionClosure
@@ -13025,7 +13033,8 @@ rustTypedBindingsKeepThoseRequiringClone rustTypedBindings =
     rustTypedBindings
         |> List.filter
             (\rustTypedBinding ->
-                rustTypedBinding.type_ |> rustTypeRequiresClone
+                (rustTypedBinding.name /= generatedAllocatorVariableName)
+                    && (rustTypedBinding.type_ |> rustTypeRequiresClone)
             )
 
 
@@ -15357,7 +15366,10 @@ inferredTypeDeclarationsToMostToLeastDependedOn rustTypeDeclarations =
                                     FastSet.union soFar
                                         (variantValues
                                             |> listMapToFastSetsAndUnify
-                                                inferredTypeContainedLocallyDeclaredReferences
+                                                (\variantValue ->
+                                                    variantValue
+                                                        |> inferredTypeContainedLocallyDeclaredReferences
+                                                )
                                         )
                                 )
                                 FastSet.empty
@@ -16510,158 +16522,6 @@ inferredTypeNotVariableExpand expansions syntaxType =
                                         }
 
 
-{-| Caution! This is only an approximation that's good enough for
-resolving type aliases for specialization but not much else.
-
-Resulting ranges and type construct qualifications can also be all over the place, don't rely on them
-
--}
-syntaxTypeNodeExpandInnerAliases :
-    { typeConstructModuleOriginLookup :
-        FastDict.Dict String (FastDict.Dict String String)
-    , typeAliases :
-        FastDict.Dict
-            {- module origin -} String
-            (FastDict.Dict
-                String
-                { parameters : List String
-                , recordFieldOrder : Maybe (List String)
-                , type_ : ElmSyntaxTypeInfer.Type
-                }
-            )
-    }
-    -> Elm.Syntax.Node.Node Elm.Syntax.TypeAnnotation.TypeAnnotation
-    -> Elm.Syntax.Node.Node Elm.Syntax.TypeAnnotation.TypeAnnotation
-syntaxTypeNodeExpandInnerAliases context syntaxTypeNode =
-    syntaxTypeNode
-        |> Elm.Syntax.Node.map
-            (\syntaxType ->
-                syntaxType |> syntaxTypeExpandInnerAliases context
-            )
-
-
-{-| Caution! This is only an approximation that's good enough for
-resolving type aliases for specialization but not much else.
-
-Resulting ranges and type construct qualifications can also be all over the place, don't rely on them
-
--}
-syntaxTypeExpandInnerAliases :
-    { typeConstructModuleOriginLookup :
-        FastDict.Dict String (FastDict.Dict String String)
-    , typeAliases :
-        FastDict.Dict
-            {- module origin -} String
-            (FastDict.Dict
-                String
-                { parameters : List String
-                , recordFieldOrder : Maybe (List String)
-                , type_ : ElmSyntaxTypeInfer.Type
-                }
-            )
-    }
-    -> Elm.Syntax.TypeAnnotation.TypeAnnotation
-    -> Elm.Syntax.TypeAnnotation.TypeAnnotation
-syntaxTypeExpandInnerAliases context syntaxType =
-    -- IGNORE TCO
-    case syntaxType of
-        Elm.Syntax.TypeAnnotation.Unit ->
-            Elm.Syntax.TypeAnnotation.Unit
-
-        Elm.Syntax.TypeAnnotation.GenericType _ ->
-            syntaxType
-
-        Elm.Syntax.TypeAnnotation.Tupled parts ->
-            Elm.Syntax.TypeAnnotation.Tupled
-                (parts
-                    |> List.map
-                        (\part ->
-                            part |> syntaxTypeNodeExpandInnerAliases context
-                        )
-                )
-
-        Elm.Syntax.TypeAnnotation.Typed typeReference arguments ->
-            let
-                argumentsExpanded : List (Elm.Syntax.Node.Node Elm.Syntax.TypeAnnotation.TypeAnnotation)
-                argumentsExpanded =
-                    arguments
-                        |> List.map
-                            (\argument ->
-                                argument |> syntaxTypeNodeExpandInnerAliases context
-                            )
-
-                (Elm.Syntax.Node.Node typeConstructRange ( qualificationDotSeparated, name )) =
-                    typeReference
-            in
-            case
-                context.typeConstructModuleOriginLookup
-                    |> FastDict.get (qualificationDotSeparated |> String.join ".")
-                    |> Maybe.andThen
-                        (\moduleOriginLookupByName ->
-                            moduleOriginLookupByName |> FastDict.get name
-                        )
-                    |> Maybe.andThen
-                        (\moduleOrigin ->
-                            context.typeAliases
-                                |> FastDict.get moduleOrigin
-                                |> Maybe.andThen (\byName -> byName |> FastDict.get name)
-                        )
-            of
-                Just aliasedType ->
-                    aliasedType.type_
-                        |> inferredTypeToSyntax typeConstructRange
-                        |> Elm.Syntax.Node.value
-                        |> typeExpand
-                            (listFoldl2From FastDict.empty
-                                aliasedType.parameters
-                                argumentsExpanded
-                                (\parameter (Elm.Syntax.Node.Node _ argument) soFar ->
-                                    soFar |> FastDict.insert parameter argument
-                                )
-                            )
-
-                Nothing ->
-                    Elm.Syntax.TypeAnnotation.Typed typeReference
-                        argumentsExpanded
-
-        Elm.Syntax.TypeAnnotation.Record fields ->
-            Elm.Syntax.TypeAnnotation.Record
-                (fields
-                    |> List.map
-                        (\fieldNode ->
-                            fieldNode
-                                |> Elm.Syntax.Node.map
-                                    (\( nameNode, value ) ->
-                                        ( nameNode
-                                        , value |> syntaxTypeNodeExpandInnerAliases context
-                                        )
-                                    )
-                        )
-                )
-
-        Elm.Syntax.TypeAnnotation.GenericRecord recordVariableNode (Elm.Syntax.Node.Node fieldsRange fields) ->
-            Elm.Syntax.TypeAnnotation.GenericRecord recordVariableNode
-                (Elm.Syntax.Node.Node fieldsRange
-                    (fields
-                        |> List.map
-                            (\fieldNode ->
-                                fieldNode
-                                    |> Elm.Syntax.Node.map
-                                        (\( nameNode, value ) ->
-                                            ( nameNode
-                                            , value |> syntaxTypeNodeExpandInnerAliases context
-                                            )
-                                        )
-                            )
-                    )
-                )
-
-        Elm.Syntax.TypeAnnotation.FunctionTypeAnnotation inType outType ->
-            Elm.Syntax.TypeAnnotation.FunctionTypeAnnotation
-                (inType |> syntaxTypeNodeExpandInnerAliases context)
-                (outType |> syntaxTypeNodeExpandInnerAliases context)
-
-
 {-| Make sure to expand inner aliases first
 -}
 inferredTypeContainsExtensibleRecord : ElmSyntaxTypeInfer.Type -> Bool
@@ -17470,7 +17330,7 @@ printRustExpressionCall call =
                     printParenthesized calledNotParenthesizedPrint
 
                 RustExpressionAfterStatement _ ->
-                    printCurlyEmbraced calledNotParenthesizedPrint
+                    printParenthesized (printCurlyEmbraced calledNotParenthesizedPrint)
     in
     case call.arguments of
         [] ->
@@ -18222,11 +18082,11 @@ use bumpalo::Bump;
                 |> -- TODO hacky way to make stil4m/elm-syntax compile
                    -- because we have no way to know which type variable is equatable
                    String.replace
-                    "list_extra_unique_help<'a, A: Copy>"
-                    "list_extra_unique_help<'a, A: Copy + PartialEq>"
+                    "list_extra_unique_help<'a, A: Clone>"
+                    "list_extra_unique_help<'a, A: Clone + PartialEq>"
                 |> String.replace
-                    "list_extra_unique<'a, A: Copy>"
-                    "list_extra_unique<'a, A: Copy + PartialEq>"
+                    "list_extra_unique<'a, A: Clone>"
+                    "list_extra_unique<'a, A: Clone + PartialEq>"
            )
         ++ "\n"
 
