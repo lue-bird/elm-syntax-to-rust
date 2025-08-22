@@ -73,9 +73,14 @@ type RustPattern
     | RustPatternInteger Int
     | RustPatternChar Char
     | RustPatternStringLiteral String
-    | RustPatternVariable { name : String, type_ : RustType }
+    | RustPatternVariable
+        { name : String
+        , isRef : Bool
+        , type_ : RustType
+        }
     | RustPatternAlias
-        { variable : String
+        { variableIsRef : Bool
+        , variable : String
         , type_ : RustType
         , pattern : RustPattern
         }
@@ -2197,6 +2202,7 @@ pattern context patternInferred =
             { pattern =
                 RustPatternVariable
                     { name = variableName |> toSnakeCaseRustName
+                    , isRef = False
                     , type_ = patternInferred.type_ |> type_ context
                     }
             , bindingsToDerefClone = []
@@ -2292,6 +2298,7 @@ pattern context patternInferred =
                                         |> FastDict.insert rustFieldName
                                             (RustPatternVariable
                                                 { name = rustFieldName
+                                                , isRef = False
                                                 , type_ =
                                                     case allRecordFieldsIncludingOmitted |> FastDict.get field.value of
                                                         Nothing ->
@@ -2320,7 +2327,7 @@ pattern context patternInferred =
             { pattern =
                 rustPatternListCons rustHead.pattern
                     (rustTailPattern
-                        |> rustPatternMapBindings generatedPatternRefBindingName
+                        |> rustPatternAlterBindings generatedPatternRefBindingName
                     )
             , bindingsToDerefClone =
                 rustTailPattern
@@ -2354,7 +2361,7 @@ pattern context patternInferred =
                     { pattern =
                         rustPatternListCons rustHead.pattern
                             (rustTailPattern
-                                |> rustPatternMapBindings generatedPatternRefBindingName
+                                |> rustPatternAlterBindings generatedPatternRefBindingName
                             )
                     , bindingsToDerefClone =
                         rustHead.bindingsToDerefClone
@@ -2444,7 +2451,7 @@ pattern context patternInferred =
                                             in
                                             { patterns =
                                                 (rustValuePattern
-                                                    |> rustPatternMapBindings generatedPatternRefBindingName
+                                                    |> rustPatternAlterBindings generatedPatternRefBindingName
                                                 )
                                                     :: soFar.patterns
                                             , bindingsToDerefClone =
@@ -2482,15 +2489,43 @@ pattern context patternInferred =
                 rustPattern : { pattern : RustPattern, bindingsToDerefClone : List { name : String, type_ : RustType } }
                 rustPattern =
                     patternAs.pattern |> pattern context
+
+                rustAliasBindingName : String
+                rustAliasBindingName =
+                    patternAs.variable.value |> toSnakeCaseRustName
+
+                rustType : RustType
+                rustType =
+                    patternAs.variable.type_ |> type_ context
             in
+            -- because the alias binding and the pattern cannot
+            -- simultaneously own the matched value, we "ref" each binding
+            -- possible optimization: if rustPattern.pattern
+            -- does not capture any values (in an owning way),
+            -- just make the alias binding owning
             { pattern =
                 RustPatternAlias
                     { variable =
-                        patternAs.variable.value |> toSnakeCaseRustName
-                    , type_ = patternAs.variable.type_ |> type_ context
-                    , pattern = rustPattern.pattern
+                        rustAliasBindingName |> generatedPatternRefBindingName
+                    , variableIsRef = True
+                    , type_ = rustType
+                    , pattern =
+                        rustPattern.pattern
+                            |> rustPatternMapBindings
+                                (\binding ->
+                                    { name = binding |> generatedPatternRefBindingName
+                                    , isRef = True
+                                    }
+                                )
                     }
-            , bindingsToDerefClone = rustPattern.bindingsToDerefClone
+            , bindingsToDerefClone =
+                { name = rustAliasBindingName
+                , type_ = rustType
+                }
+                    :: (rustPattern.pattern
+                            |> rustPatternIntroducedBindings
+                       )
+                    ++ rustPattern.bindingsToDerefClone
             }
 
 
@@ -2536,6 +2571,7 @@ referencedPattern context patternInferred =
         ElmSyntaxTypeInfer.PatternVariable variableName ->
             RustPatternVariable
                 { name = variableName |> toSnakeCaseRustName
+                , isRef = False
                 , type_ = patternInferred.type_ |> type_ context
                 }
 
@@ -2593,6 +2629,7 @@ referencedPattern context patternInferred =
                                     |> FastDict.insert rustFieldName
                                         (RustPatternVariable
                                             { name = rustFieldName
+                                            , isRef = False
                                             , type_ =
                                                 case allRecordFieldsIncludingOmitted |> FastDict.get field.value of
                                                     Nothing ->
@@ -2690,6 +2727,7 @@ referencedPattern context patternInferred =
             RustPatternAlias
                 { variable =
                     patternAs.variable.value |> toSnakeCaseRustName
+                , variableIsRef = False
                 , type_ = patternAs.variable.type_ |> type_ context
                 , pattern =
                     patternAs.pattern |> referencedPattern context
@@ -2721,8 +2759,22 @@ bindingsToDerefCloneToRustStatements bindingsToDerefClone =
             )
 
 
-rustPatternMapBindings : (String -> String) -> RustPattern -> RustPattern
-rustPatternMapBindings bindingNameChange rustPattern =
+rustPatternAlterBindings : (String -> String) -> RustPattern -> RustPattern
+rustPatternAlterBindings bindingNameChange rustPattern =
+    rustPatternMapBindings
+        (\bindingName ->
+            { name = bindingName |> bindingNameChange
+            , isRef = False
+            }
+        )
+        rustPattern
+
+
+rustPatternMapBindings :
+    (String -> { name : String, isRef : Bool })
+    -> RustPattern
+    -> RustPattern
+rustPatternMapBindings bindingChange rustPattern =
     -- IGNORE TCO
     case rustPattern of
         RustPatternIgnore ->
@@ -2741,24 +2793,36 @@ rustPatternMapBindings bindingNameChange rustPattern =
             rustPattern
 
         RustPatternVariable variable ->
+            let
+                changedBinding : { name : String, isRef : Bool }
+                changedBinding =
+                    variable.name |> bindingChange
+            in
             RustPatternVariable
-                { name = variable.name |> bindingNameChange
+                { name = changedBinding.name
+                , isRef = changedBinding.isRef
                 , type_ = variable.type_
                 }
 
         RustPatternAlias patternAlias ->
+            let
+                changedAliasBinding : { name : String, isRef : Bool }
+                changedAliasBinding =
+                    patternAlias.variable |> bindingChange
+            in
             RustPatternAlias
-                { variable = patternAlias.variable |> bindingNameChange
+                { variable = changedAliasBinding.name
+                , variableIsRef = changedAliasBinding.isRef
                 , type_ = patternAlias.type_
                 , pattern =
                     patternAlias.pattern
-                        |> rustPatternMapBindings bindingNameChange
+                        |> rustPatternMapBindings bindingChange
                 }
 
         RustPatternDeref inDeref ->
             RustPatternDeref
                 (inDeref
-                    |> rustPatternMapBindings bindingNameChange
+                    |> rustPatternMapBindings bindingChange
                 )
 
         RustPatternStructNotExhaustive structNotExhaustive ->
@@ -2769,7 +2833,7 @@ rustPatternMapBindings bindingNameChange rustPattern =
                         |> FastDict.map
                             (\_ fieldValue ->
                                 fieldValue
-                                    |> rustPatternMapBindings bindingNameChange
+                                    |> rustPatternMapBindings bindingChange
                             )
                 }
 
@@ -2782,7 +2846,7 @@ rustPatternMapBindings bindingNameChange rustPattern =
                         |> List.map
                             (\part ->
                                 part
-                                    |> rustPatternMapBindings bindingNameChange
+                                    |> rustPatternMapBindings bindingChange
                             )
                 }
 
@@ -2790,16 +2854,16 @@ rustPatternMapBindings bindingNameChange rustPattern =
             RustPatternTuple
                 { part0 =
                     parts.part0
-                        |> rustPatternMapBindings bindingNameChange
+                        |> rustPatternMapBindings bindingChange
                 , part1 =
                     parts.part1
-                        |> rustPatternMapBindings bindingNameChange
+                        |> rustPatternMapBindings bindingChange
                 , part2Up =
                     parts.part2Up
                         |> List.map
                             (\part ->
                                 part
-                                    |> rustPatternMapBindings bindingNameChange
+                                    |> rustPatternMapBindings bindingChange
                             )
                 }
 
@@ -5521,7 +5585,15 @@ printRustPattern rustPattern =
             printRustStringLiteral string
 
         RustPatternVariable variable ->
-            Print.exactly variable.name
+            Print.exactly
+                ((if variable.isRef then
+                    "ref "
+
+                  else
+                    ""
+                 )
+                    ++ variable.name
+                )
 
         RustPatternAlias rustPatternAlias ->
             let
@@ -5529,7 +5601,16 @@ printRustPattern rustPattern =
                 patternPrint =
                     rustPatternAlias.pattern |> printRustPattern
             in
-            Print.exactly (rustPatternAlias.variable ++ " @")
+            Print.exactly
+                ((if rustPatternAlias.variableIsRef then
+                    "ref "
+
+                  else
+                    ""
+                 )
+                    ++ rustPatternAlias.variable
+                    ++ " @"
+                )
                 |> Print.followedBy
                     (Print.withIndentAtNextMultipleOf4
                         (Print.spaceOrLinebreakIndented (patternPrint |> Print.lineSpread)
@@ -7774,6 +7855,7 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
                                             { pattern =
                                                 RustPatternVariable
                                                     { name = additionalParameter.name
+                                                    , isRef = False
                                                     , type_ = additionalParameter.type_
                                                     }
                                             , type_ = additionalParameter.type_
@@ -7802,6 +7884,7 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
                                     { pattern =
                                         RustPatternVariable
                                             { name = generatedAllocatorVariableName
+                                            , isRef = False
                                             , type_ = rustTypeConstructBumpaloBump
                                             }
                                     , type_ =
@@ -8223,7 +8306,7 @@ rustPatternIntroducedBindings rustPattern =
             []
 
         RustPatternVariable variable ->
-            [ variable ]
+            [ { name = variable.name, type_ = variable.type_ } ]
 
         RustPatternDeref inDeref ->
             rustPatternIntroducedBindings inDeref
@@ -8371,6 +8454,7 @@ expression context expressionTypedNode =
                                 [ { pattern =
                                         RustPatternVariable
                                             { name = generatedAccessedStructVariableName
+                                            , isRef = False
                                             , type_ = rustTypeConstructBumpaloBump
                                             }
                                   , type_ =
@@ -8457,6 +8541,7 @@ expression context expressionTypedNode =
                                     [ { pattern =
                                             RustPatternVariable
                                                 { name = "generated_left"
+                                                , isRef = False
                                                 , type_ = leftRustType
                                                 }
                                       , type_ = leftRustType |> Just
@@ -8475,6 +8560,7 @@ expression context expressionTypedNode =
                                             [ { pattern =
                                                     RustPatternVariable
                                                         { name = "generated_right"
+                                                        , isRef = False
                                                         , type_ = rightRustType
                                                         }
                                               , type_ = rightRustType |> Just
@@ -8896,7 +8982,12 @@ expression context expressionTypedNode =
                                             { expression =
                                                 rustExpressionClosureReference
                                                     { parameters =
-                                                        [ { pattern = RustPatternVariable parameter
+                                                        [ { pattern =
+                                                                RustPatternVariable
+                                                                    { name = parameter.name
+                                                                    , type_ = parameter.type_
+                                                                    , isRef = False
+                                                                    }
                                                           , type_ = parameter.type_ |> Just
                                                           }
                                                         ]
@@ -9023,6 +9114,7 @@ expression context expressionTypedNode =
                                                 [ { pattern =
                                                         RustPatternVariable
                                                             { name = parameter.name
+                                                            , isRef = False
                                                             , type_ = parameterType
                                                             }
                                                   , type_ = parameterType |> Just
@@ -9132,7 +9224,12 @@ expression context expressionTypedNode =
                                                 { expression =
                                                     rustExpressionClosureReference
                                                         { parameters =
-                                                            [ { pattern = RustPatternVariable parameter
+                                                            [ { pattern =
+                                                                    RustPatternVariable
+                                                                        { name = parameter.name
+                                                                        , type_ = parameter.type_
+                                                                        , isRef = False
+                                                                        }
                                                               , type_ = Just parameter.type_
                                                               }
                                                             ]
@@ -9204,6 +9301,7 @@ expression context expressionTypedNode =
                                         [ { pattern =
                                                 RustPatternVariable
                                                     { name = "generated_value"
+                                                    , isRef = False
                                                     , type_ = rustTypeJsonValue
                                                     }
                                           , type_ = rustTypeJsonValue |> Just
@@ -9254,7 +9352,8 @@ expression context expressionTypedNode =
                                     { parameters =
                                         [ { pattern =
                                                 RustPatternVariable
-                                                    { name = "generated_onValue"
+                                                    { name = "generated_on_value"
+                                                    , isRef = False
                                                     , type_ =
                                                         onValueType
                                                             |> -- error
@@ -9717,13 +9816,15 @@ expression context expressionTypedNode =
                 (\result ->
                     let
                         rustParameters :
-                            { patterns : List { type_ : RustType, pattern : RustPattern }
-                            , bindingsToDerefClone : List { name : String, type_ : RustType }
-                            }
+                            List
+                                { type_ : RustType
+                                , pattern : RustPattern
+                                , bindingsToDerefClone : List { name : String, type_ : RustType }
+                                }
                         rustParameters =
                             (lambda.parameter0 :: lambda.parameter1Up)
-                                |> List.foldr
-                                    (\parameter soFar ->
+                                |> List.map
+                                    (\parameter ->
                                         let
                                             rustParameter : { pattern : RustPattern, bindingsToDerefClone : List { name : String, type_ : RustType } }
                                             rustParameter =
@@ -9733,26 +9834,19 @@ expression context expressionTypedNode =
                                                         , rustEnumTypes = context.rustEnumTypes
                                                         }
                                         in
-                                        { patterns =
-                                            { type_ =
-                                                parameter.type_
-                                                    |> type_
-                                                        { typeAliasesInModule = typeAliasesInModule
-                                                        , rustEnumTypes = context.rustEnumTypes
-                                                        }
-                                            , pattern = rustParameter.pattern
-                                            }
-                                                :: soFar.patterns
+                                        { type_ =
+                                            parameter.type_
+                                                |> type_
+                                                    { typeAliasesInModule = typeAliasesInModule
+                                                    , rustEnumTypes = context.rustEnumTypes
+                                                    }
+                                        , pattern = rustParameter.pattern
                                         , bindingsToDerefClone =
                                             rustParameter.bindingsToDerefClone
-                                                ++ soFar.bindingsToDerefClone
                                         }
                                     )
-                                    { patterns = []
-                                    , bindingsToDerefClone = []
-                                    }
                     in
-                    rustParameters.patterns
+                    rustParameters
                         |> List.foldr
                             (\parameter resultSoFar ->
                                 { expression =
@@ -9763,7 +9857,12 @@ expression context expressionTypedNode =
                                               }
                                             ]
                                         , resultType = Just resultSoFar.type_
-                                        , result = resultSoFar.expression
+                                        , result =
+                                            resultSoFar.expression
+                                                |> rustExpressionPrependStatements
+                                                    (parameter.bindingsToDerefClone
+                                                        |> bindingsToDerefCloneToRustStatements
+                                                    )
                                         }
                                 , type_ =
                                     rustTypeBorrowDynFn
@@ -9772,12 +9871,7 @@ expression context expressionTypedNode =
                                         }
                                 }
                             )
-                            { expression =
-                                result
-                                    |> rustExpressionPrependStatements
-                                        (rustParameters.bindingsToDerefClone
-                                            |> bindingsToDerefCloneToRustStatements
-                                        )
+                            { expression = result
                             , type_ =
                                 lambda.result.type_
                                     |> type_
@@ -10119,6 +10213,7 @@ rustExpressionReferenceDeclaredFnAppliedLazilyOrCurriedIfNecessary context rustR
                                             generatedParameterNameForIndexAtPath
                                                 parameterIndex
                                                 context.path
+                                        , isRef = False
                                         , type_ = parameterType
                                         }
                               , type_ = Just parameterType
@@ -13874,6 +13969,7 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                                 { name =
                                     parameter.name
                                         |> toSnakeCaseRustName
+                                , isRef = False
                                 , type_ = rustType
                                 }
                         , type_ = rustType
@@ -13886,7 +13982,11 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                             (\generatedAdditionalParameter ->
                                 { type_ = generatedAdditionalParameter.type_
                                 , pattern =
-                                    RustPatternVariable generatedAdditionalParameter
+                                    RustPatternVariable
+                                        { name = generatedAdditionalParameter.name
+                                        , isRef = False
+                                        , type_ = generatedAdditionalParameter.type_
+                                        }
                                 }
                             )
                    )
@@ -13974,6 +14074,7 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                             else
                                 RustPatternVariable
                                     { name = generatedAllocatorVariableName
+                                    , isRef = False
                                     , type_ = rustTypeConstructBumpaloBump
                                     }
                         , type_ =
