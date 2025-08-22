@@ -43,6 +43,7 @@ type RustType
         , lifetimeArguments : List String
         , -- TODO isPartialEq
           -- TODO isDebug
+          -- TODO requiresClone
           -- TODO remove
           isFunction : Bool
         }
@@ -2322,7 +2323,8 @@ pattern context patternInferred =
                         |> rustPatternMapBindings generatedPatternRefBindingName
                     )
             , bindingsToDerefClone =
-                rustTailPattern |> rustPatternIntroducedBindings
+                rustTailPattern
+                    |> rustPatternIntroducedBindings
             }
 
         ElmSyntaxTypeInfer.PatternListExact elementPatterns ->
@@ -7776,14 +7778,14 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
                                         )
                                )
 
-                    allRustParameterIntroducedBindings : List String
+                    allRustParameterIntroducedBindings : List { name : String, type_ : RustType }
                     allRustParameterIntroducedBindings =
                         allRustParameters
                             |> List.concatMap
                                 (\parameter ->
                                     parameter.pattern |> rustPatternIntroducedBindings
                                 )
-                            |> List.map .name
+                            |> rustTypedBindingsKeepThoseRequiringClone
                 in
                 { requiresAllocator = Basics.not fullResultIgnoresGeneratedAllocator
                 , parameters =
@@ -7821,7 +7823,9 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
                         )
                         resultWithAdditionalGeneratedArgumentsApplied
                         |> rustExpressionCloneMultipleBindingUsesBeforeLast
-                            allRustParameterIntroducedBindings
+                            (allRustParameterIntroducedBindings
+                                |> List.map .name
+                            )
                         |> rustExpressionCloneWhereNecessary
                             { variablesInScope = allRustParameterIntroducedBindings }
                 , lifetimeParameters = [ generatedLifetimeVariableName ]
@@ -11577,7 +11581,7 @@ listMapAndSumPlus soFar elementToInt list =
                 tail
 
 
-{-| **After transpiling:** insert .clone()s.
+{-| **After transpiling the whole module-declared fn:** insert .clone()s.
 This usually means cloning every variable use (from let or pattern)
 but the last one but it can get more tricky around closures etc.
 
@@ -11600,7 +11604,7 @@ can do it all in one swoop.
 -}
 rustExpressionCloneWhereNecessary :
     { -- not including local fns
-      variablesInScope : List String
+      variablesInScope : List { name : String, type_ : RustType }
     }
     -> RustExpression
     -> RustExpression
@@ -11738,14 +11742,14 @@ rustExpressionCloneWhereNecessary context rustExpression =
 
         RustExpressionClosure closure ->
             let
-                rustVariablesInScopeIncludingFromLambdaParameters : List String
+                rustVariablesInScopeIncludingFromLambdaParameters : List { name : String, type_ : RustType }
                 rustVariablesInScopeIncludingFromLambdaParameters =
                     (closure.parameters
                         |> List.concatMap
                             (\parameter ->
                                 parameter.pattern |> rustPatternIntroducedBindings
                             )
-                        |> List.map .name
+                        |> rustTypedBindingsKeepThoseRequiringClone
                     )
                         ++ context.variablesInScope
             in
@@ -11761,7 +11765,7 @@ rustExpressionCloneWhereNecessary context rustExpression =
                             (\variableName ->
                                 (-- SLOW O(n) for every contained reference in result
                                  rustVariablesInScopeIncludingFromLambdaParameters
-                                    |> List.member variableName
+                                    |> List.any (\lambdaBinding -> lambdaBinding.name == variableName)
                                 )
                             )
                         |> rustExpressionCloneWhereNecessary
@@ -11779,17 +11783,19 @@ rustExpressionCloneWhereNecessary context rustExpression =
                         |> List.map
                             (\matchCase ->
                                 let
-                                    casePatternIntroducedBindings : List String
+                                    casePatternIntroducedBindings : List { name : String, type_ : RustType }
                                     casePatternIntroducedBindings =
                                         matchCase.pattern
                                             |> rustPatternIntroducedBindings
-                                            |> List.map .name
+                                            |> rustTypedBindingsKeepThoseRequiringClone
                                 in
                                 { pattern = matchCase.pattern
                                 , result =
                                     matchCase.result
                                         |> rustExpressionCloneMultipleBindingUsesBeforeLast
-                                            casePatternIntroducedBindings
+                                            (casePatternIntroducedBindings
+                                                |> List.map .name
+                                            )
                                         |> rustExpressionCloneWhereNecessary
                                             { variablesInScope =
                                                 casePatternIntroducedBindings
@@ -11801,10 +11807,11 @@ rustExpressionCloneWhereNecessary context rustExpression =
 
         RustExpressionAfterStatement expressionAfterStatement ->
             let
-                statementIntroducedVariables : List String
+                statementIntroducedVariables : List { name : String, type_ : RustType }
                 statementIntroducedVariables =
                     expressionAfterStatement.statement
                         |> rustStatementIntroducedVariables
+                        |> rustTypedBindingsKeepThoseRequiringClone
             in
             RustExpressionAfterStatement
                 { statement =
@@ -11813,7 +11820,7 @@ rustExpressionCloneWhereNecessary context rustExpression =
                 , result =
                     expressionAfterStatement.result
                         |> rustExpressionCloneMultipleBindingUsesBeforeLast
-                            statementIntroducedVariables
+                            (statementIntroducedVariables |> List.map .name)
                         |> rustExpressionCloneWhereNecessary
                             { variablesInScope =
                                 statementIntroducedVariables
@@ -11826,7 +11833,7 @@ rustExpressionCloneWhereNecessary context rustExpression =
 -}
 rustStatementCloneWhereNecessary :
     { -- not including local fns
-      variablesInScope : List String
+      variablesInScope : List { name : String, type_ : RustType }
     }
     -> RustStatement
     -> RustStatement
@@ -11891,11 +11898,11 @@ rustStatementCloneWhereNecessary context rustStatement =
                         |> List.map
                             (\matchCase ->
                                 let
-                                    casePatternIntroducedBindings : List String
+                                    casePatternIntroducedBindings : List { name : String, type_ : RustType }
                                     casePatternIntroducedBindings =
                                         matchCase.pattern
                                             |> rustPatternIntroducedBindings
-                                            |> List.map .name
+                                            |> rustTypedBindingsKeepThoseRequiringClone
                                 in
                                 { pattern = matchCase.pattern
                                 , statements =
@@ -11904,7 +11911,7 @@ rustStatementCloneWhereNecessary context rustStatement =
                                             (\casePatternIntroducedBinding statements ->
                                                 statements
                                                     |> rustStatementsInOrderCloneBindingUsesBeforeLast
-                                                        casePatternIntroducedBinding
+                                                        casePatternIntroducedBinding.name
                                                     |> .withClones
                                             )
                                             matchCase.statements
@@ -11919,15 +11926,14 @@ rustStatementCloneWhereNecessary context rustStatement =
 
         RustStatementFnDeclaration fnDeclaration ->
             let
-                parametersIntroducedBindings : List String
+                parametersIntroducedBindings : List { name : String, type_ : RustType }
                 parametersIntroducedBindings =
                     fnDeclaration.parameters
                         |> List.concatMap
                             (\parameter ->
-                                parameter.pattern
-                                    |> rustPatternIntroducedBindings
+                                parameter.pattern |> rustPatternIntroducedBindings
                             )
-                        |> List.map .name
+                        |> rustTypedBindingsKeepThoseRequiringClone
             in
             RustStatementFnDeclaration
                 { name = fnDeclaration.name
@@ -11946,7 +11952,7 @@ rustStatementCloneWhereNecessary context rustStatement =
 
 
 rustStatementsCloneWhereNecessary :
-    { variablesInScope : List String }
+    { variablesInScope : List { name : String, type_ : RustType } }
     -> List RustStatement
     -> List RustStatement
 rustStatementsCloneWhereNecessary context rustStatements =
@@ -11954,9 +11960,11 @@ rustStatementsCloneWhereNecessary context rustStatements =
         |> List.foldl
             (\statement soFar ->
                 let
-                    statementIntroducedVariables : List String
+                    statementIntroducedVariables : List { name : String, type_ : RustType }
                     statementIntroducedVariables =
-                        statement |> rustStatementIntroducedVariables
+                        statement
+                            |> rustStatementIntroducedVariables
+                            |> rustTypedBindingsKeepThoseRequiringClone
                 in
                 { context =
                     { variablesInScope =
@@ -12274,7 +12282,7 @@ rustStatementCloneVariables variableShouldBeCloned rustStatement =
 
 {-| Not including fn declared names
 -}
-rustStatementIntroducedVariables : RustStatement -> List String
+rustStatementIntroducedVariables : RustStatement -> List { name : String, type_ : RustType }
 rustStatementIntroducedVariables rustStatement =
     case rustStatement of
         RustStatementFnDeclaration _ ->
@@ -12287,21 +12295,25 @@ rustStatementIntroducedVariables rustStatement =
             []
 
         RustStatementLetDeclaration rustLetDeclaration ->
-            [ rustLetDeclaration.name ]
+            [ { name = rustLetDeclaration.name
+              , type_ = rustLetDeclaration.resultType
+              }
+            ]
 
         RustStatementLetDeclarationUninitialized letDeclarationUninitialized ->
-            [ letDeclarationUninitialized.name ]
+            [ letDeclarationUninitialized ]
 
         RustStatementLetMutDeclaration letMutDeclaration ->
-            [ letMutDeclaration.name ]
+            [ { name = letMutDeclaration.name
+              , type_ = RustTypeInfer
+              }
+            ]
 
-        RustStatementBindingAssignment bindingAssignment ->
-            [ bindingAssignment.name ]
+        RustStatementBindingAssignment _ ->
+            []
 
         RustStatementLetDestructuring letDestructuring ->
-            letDestructuring.pattern
-                |> rustPatternIntroducedBindings
-                |> List.map .name
+            letDestructuring.pattern |> rustPatternIntroducedBindings
 
 
 rustExpressionCloneMultipleBindingUsesBeforeLast :
@@ -12971,6 +12983,46 @@ rustExpressionCloneBindingUses binding rustExpression =
         rustExpression
             |> rustExpressionCloneVariables
                 (\variableName -> variableName == binding)
+
+
+rustTypedBindingsKeepThoseRequiringClone :
+    List { name : String, type_ : RustType }
+    -> List { name : String, type_ : RustType }
+rustTypedBindingsKeepThoseRequiringClone rustTypedBindings =
+    rustTypedBindings
+        |> List.filter
+            (\rustTypedBinding ->
+                rustTypedBinding.type_ |> rustTypeRequiresClone
+            )
+
+
+rustTypeRequiresClone : RustType -> Bool
+rustTypeRequiresClone rustType =
+    -- IGNORE TCO
+    case rustType of
+        RustTypeUnit ->
+            False
+
+        RustTypeFunction _ ->
+            False
+
+        RustTypeBorrow _ ->
+            False
+
+        RustTypeInfer ->
+            True
+
+        RustTypeVariable _ ->
+            True
+
+        RustTypeTuple parts ->
+            (parts.part0 |> rustTypeRequiresClone)
+                || (parts.part1 |> rustTypeRequiresClone)
+                || (parts.part2Up |> List.any rustTypeRequiresClone)
+
+        RustTypeConstruct _ ->
+            -- TODO typeConstruct.requiresClone || it's values
+            True
 
 
 rustStatementCloneBindingUses : String -> RustStatement -> RustStatement
