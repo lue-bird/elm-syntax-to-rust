@@ -13006,8 +13006,8 @@ rustTypeRequiresClone rustType =
         RustTypeFunction _ ->
             False
 
-        RustTypeBorrow _ ->
-            False
+        RustTypeBorrow inBorrow ->
+            rustTypeRequiresClone inBorrow.type_
 
         RustTypeInfer ->
             True
