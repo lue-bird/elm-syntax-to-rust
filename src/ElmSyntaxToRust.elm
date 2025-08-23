@@ -41,9 +41,9 @@ type RustType
         , name : String
         , arguments : List RustType
         , lifetimeArguments : List String
-        , -- TODO isPartialEq
-          -- TODO isDebug
-          isCopy : Bool
+        , isCopy : Bool
+        , isPartialEq : Bool
+        , isDebug : Bool
         }
     | RustTypeTuple
         { part0 : RustType
@@ -546,6 +546,8 @@ choiceTypeDeclaration :
             String
             { lifetimeParameters : List String
             , isCopy : Bool
+            , isDebug : Bool
+            , isPartialEq : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
     }
@@ -558,6 +560,8 @@ choiceTypeDeclaration :
         , parameters : List String
         , variants : FastDict.Dict String (List RustType)
         , isCopy : Bool
+        , isDebug : Bool
+        , isPartialEq : Bool
         }
 choiceTypeDeclaration context syntaxChoiceType =
     let
@@ -601,7 +605,27 @@ choiceTypeDeclaration context syntaxChoiceType =
                     values
                         |> List.all
                             (\value ->
-                                value |> rustTypeIsCopy { typeVariablesAreCopy = True }
+                                value |> rustTypeIsCopy { variablesAreCopy = True }
+                            )
+                )
+    , isDebug =
+        rustVariants
+            |> fastDictAll
+                (\_ values ->
+                    values
+                        |> List.all
+                            (\value ->
+                                value |> rustTypeIsDebug { variablesAreDebug = True }
+                            )
+                )
+    , isPartialEq =
+        rustVariants
+            |> fastDictAll
+                (\_ values ->
+                    values
+                        |> List.all
+                            (\value ->
+                                value |> rustTypeIsPartialEq { variablesArePartialEq = True }
                             )
                 )
     }
@@ -693,7 +717,7 @@ printRustEnumDeclaration rustEnumType =
                                 values
                                     |> List.all
                                         (\value ->
-                                            value |> rustTypeIsCopy { typeVariablesAreCopy = True }
+                                            value |> rustTypeIsCopy { variablesAreCopy = True }
                                         )
                             )
                   then
@@ -705,7 +729,11 @@ printRustEnumDeclaration rustEnumType =
                     rustEnumType.variants
                         |> fastDictAll
                             (\_ values ->
-                                values |> List.all rustTypeIsDebug
+                                values
+                                    |> List.all
+                                        (\value ->
+                                            value |> rustTypeIsDebug { variablesAreDebug = True }
+                                        )
                             )
                   then
                     Just "Debug"
@@ -716,7 +744,11 @@ printRustEnumDeclaration rustEnumType =
                     rustEnumType.variants
                         |> fastDictAll
                             (\_ values ->
-                                values |> List.all rustTypeIsPartialEq
+                                values
+                                    |> List.all
+                                        (\value ->
+                                            value |> rustTypeIsPartialEq { variablesArePartialEq = True }
+                                        )
                             )
                   then
                     Just "PartialEq"
@@ -761,10 +793,8 @@ printRustEnumDeclaration rustEnumType =
         |> Print.followedBy printExactlyCurlyClosing
 
 
-{-| TODO add parameter { typeVariablesAreDebug : Bool }
--}
-rustTypeIsDebug : RustType -> Bool
-rustTypeIsDebug rustType =
+rustTypeIsDebug : { variablesAreDebug : Bool } -> RustType -> Bool
+rustTypeIsDebug context rustType =
     -- IGNORE TCO
     case rustType of
         RustTypeInfer ->
@@ -775,26 +805,35 @@ rustTypeIsDebug rustType =
             True
 
         RustTypeVariable _ ->
-            True
+            context.variablesAreDebug
 
         RustTypeFunction _ ->
             False
 
         RustTypeBorrow borrowed ->
-            rustTypeIsDebug borrowed.type_
+            rustTypeIsDebug context borrowed.type_
 
         RustTypeTuple parts ->
-            (parts.part0 |> rustTypeIsDebug)
-                && (parts.part1 |> rustTypeIsDebug)
-                && (parts.part2Up |> List.all rustTypeIsDebug)
+            (parts.part0 |> rustTypeIsDebug context)
+                && (parts.part1 |> rustTypeIsDebug context)
+                && (parts.part2Up
+                        |> List.all
+                            (\part ->
+                                part |> rustTypeIsDebug context
+                            )
+                   )
 
         RustTypeConstruct typeConstruct ->
-            -- TODO typeConstruct.isDebug &&
-            typeConstruct.arguments
-                |> List.all rustTypeIsDebug
+            typeConstruct.isDebug
+                && (typeConstruct.arguments
+                        |> List.all
+                            (\argument ->
+                                argument |> rustTypeIsDebug context
+                            )
+                   )
 
 
-rustTypeIsCopy : { typeVariablesAreCopy : Bool } -> RustType -> Bool
+rustTypeIsCopy : { variablesAreCopy : Bool } -> RustType -> Bool
 rustTypeIsCopy context rustType =
     -- IGNORE TCO
     case rustType of
@@ -812,7 +851,7 @@ rustTypeIsCopy context rustType =
             True
 
         RustTypeVariable _ ->
-            context.typeVariablesAreCopy
+            context.variablesAreCopy
 
         RustTypeTuple parts ->
             (parts.part0 |> rustTypeIsCopy context)
@@ -834,37 +873,44 @@ rustTypeIsCopy context rustType =
                    )
 
 
-{-| TODO add parameter { typeVariablesArePartial : Bool }
--}
-rustTypeIsPartialEq : RustType -> Bool
-rustTypeIsPartialEq rustType =
+rustTypeIsPartialEq : { variablesArePartialEq : Bool } -> RustType -> Bool
+rustTypeIsPartialEq context rustType =
     -- IGNORE TCO
     case rustType of
         RustTypeInfer ->
             -- not decide-able at least
             False
 
+        RustTypeFunction _ ->
+            False
+
         RustTypeUnit ->
             True
 
         RustTypeVariable _ ->
-            True
-
-        RustTypeFunction _ ->
-            False
+            context.variablesArePartialEq
 
         RustTypeBorrow borrowed ->
-            rustTypeIsPartialEq borrowed.type_
+            rustTypeIsPartialEq context borrowed.type_
 
         RustTypeTuple parts ->
-            (parts.part0 |> rustTypeIsPartialEq)
-                && (parts.part1 |> rustTypeIsPartialEq)
-                && (parts.part2Up |> List.all rustTypeIsPartialEq)
+            (parts.part0 |> rustTypeIsPartialEq context)
+                && (parts.part1 |> rustTypeIsPartialEq context)
+                && (parts.part2Up
+                        |> List.all
+                            (\part ->
+                                part |> rustTypeIsPartialEq context
+                            )
+                   )
 
         RustTypeConstruct typeConstruct ->
-            -- TODO typeConstruct.isPartialEq &&
-            typeConstruct.arguments
-                |> List.all rustTypeIsPartialEq
+            typeConstruct.isPartialEq
+                && (typeConstruct.arguments
+                        |> List.all
+                            (\argument ->
+                                argument |> rustTypeIsPartialEq context
+                            )
+                   )
 
 
 printRustStructDeclaration :
@@ -986,6 +1032,8 @@ typeAliasDeclaration :
             String
             { lifetimeParameters : List String
             , isCopy : Bool
+            , isDebug : Bool
+            , isPartialEq : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
     }
@@ -1062,6 +1110,8 @@ type_ :
             String
             { lifetimeParameters : List String
             , isCopy : Bool
+            , isDebug : Bool
+            , isPartialEq : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
     }
@@ -1092,6 +1142,8 @@ rustTypeF64 =
         , arguments = []
         , lifetimeArguments = []
         , isCopy = True
+        , isDebug = True
+        , isPartialEq = True
         }
 
 
@@ -1117,6 +1169,8 @@ typeNotVariable :
             String
             { lifetimeParameters : List String
             , isCopy : Bool
+            , isDebug : Bool
+            , isPartialEq : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
     }
@@ -1151,6 +1205,8 @@ typeNotVariable context inferredTypeNotVariable =
                         , qualification = coreRust.qualification
                         , lifetimeArguments = coreRust.lifetimeParameters
                         , isCopy = coreRust.isCopy
+                        , isDebug = coreRust.isDebug
+                        , isPartialEq = coreRust.isPartialEq
                         }
 
                 Nothing ->
@@ -1194,7 +1250,13 @@ typeNotVariable context inferredTypeNotVariable =
                             , name = rustName
                             , isCopy =
                                 expandedRustType
-                                    |> rustTypeIsCopy { typeVariablesAreCopy = False }
+                                    |> rustTypeIsCopy { variablesAreCopy = False }
+                            , isDebug =
+                                expandedRustType
+                                    |> rustTypeIsDebug { variablesAreDebug = False }
+                            , isPartialEq =
+                                expandedRustType
+                                    |> rustTypeIsPartialEq { variablesArePartialEq = False }
                             }
 
                     else
@@ -1212,6 +1274,8 @@ typeNotVariable context inferredTypeNotVariable =
                                         -- could be in theory but no
                                         -- simple way to know
                                         False
+                                    , isDebug = {- TODO this is a wrong assumption -} True
+                                    , isPartialEq = {- TODO this is a wrong assumption -} True
                                     }
 
                             Just originRustEnumType ->
@@ -1221,6 +1285,8 @@ typeNotVariable context inferredTypeNotVariable =
                                     , qualification = []
                                     , name = rustName
                                     , isCopy = originRustEnumType.isCopy
+                                    , isDebug = originRustEnumType.isDebug
+                                    , isPartialEq = originRustEnumType.isPartialEq
                                     }
 
         ElmSyntaxTypeInfer.TypeTuple typeTuple ->
@@ -1257,6 +1323,8 @@ typeNotVariable context inferredTypeNotVariable =
                             []
                 , lifetimeArguments = []
                 , isCopy = True
+                , isDebug = True
+                , isPartialEq = True
                 }
 
         ElmSyntaxTypeInfer.TypeFunction typeFunction ->
@@ -1284,6 +1352,8 @@ typeNotVariable context inferredTypeNotVariable =
                             []
                 , lifetimeArguments = []
                 , isCopy = True
+                , isDebug = True
+                , isPartialEq = True
                 }
 
 
@@ -1681,6 +1751,8 @@ printRustTypeConstruct :
     , name : String
     , arguments : List RustType
     , isCopy : Bool
+    , isDebug : Bool
+    , isPartialEq : Bool
     , lifetimeArguments : List String
     }
     -> Print
@@ -2226,6 +2298,8 @@ pattern :
             String
             { lifetimeParameters : List String
             , isCopy : Bool
+            , isDebug : Bool
+            , isPartialEq : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
     }
@@ -2648,7 +2722,7 @@ pattern context patternInferred =
             -- possible optimization: if rustPattern.pattern
             -- does not capture any values (in an owning way),
             -- just make the alias binding owning
-            if rustType |> rustTypeIsCopy { typeVariablesAreCopy = False } then
+            if rustType |> rustTypeIsCopy { variablesAreCopy = False } then
                 { pattern =
                     RustPatternAlias
                         { variable = rustAliasBindingName
@@ -2733,6 +2807,8 @@ referencedPattern :
             String
             { lifetimeParameters : List String
             , isCopy : Bool
+            , isDebug : Bool
+            , isPartialEq : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
     }
@@ -3044,6 +3120,8 @@ referencedPatternListExact :
             String
             { lifetimeParameters : List String
             , isCopy : Bool
+            , isDebug : Bool
+            , isPartialEq : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
     }
@@ -3081,7 +3159,7 @@ bindingsToDerefCloneToRustStatements bindingsToDerefClone =
             (\bindingToDeref ->
                 -- TODO prevent them being put in bindingsToDerefClone
                 -- and given a new name in the first place
-                if bindingToDeref.type_ |> rustTypeIsCopy { typeVariablesAreCopy = False } then
+                if bindingToDeref.type_ |> rustTypeIsCopy { variablesAreCopy = False } then
                     RustStatementLetDeclaration
                         { name = bindingToDeref.name
                         , resultType = bindingToDeref.type_
@@ -3234,6 +3312,8 @@ typeConstructReferenceToCoreRust :
             , name : String
             , lifetimeParameters : List String
             , isCopy : Bool
+            , isDebug : Bool
+            , isPartialEq : Bool
             }
 typeConstructReferenceToCoreRust reference =
     case reference.moduleOrigin of
@@ -3245,6 +3325,8 @@ typeConstructReferenceToCoreRust reference =
                         , name = "Ordering"
                         , lifetimeParameters = []
                         , isCopy = True
+                        , isDebug = True
+                        , isPartialEq = True
                         }
 
                 "Bool" ->
@@ -3263,6 +3345,8 @@ typeConstructReferenceToCoreRust reference =
                         , name = "BasicsNever"
                         , lifetimeParameters = []
                         , isCopy = True
+                        , isDebug = True
+                        , isPartialEq = True
                         }
 
                 _ ->
@@ -3287,6 +3371,8 @@ typeConstructReferenceToCoreRust reference =
                 , name = "ArrayArray"
                 , lifetimeParameters = [ "a" ]
                 , isCopy = False
+                , isDebug = True
+                , isPartialEq = True
                 }
 
         "Maybe" ->
@@ -3304,6 +3390,8 @@ typeConstructReferenceToCoreRust reference =
                 , name = "JsonValue"
                 , lifetimeParameters = [ generatedLifetimeVariableName ]
                 , isCopy = True
+                , isDebug = True
+                , isPartialEq = True
                 }
 
         "Json.Decode" ->
@@ -3314,6 +3402,8 @@ typeConstructReferenceToCoreRust reference =
                         , name = "JsonValue"
                         , lifetimeParameters = [ generatedLifetimeVariableName ]
                         , isCopy = True
+                        , isDebug = True
+                        , isPartialEq = True
                         }
 
                 "Decoder" ->
@@ -3322,6 +3412,8 @@ typeConstructReferenceToCoreRust reference =
                         , name = "JsonDecodeDecoder"
                         , lifetimeParameters = [ generatedLifetimeVariableName ]
                         , isCopy = True
+                        , isDebug = False
+                        , isPartialEq = False
                         }
 
                 "Error" ->
@@ -3330,6 +3422,8 @@ typeConstructReferenceToCoreRust reference =
                         , name = "JsonDecodeError"
                         , lifetimeParameters = [ generatedLifetimeVariableName ]
                         , isCopy = False
+                        , isDebug = True
+                        , isPartialEq = True
                         }
 
                 _ ->
@@ -3343,6 +3437,8 @@ typeConstructReferenceToCoreRust reference =
                         , name = "RegexRegex"
                         , lifetimeParameters = [ generatedLifetimeVariableName ]
                         , isCopy = True
+                        , isDebug = True
+                        , isPartialEq = True
                         }
 
                 "Options" ->
@@ -3351,6 +3447,8 @@ typeConstructReferenceToCoreRust reference =
                         , name = "RegexOptions"
                         , lifetimeParameters = []
                         , isCopy = True
+                        , isDebug = True
+                        , isPartialEq = True
                         }
 
                 "Match" ->
@@ -3359,6 +3457,8 @@ typeConstructReferenceToCoreRust reference =
                         , name = "RegexMatch"
                         , lifetimeParameters = []
                         , isCopy = False
+                        , isDebug = True
+                        , isPartialEq = True
                         }
 
                 _ ->
@@ -3372,6 +3472,8 @@ typeConstructReferenceToCoreRust reference =
                         , name = "RandomSeed"
                         , lifetimeParameters = []
                         , isCopy = True
+                        , isDebug = True
+                        , isPartialEq = True
                         }
 
                 "Generator" ->
@@ -3380,6 +3482,8 @@ typeConstructReferenceToCoreRust reference =
                         , name = "RandomGenerator"
                         , lifetimeParameters = [ generatedLifetimeVariableName ]
                         , isCopy = True
+                        , isDebug = False
+                        , isPartialEq = False
                         }
 
                 _ ->
@@ -3393,6 +3497,8 @@ typeConstructReferenceToCoreRust reference =
                         , name = "TimePosix"
                         , lifetimeParameters = []
                         , isCopy = True
+                        , isDebug = True
+                        , isPartialEq = True
                         }
 
                 "Zone" ->
@@ -3401,6 +3507,8 @@ typeConstructReferenceToCoreRust reference =
                         , name = "TimeZone"
                         , lifetimeParameters = []
                         , isCopy = True
+                        , isDebug = True
+                        , isPartialEq = True
                         }
 
                 "Month" ->
@@ -3409,6 +3517,8 @@ typeConstructReferenceToCoreRust reference =
                         , name = "TimeMonth"
                         , lifetimeParameters = []
                         , isCopy = True
+                        , isDebug = True
+                        , isPartialEq = True
                         }
 
                 "Weekday" ->
@@ -3417,6 +3527,8 @@ typeConstructReferenceToCoreRust reference =
                         , name = "TimeWeekday"
                         , lifetimeParameters = []
                         , isCopy = True
+                        , isDebug = True
+                        , isPartialEq = True
                         }
 
                 "ZoneName" ->
@@ -3425,6 +3537,8 @@ typeConstructReferenceToCoreRust reference =
                         , name = "TimeZoneName"
                         , lifetimeParameters = []
                         , isCopy = False
+                        , isDebug = True
+                        , isPartialEq = True
                         }
 
                 _ ->
@@ -3438,6 +3552,8 @@ typeConstructReferenceToCoreRust reference =
                         , name = "BytesEndianness"
                         , lifetimeParameters = []
                         , isCopy = True
+                        , isDebug = True
+                        , isPartialEq = True
                         }
 
                 "Bytes" ->
@@ -3446,6 +3562,8 @@ typeConstructReferenceToCoreRust reference =
                         , name = "BytesBytes"
                         , lifetimeParameters = [ generatedLifetimeVariableName ]
                         , isCopy = True
+                        , isDebug = True
+                        , isPartialEq = True
                         }
 
                 _ ->
@@ -3459,6 +3577,8 @@ typeConstructReferenceToCoreRust reference =
                         , name = "BytesDecodeDecoder"
                         , lifetimeParameters = [ generatedLifetimeVariableName ]
                         , isCopy = True
+                        , isDebug = False
+                        , isPartialEq = False
                         }
 
                 "Step" ->
@@ -3467,6 +3587,8 @@ typeConstructReferenceToCoreRust reference =
                         , name = "BytesDecodeStep"
                         , lifetimeParameters = []
                         , isCopy = True
+                        , isDebug = True
+                        , isPartialEq = True
                         }
 
                 _ ->
@@ -3479,6 +3601,8 @@ typeConstructReferenceToCoreRust reference =
                 , name = "BytesEncodeEncoder"
                 , lifetimeParameters = [ generatedLifetimeVariableName ]
                 , isCopy = True
+                , isDebug = True
+                , isPartialEq = True
                 }
 
         "VirtualDom" ->
@@ -3489,6 +3613,8 @@ typeConstructReferenceToCoreRust reference =
                         , name = "VirtualDomNode"
                         , lifetimeParameters = [ generatedLifetimeVariableName ]
                         , isCopy = True
+                        , isDebug = False
+                        , isPartialEq = False
                         }
 
                 "Attribute" ->
@@ -3497,6 +3623,8 @@ typeConstructReferenceToCoreRust reference =
                         , name = "VirtualDomAttribute"
                         , lifetimeParameters = [ generatedLifetimeVariableName ]
                         , isCopy = True
+                        , isDebug = False
+                        , isPartialEq = False
                         }
 
                 "Handler" ->
@@ -3505,6 +3633,8 @@ typeConstructReferenceToCoreRust reference =
                         , name = "VirtualDomHandler"
                         , lifetimeParameters = [ generatedLifetimeVariableName ]
                         , isCopy = True
+                        , isDebug = False
+                        , isPartialEq = False
                         }
 
                 _ ->
@@ -3518,6 +3648,8 @@ typeConstructReferenceToCoreRust reference =
                         , name = "MathVector2Vec2"
                         , lifetimeParameters = []
                         , isCopy = True
+                        , isDebug = True
+                        , isPartialEq = True
                         }
 
                 _ ->
@@ -3531,6 +3663,8 @@ typeConstructReferenceToCoreRust reference =
                         , name = "MathVector3Vec3"
                         , lifetimeParameters = []
                         , isCopy = True
+                        , isDebug = True
+                        , isPartialEq = True
                         }
 
                 _ ->
@@ -3544,6 +3678,8 @@ typeConstructReferenceToCoreRust reference =
                         , name = "MathVector4Vec4"
                         , lifetimeParameters = []
                         , isCopy = True
+                        , isDebug = True
+                        , isPartialEq = True
                         }
 
                 _ ->
@@ -3561,6 +3697,8 @@ typeConstructReferenceToCoreRust reference =
                         , name = "PlatformProgram"
                         , lifetimeParameters = [ generatedLifetimeVariableName ]
                         , isCopy = True
+                        , isDebug = False
+                        , isPartialEq = False
                         }
 
                 -- "Task" | "ProcessId" | "Router"
@@ -3574,6 +3712,8 @@ typeConstructReferenceToCoreRust reference =
                 , name = "PlatformCmdCmd"
                 , lifetimeParameters = []
                 , isCopy = True
+                , isDebug = True
+                , isPartialEq = True
                 }
 
         "Platform.Sub" ->
@@ -3583,6 +3723,8 @@ typeConstructReferenceToCoreRust reference =
                 , name = "PlatformSubSub"
                 , lifetimeParameters = [ generatedLifetimeVariableName ]
                 , isCopy = True
+                , isDebug = False
+                , isPartialEq = False
                 }
 
         _ ->
@@ -3595,6 +3737,8 @@ justRustReferenceF64 :
         , name : String
         , lifetimeParameters : List String
         , isCopy : Bool
+        , isDebug : Bool
+        , isPartialEq : Bool
         }
 justRustReferenceF64 =
     Just rustReferenceF64
@@ -3605,12 +3749,16 @@ rustReferenceF64 :
     , name : String
     , lifetimeParameters : List String
     , isCopy : Bool
+    , isDebug : Bool
+    , isPartialEq : Bool
     }
 rustReferenceF64 =
     { qualification = []
     , name = "f64"
     , lifetimeParameters = []
     , isCopy = True
+    , isDebug = True
+    , isPartialEq = True
     }
 
 
@@ -3620,6 +3768,8 @@ justRustReferenceBool :
         , name : String
         , lifetimeParameters : List String
         , isCopy : Bool
+        , isDebug : Bool
+        , isPartialEq : Bool
         }
 justRustReferenceBool =
     Just
@@ -3627,6 +3777,8 @@ justRustReferenceBool =
         , name = "bool"
         , lifetimeParameters = []
         , isCopy = True
+        , isDebug = True
+        , isPartialEq = True
         }
 
 
@@ -3636,6 +3788,8 @@ justRustReferenceStringString :
         , name : String
         , lifetimeParameters : List String
         , isCopy : Bool
+        , isDebug : Bool
+        , isPartialEq : Bool
         }
 justRustReferenceStringString =
     Just
@@ -3643,6 +3797,8 @@ justRustReferenceStringString =
         , name = "StringString"
         , lifetimeParameters = [ "a" ]
         , isCopy = False
+        , isDebug = True
+        , isPartialEq = True
         }
 
 
@@ -3654,6 +3810,8 @@ rustTypeStringString =
         , lifetimeArguments = [ "a" ]
         , arguments = []
         , isCopy = False
+        , isDebug = True
+        , isPartialEq = True
         }
 
 
@@ -3663,6 +3821,8 @@ justRustReferenceChar :
         , name : String
         , lifetimeParameters : List String
         , isCopy : Bool
+        , isDebug : Bool
+        , isPartialEq : Bool
         }
 justRustReferenceChar =
     Just
@@ -3670,6 +3830,8 @@ justRustReferenceChar =
         , name = "char"
         , lifetimeParameters = []
         , isCopy = True
+        , isDebug = True
+        , isPartialEq = True
         }
 
 
@@ -3679,6 +3841,8 @@ justRustReferenceListList :
         , name : String
         , lifetimeParameters : List String
         , isCopy : Bool
+        , isDebug : Bool
+        , isPartialEq : Bool
         }
 justRustReferenceListList =
     Just
@@ -3686,6 +3850,8 @@ justRustReferenceListList =
         , name = "ListList"
         , lifetimeParameters = [ "a" ]
         , isCopy = True
+        , isDebug = True
+        , isPartialEq = True
         }
 
 
@@ -3695,6 +3861,8 @@ justRustReferenceOption :
         , name : String
         , lifetimeParameters : List String
         , isCopy : Bool
+        , isDebug : Bool
+        , isPartialEq : Bool
         }
 justRustReferenceOption =
     Just
@@ -3702,6 +3870,8 @@ justRustReferenceOption =
         , name = "Option"
         , lifetimeParameters = []
         , isCopy = True
+        , isDebug = True
+        , isPartialEq = True
         }
 
 
@@ -3711,6 +3881,8 @@ justRustReferenceResultResult :
         , name : String
         , lifetimeParameters : List String
         , isCopy : Bool
+        , isDebug : Bool
+        , isPartialEq : Bool
         }
 justRustReferenceResultResult =
     Just
@@ -3718,6 +3890,8 @@ justRustReferenceResultResult =
         , name = "ResultResult"
         , lifetimeParameters = []
         , isCopy = True
+        , isDebug = True
+        , isPartialEq = True
         }
 
 
@@ -7086,6 +7260,8 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                             String
                             { lifetimeParameters : List String
                             , isCopy : Bool
+                            , isDebug : Bool
+                            , isPartialEq : Bool
                             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
                             }
                     , rustConsts : FastSet.Set String
@@ -7261,6 +7437,8 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                 String
                                                 { lifetimeParameters : List String
                                                 , isCopy : Bool
+                                                , isDebug : Bool
+                                                , isPartialEq : Bool
                                                 , variantReferencedValueIndexes : FastDict.Dict String (List Int)
                                                 }
                                         }
@@ -7320,6 +7498,8 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                             , lifetimeParameters : List String
                                                                             , variants : FastDict.Dict String (List RustType)
                                                                             , isCopy : Bool
+                                                                            , isDebug : Bool
+                                                                            , isPartialEq : Bool
                                                                             }
                                                                         rustEnumDeclaration =
                                                                             choiceTypeDeclaration
@@ -7336,6 +7516,8 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                             |> FastDict.insert rustName
                                                                                 { lifetimeParameters = rustEnumDeclaration.lifetimeParameters
                                                                                 , isCopy = rustEnumDeclaration.isCopy
+                                                                                , isDebug = rustEnumDeclaration.isDebug
+                                                                                , isPartialEq = rustEnumDeclaration.isPartialEq
                                                                                 , variantReferencedValueIndexes = FastDict.empty
                                                                                 }
                                                                     , rustEnumDeclarations =
@@ -7427,6 +7609,8 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                         , lifetimeParameters : List String
                                                                                         , variants : FastDict.Dict String (List RustType)
                                                                                         , isCopy : Bool
+                                                                                        , isDebug : Bool
+                                                                                        , isPartialEq : Bool
                                                                                         }
                                                                                     rustEnumDeclaration =
                                                                                         choiceTypeDeclaration
@@ -7443,6 +7627,8 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                         |> FastDict.insert rustName
                                                                                             { lifetimeParameters = rustEnumDeclaration.lifetimeParameters
                                                                                             , isCopy = rustEnumDeclaration.isCopy
+                                                                                            , isDebug = rustEnumDeclaration.isDebug
+                                                                                            , isPartialEq = rustEnumDeclaration.isPartialEq
                                                                                             , variantReferencedValueIndexes =
                                                                                                 rustEnumDeclaration.variants
                                                                                                     |> FastDict.map
@@ -8100,6 +8286,8 @@ valueOrFunctionDeclaration :
             String
             { lifetimeParameters : List String
             , isCopy : Bool
+            , isDebug : Bool
+            , isPartialEq : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
     , rustConsts : FastSet.Set String
@@ -8598,6 +8786,8 @@ rustTypeConstructBumpaloBump =
         { qualification = []
         , name = "Bump"
         , isCopy = False
+        , isDebug = True
+        , isPartialEq = False
         , arguments = []
         , lifetimeArguments = []
         }
@@ -8783,6 +8973,8 @@ type alias ExpressionToRustContext =
             String
             { lifetimeParameters : List String
             , isCopy : Bool
+            , isDebug : Bool
+            , isPartialEq : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
     , rustConsts : FastSet.Set String
@@ -10469,6 +10661,8 @@ rustTypeJsonValue =
     RustTypeConstruct
         { qualification = []
         , isCopy = True
+        , isDebug = True
+        , isPartialEq = True
         , name = "JsonValue"
         , arguments = []
         , lifetimeArguments = [ generatedLifetimeVariableName ]
@@ -13607,7 +13801,7 @@ rustTypedBindingsKeepThoseRequiringClone rustTypedBindings =
             (\rustTypedBinding ->
                 (rustTypedBinding.name /= generatedAllocatorVariableName)
                     && Basics.not
-                        (rustTypeIsCopy { typeVariablesAreCopy = False }
+                        (rustTypeIsCopy { variablesAreCopy = False }
                             rustTypedBinding.type_
                         )
             )
