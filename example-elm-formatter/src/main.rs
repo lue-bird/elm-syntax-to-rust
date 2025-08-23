@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::io::Read;
 
 mod elm;
@@ -11,7 +12,10 @@ pub fn main() {
         Result::Err(error) => {
             println!("failed to format: {error}");
         }
-        Result::Ok(_) => match elm::format_single_elm_module_string(&allocator, &module_source) {
+        Result::Ok(_) => match elm::format_single_elm_module_string(
+            &allocator,
+            std::borrow::Cow::Borrowed(&module_source),
+        ) {
             Result::Err(error) => {
                 println!("failed to format: {error}");
             }

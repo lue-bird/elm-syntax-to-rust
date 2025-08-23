@@ -43,9 +43,7 @@ type RustType
         , lifetimeArguments : List String
         , -- TODO isPartialEq
           -- TODO isDebug
-          -- TODO requiresClone
-          -- TODO remove
-          isFunction : Bool
+          isCopy : Bool
         }
     | RustTypeTuple
         { part0 : RustType
@@ -115,6 +113,11 @@ type RustExpression
         { qualification : List String
         , name : String
         }
+    | RustExpressionBinaryOperation
+        { operator : String
+        , left : RustExpression
+        , right : RustExpression
+        }
     | RustExpressionReferenceVariant
         { originTypeName : List String
         , name : String
@@ -170,6 +173,7 @@ type RustExpression
         , cases :
             List
                 { pattern : RustPattern
+                , guardConditions : List RustExpression
                 , result : RustExpression
                 }
         }
@@ -224,6 +228,7 @@ type RustStatement
         , cases :
             List
                 { pattern : RustPattern
+                , guardConditions : List RustExpression
                 , statements : List RustStatement
                 }
         }
@@ -540,6 +545,7 @@ choiceTypeDeclaration :
         FastDict.Dict
             String
             { lifetimeParameters : List String
+            , isCopy : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
     }
@@ -551,6 +557,7 @@ choiceTypeDeclaration :
         { lifetimeParameters : List String
         , parameters : List String
         , variants : FastDict.Dict String (List RustType)
+        , isCopy : Bool
         }
 choiceTypeDeclaration context syntaxChoiceType =
     let
@@ -587,6 +594,12 @@ choiceTypeDeclaration context syntaxChoiceType =
                 FastSet.empty
             |> FastSet.toList
     , variants = rustVariants
+    , isCopy =
+        rustVariants
+            |> fastDictAll
+                (\_ values ->
+                    values |> List.all rustTypeIsCopy
+                )
     }
 
 
@@ -669,7 +682,17 @@ printRustEnumDeclaration rustEnumType =
     Print.exactly
         ("#[derive("
             ++ ([ Just "Clone"
-                , Just "Copy"
+                , if
+                    rustEnumType.variants
+                        |> fastDictAll
+                            (\_ values ->
+                                values |> List.all rustTypeIsCopy
+                            )
+                  then
+                    Just "Copy"
+
+                  else
+                    Nothing
                 , if
                     rustEnumType.variants
                         |> fastDictAll
@@ -759,6 +782,38 @@ rustTypeIsDebug rustType =
             -- TODO typeConstruct.isDebug &&
             typeConstruct.arguments
                 |> List.all rustTypeIsDebug
+
+
+rustTypeIsCopy : RustType -> Bool
+rustTypeIsCopy rustType =
+    -- IGNORE TCO
+    case rustType of
+        RustTypeInfer ->
+            False
+
+        RustTypeVariable _ ->
+            False
+
+        RustTypeUnit ->
+            True
+
+        RustTypeFunction _ ->
+            True
+
+        RustTypeBorrow _ ->
+            -- all references implement Copy
+            True
+
+        RustTypeTuple parts ->
+            (parts.part0 |> rustTypeIsCopy)
+                && (parts.part1 |> rustTypeIsCopy)
+                && (parts.part2Up |> List.all rustTypeIsCopy)
+
+        RustTypeConstruct typeConstruct ->
+            typeConstruct.isCopy
+                && (typeConstruct.arguments
+                        |> List.all rustTypeIsCopy
+                   )
 
 
 rustTypeIsPartialEq : RustType -> Bool
@@ -910,6 +965,7 @@ typeAliasDeclaration :
         FastDict.Dict
             String
             { lifetimeParameters : List String
+            , isCopy : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
     }
@@ -985,6 +1041,7 @@ type_ :
         FastDict.Dict
             String
             { lifetimeParameters : List String
+            , isCopy : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
     }
@@ -1014,7 +1071,7 @@ rustTypeF64 =
         , name = "f64"
         , arguments = []
         , lifetimeArguments = []
-        , isFunction = False
+        , isCopy = True
         }
 
 
@@ -1039,6 +1096,7 @@ typeNotVariable :
         FastDict.Dict
             String
             { lifetimeParameters : List String
+            , isCopy : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
     }
@@ -1067,28 +1125,13 @@ typeNotVariable context inferredTypeNotVariable =
                     |> typeConstructReferenceToCoreRust
             of
                 Just coreRust ->
-                    let
-                        asValueType : RustType
-                        asValueType =
-                            RustTypeConstruct
-                                { arguments = rustArguments
-                                , name = coreRust.name
-                                , qualification = coreRust.qualification
-                                , lifetimeArguments = coreRust.lifetimeParameters
-                                , isFunction =
-                                    -- core elm declarations don't have a function type alias
-                                    False
-                                }
-                    in
-                    case coreRust.referenceOrValueType of
-                        ValueType ->
-                            asValueType
-
-                        ReferenceType ->
-                            RustTypeBorrow
-                                { lifetimeVariable = Just generatedLifetimeVariableName
-                                , type_ = asValueType
-                                }
+                    RustTypeConstruct
+                        { arguments = rustArguments
+                        , name = coreRust.name
+                        , qualification = coreRust.qualification
+                        , lifetimeArguments = coreRust.lifetimeParameters
+                        , isCopy = coreRust.isCopy
+                        }
 
                 Nothing ->
                     let
@@ -1115,26 +1158,21 @@ typeNotVariable context inferredTypeNotVariable =
                                 ElmSyntaxTypeInfer.TypeConstruct typeConstruct
                                     |> inferredTypeNotVariableExpandInnerAliases
                                         context.typeAliasesInModule
+
+                            expandedRustType : RustType
+                            expandedRustType =
+                                typeAliasExpanded
+                                    |> type_ context
                         in
                         RustTypeConstruct
                             { arguments = rustArguments
                             , lifetimeArguments =
-                                typeAliasExpanded
-                                    |> type_ context
+                                expandedRustType
                                     |> rustTypeUsedLifetimeVariables
                                     |> FastSet.toList
                             , qualification = []
                             , name = rustName
-                            , isFunction =
-                                case
-                                    inferredTypeToFunction context.typeAliasesInModule
-                                        typeAliasExpanded
-                                of
-                                    Nothing ->
-                                        False
-
-                                    Just _ ->
-                                        True
+                            , isCopy = expandedRustType |> rustTypeIsCopy
                             }
 
                     else
@@ -1148,7 +1186,10 @@ typeNotVariable context inferredTypeNotVariable =
                                         [ generatedLifetimeVariableName ]
                                     , qualification = []
                                     , name = rustName
-                                    , isFunction = False
+                                    , isCopy =
+                                        -- could be in theory but no
+                                        -- simple way to know
+                                        False
                                     }
 
                             Just originRustEnumType ->
@@ -1157,7 +1198,9 @@ typeNotVariable context inferredTypeNotVariable =
                                     , lifetimeArguments = originRustEnumType.lifetimeParameters
                                     , qualification = []
                                     , name = rustName
-                                    , isFunction = False
+                                    , isCopy =
+                                        -- TODO store in originRustEnumType
+                                        False
                                     }
 
         ElmSyntaxTypeInfer.TypeTuple typeTuple ->
@@ -1185,7 +1228,6 @@ typeNotVariable context inferredTypeNotVariable =
                 , name =
                     generatedRecordStructTypeName
                         (recordFields |> FastDict.keys)
-                , isFunction = False
                 , arguments =
                     recordFields
                         |> FastDict.foldr
@@ -1194,6 +1236,7 @@ typeNotVariable context inferredTypeNotVariable =
                             )
                             []
                 , lifetimeArguments = []
+                , isCopy = True
                 }
 
         ElmSyntaxTypeInfer.TypeFunction typeFunction ->
@@ -1212,7 +1255,6 @@ typeNotVariable context inferredTypeNotVariable =
                 , name =
                     generatedRecordStructTypeName
                         (typeRecordExtension.fields |> FastDict.keys)
-                , isFunction = False
                 , arguments =
                     typeRecordExtension.fields
                         |> FastDict.foldr
@@ -1221,6 +1263,7 @@ typeNotVariable context inferredTypeNotVariable =
                             )
                             []
                 , lifetimeArguments = []
+                , isCopy = True
                 }
 
 
@@ -1617,7 +1660,7 @@ printRustTypeConstruct :
     { qualification : List String
     , name : String
     , arguments : List RustType
-    , isFunction : Bool
+    , isCopy : Bool
     , lifetimeArguments : List String
     }
     -> Print
@@ -2162,12 +2205,14 @@ pattern :
         FastDict.Dict
             String
             { lifetimeParameters : List String
+            , isCopy : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
     }
     -> ElmSyntaxTypeInfer.TypedNode ElmSyntaxTypeInfer.Pattern
     ->
         { pattern : RustPattern
+        , guardConditions : List RustExpression
         , bindingsToDerefClone : List { name : String, type_ : RustType }
         }
 pattern context patternInferred =
@@ -2175,26 +2220,49 @@ pattern context patternInferred =
     case patternInferred.value of
         ElmSyntaxTypeInfer.PatternIgnored ->
             { pattern = RustPatternIgnore
+            , guardConditions = []
             , bindingsToDerefClone = []
             }
 
         ElmSyntaxTypeInfer.PatternUnit ->
             { pattern = RustPatternIgnore
+            , guardConditions = []
             , bindingsToDerefClone = []
             }
 
         ElmSyntaxTypeInfer.PatternChar charValue ->
             { pattern = RustPatternChar charValue
+            , guardConditions = []
             , bindingsToDerefClone = []
             }
 
         ElmSyntaxTypeInfer.PatternString stringValue ->
-            { pattern = RustPatternStringLiteral stringValue
+            let
+                generatedStringBindingName : String
+                generatedStringBindingName =
+                    stringAsGeneratedRustPatternBindingName stringValue
+            in
+            { pattern =
+                RustPatternVariable
+                    { name = generatedStringBindingName
+                    , isRef = False
+                    , type_ = rustTypeStringString
+                    }
+            , guardConditions =
+                [ RustExpressionBinaryOperation
+                    { operator = "=="
+                    , left =
+                        RustExpressionReference
+                            { qualification = [], name = generatedStringBindingName }
+                    , right = RustExpressionString stringValue
+                    }
+                ]
             , bindingsToDerefClone = []
             }
 
         ElmSyntaxTypeInfer.PatternInt intValue ->
             { pattern = RustPatternInteger intValue.value
+            , guardConditions = []
             , bindingsToDerefClone = []
             }
 
@@ -2205,6 +2273,7 @@ pattern context patternInferred =
                     , isRef = False
                     , type_ = patternInferred.type_ |> type_ context
                     }
+            , guardConditions = []
             , bindingsToDerefClone = []
             }
 
@@ -2213,11 +2282,19 @@ pattern context patternInferred =
 
         ElmSyntaxTypeInfer.PatternTuple parts ->
             let
-                rustPart0 : { pattern : RustPattern, bindingsToDerefClone : List { name : String, type_ : RustType } }
+                rustPart0 :
+                    { pattern : RustPattern
+                    , guardConditions : List RustExpression
+                    , bindingsToDerefClone : List { name : String, type_ : RustType }
+                    }
                 rustPart0 =
                     parts.part0 |> pattern context
 
-                rustPart1 : { pattern : RustPattern, bindingsToDerefClone : List { name : String, type_ : RustType } }
+                rustPart1 :
+                    { pattern : RustPattern
+                    , guardConditions : List RustExpression
+                    , bindingsToDerefClone : List { name : String, type_ : RustType }
+                    }
                 rustPart1 =
                     parts.part1 |> pattern context
             in
@@ -2227,6 +2304,9 @@ pattern context patternInferred =
                     , part1 = rustPart1.pattern
                     , part2Up = []
                     }
+            , guardConditions =
+                rustPart0.guardConditions
+                    ++ rustPart1.guardConditions
             , bindingsToDerefClone =
                 rustPart0.bindingsToDerefClone
                     ++ rustPart1.bindingsToDerefClone
@@ -2234,15 +2314,27 @@ pattern context patternInferred =
 
         ElmSyntaxTypeInfer.PatternTriple parts ->
             let
-                rustPart0 : { pattern : RustPattern, bindingsToDerefClone : List { name : String, type_ : RustType } }
+                rustPart0 :
+                    { pattern : RustPattern
+                    , guardConditions : List RustExpression
+                    , bindingsToDerefClone : List { name : String, type_ : RustType }
+                    }
                 rustPart0 =
                     parts.part0 |> pattern context
 
-                rustPart1 : { pattern : RustPattern, bindingsToDerefClone : List { name : String, type_ : RustType } }
+                rustPart1 :
+                    { pattern : RustPattern
+                    , guardConditions : List RustExpression
+                    , bindingsToDerefClone : List { name : String, type_ : RustType }
+                    }
                 rustPart1 =
                     parts.part1 |> pattern context
 
-                rustPart2 : { pattern : RustPattern, bindingsToDerefClone : List { name : String, type_ : RustType } }
+                rustPart2 :
+                    { pattern : RustPattern
+                    , guardConditions : List RustExpression
+                    , bindingsToDerefClone : List { name : String, type_ : RustType }
+                    }
                 rustPart2 =
                     parts.part2 |> pattern context
             in
@@ -2252,6 +2344,10 @@ pattern context patternInferred =
                     , part1 = rustPart1.pattern
                     , part2Up = [ rustPart2.pattern ]
                     }
+            , guardConditions =
+                rustPart0.guardConditions
+                    ++ rustPart1.guardConditions
+                    ++ rustPart2.guardConditions
             , bindingsToDerefClone =
                 rustPart0.bindingsToDerefClone
                     ++ rustPart1.bindingsToDerefClone
@@ -2311,61 +2407,72 @@ pattern context patternInferred =
                                 )
                                 FastDict.empty
                     }
+            , guardConditions = []
             , bindingsToDerefClone = []
             }
 
         ElmSyntaxTypeInfer.PatternListCons listCons ->
             let
-                rustHead : { pattern : RustPattern, bindingsToDerefClone : List { name : String, type_ : RustType } }
+                rustHead :
+                    { pattern : RustPattern
+                    , guardConditions : List RustExpression
+                    , bindingsToDerefClone : List { name : String, type_ : RustType }
+                    }
                 rustHead =
                     listCons.head |> pattern context
 
-                rustTailPattern : RustPattern
+                rustTailPattern : { pattern : RustPattern, guardConditions : List RustExpression }
                 rustTailPattern =
                     listCons.tail |> referencedPattern context
             in
             { pattern =
                 rustPatternListCons rustHead.pattern
-                    (rustTailPattern
+                    (rustTailPattern.pattern
                         |> rustPatternAlterBindings generatedPatternRefBindingName
                     )
+            , guardConditions =
+                rustHead.guardConditions
+                    ++ rustTailPattern.guardConditions
             , bindingsToDerefClone =
-                rustTailPattern
-                    |> rustPatternIntroducedBindings
+                rustHead.bindingsToDerefClone
+                    ++ (rustTailPattern.pattern
+                            |> rustPatternIntroducedBindings
+                       )
             }
 
         ElmSyntaxTypeInfer.PatternListExact elementPatterns ->
             case elementPatterns of
                 [] ->
                     { pattern = rustPatternListEmpty
+                    , guardConditions = []
                     , bindingsToDerefClone = []
                     }
 
                 head :: tail ->
                     let
-                        rustHead : { pattern : RustPattern, bindingsToDerefClone : List { name : String, type_ : RustType } }
+                        rustHead :
+                            { pattern : RustPattern
+                            , guardConditions : List RustExpression
+                            , bindingsToDerefClone : List { name : String, type_ : RustType }
+                            }
                         rustHead =
                             head |> pattern context
 
-                        rustTailPattern : RustPattern
+                        rustTailPattern : { pattern : RustPattern, guardConditions : List RustExpression }
                         rustTailPattern =
-                            tail
-                                |> List.foldr
-                                    (\element soFar ->
-                                        rustPatternListCons
-                                            (element |> referencedPattern context)
-                                            soFar
-                                    )
-                                    rustPatternListEmpty
+                            tail |> referencedPatternListExact context
                     in
                     { pattern =
                         rustPatternListCons rustHead.pattern
-                            (rustTailPattern
+                            (rustTailPattern.pattern
                                 |> rustPatternAlterBindings generatedPatternRefBindingName
                             )
+                    , guardConditions =
+                        rustHead.guardConditions
+                            ++ rustTailPattern.guardConditions
                     , bindingsToDerefClone =
                         rustHead.bindingsToDerefClone
-                            ++ (rustTailPattern |> rustPatternIntroducedBindings)
+                            ++ (rustTailPattern.pattern |> rustPatternIntroducedBindings)
                     }
 
         ElmSyntaxTypeInfer.PatternVariant variant ->
@@ -2390,6 +2497,7 @@ pattern context patternInferred =
             case asBool of
                 Just bool ->
                     { pattern = RustPatternBool bool
+                    , guardConditions = []
                     , bindingsToDerefClone = []
                     }
 
@@ -2436,6 +2544,7 @@ pattern context patternInferred =
 
                         rustValues :
                             { patterns : List RustPattern
+                            , guardConditions : List RustExpression
                             , bindingsToDerefClone : List { name : String, type_ : RustType }
                             }
                         rustValues =
@@ -2445,33 +2554,44 @@ pattern context patternInferred =
                                     (\( valueIndex, variantValue ) soFar ->
                                         if reference.referencedValueIndexes |> List.member valueIndex then
                                             let
-                                                rustValuePattern : RustPattern
-                                                rustValuePattern =
+                                                rustValue : { pattern : RustPattern, guardConditions : List RustExpression }
+                                                rustValue =
                                                     variantValue |> referencedPattern context
                                             in
                                             { patterns =
-                                                (rustValuePattern
+                                                (rustValue.pattern
                                                     |> rustPatternAlterBindings generatedPatternRefBindingName
                                                 )
                                                     :: soFar.patterns
+                                            , guardConditions =
+                                                rustValue.guardConditions
+                                                    ++ soFar.guardConditions
                                             , bindingsToDerefClone =
-                                                (rustValuePattern |> rustPatternIntroducedBindings)
+                                                (rustValue.pattern |> rustPatternIntroducedBindings)
                                                     ++ soFar.bindingsToDerefClone
                                             }
 
                                         else
                                             let
-                                                rustValue : { pattern : RustPattern, bindingsToDerefClone : List { name : String, type_ : RustType } }
+                                                rustValue :
+                                                    { pattern : RustPattern
+                                                    , guardConditions : List RustExpression
+                                                    , bindingsToDerefClone : List { name : String, type_ : RustType }
+                                                    }
                                                 rustValue =
                                                     variantValue |> pattern context
                                             in
                                             { patterns = rustValue.pattern :: soFar.patterns
+                                            , guardConditions =
+                                                rustValue.guardConditions
+                                                    ++ soFar.guardConditions
                                             , bindingsToDerefClone =
                                                 rustValue.bindingsToDerefClone
                                                     ++ soFar.bindingsToDerefClone
                                             }
                                     )
                                     { patterns = []
+                                    , guardConditions = []
                                     , bindingsToDerefClone = []
                                     }
                     in
@@ -2481,12 +2601,17 @@ pattern context patternInferred =
                             , name = reference.name
                             , values = rustValues.patterns
                             }
+                    , guardConditions = rustValues.guardConditions
                     , bindingsToDerefClone = rustValues.bindingsToDerefClone
                     }
 
         ElmSyntaxTypeInfer.PatternAs patternAs ->
             let
-                rustPattern : { pattern : RustPattern, bindingsToDerefClone : List { name : String, type_ : RustType } }
+                rustPattern :
+                    { pattern : RustPattern
+                    , guardConditions : List RustExpression
+                    , bindingsToDerefClone : List { name : String, type_ : RustType }
+                    }
                 rustPattern =
                     patternAs.pattern |> pattern context
 
@@ -2518,6 +2643,7 @@ pattern context patternInferred =
                                     }
                                 )
                     }
+            , guardConditions = rustPattern.guardConditions
             , bindingsToDerefClone =
                 { name = rustAliasBindingName
                 , type_ = rustType
@@ -2527,6 +2653,24 @@ pattern context patternInferred =
                        )
                     ++ rustPattern.bindingsToDerefClone
             }
+
+
+stringAsGeneratedRustPatternBindingName : String -> String
+stringAsGeneratedRustPatternBindingName stringValue =
+    "generated_string_"
+        ++ (stringValue
+                |> String.toList
+                |> List.map
+                    (\char ->
+                        if char |> Char.isAlphaNum then
+                            String.fromChar char
+
+                        else
+                            "_u" ++ (char |> Char.toCode |> String.fromInt)
+                    )
+                |> String.concat
+                |> toSnakeCase
+           )
 
 
 referencedPattern :
@@ -2545,52 +2689,125 @@ referencedPattern :
         FastDict.Dict
             String
             { lifetimeParameters : List String
+            , isCopy : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
     }
     -> ElmSyntaxTypeInfer.TypedNode ElmSyntaxTypeInfer.Pattern
-    -> RustPattern
+    ->
+        { pattern : RustPattern
+        , guardConditions : List RustExpression
+        }
 referencedPattern context patternInferred =
     -- IGNORE TCO
     case patternInferred.value of
         ElmSyntaxTypeInfer.PatternIgnored ->
-            RustPatternIgnore
+            { pattern = RustPatternIgnore
+            , guardConditions = []
+            }
 
         ElmSyntaxTypeInfer.PatternUnit ->
-            RustPatternIgnore
+            { pattern = RustPatternIgnore
+            , guardConditions = []
+            }
 
         ElmSyntaxTypeInfer.PatternChar charValue ->
-            RustPatternChar charValue
-
-        ElmSyntaxTypeInfer.PatternString stringValue ->
-            RustPatternStringLiteral stringValue
+            { pattern = RustPatternChar charValue
+            , guardConditions = []
+            }
 
         ElmSyntaxTypeInfer.PatternInt intValue ->
-            RustPatternInteger intValue.value
+            { pattern = RustPatternInteger intValue.value
+            , guardConditions = []
+            }
+
+        ElmSyntaxTypeInfer.PatternString stringValue ->
+            let
+                generatedStringBindingName : String
+                generatedStringBindingName =
+                    stringAsGeneratedRustPatternBindingName stringValue
+            in
+            { pattern =
+                RustPatternVariable
+                    { name = generatedStringBindingName
+                    , isRef = False
+                    , type_ = rustTypeStringString
+                    }
+            , guardConditions =
+                [ RustExpressionCall
+                    { called =
+                        RustExpressionReference
+                            { qualification = []
+                            , name = "basics_eq"
+                            }
+                    , arguments =
+                        [ RustExpressionReference
+                            { qualification = [], name = generatedStringBindingName }
+                        , RustExpressionString stringValue
+                        ]
+                    }
+                ]
+            }
 
         ElmSyntaxTypeInfer.PatternVariable variableName ->
-            RustPatternVariable
-                { name = variableName |> toSnakeCaseRustName
-                , isRef = False
-                , type_ = patternInferred.type_ |> type_ context
-                }
+            { pattern =
+                RustPatternVariable
+                    { name = variableName |> toSnakeCaseRustName
+                    , isRef = False
+                    , type_ = patternInferred.type_ |> type_ context
+                    }
+            , guardConditions = []
+            }
 
         ElmSyntaxTypeInfer.PatternParenthesized inParens ->
             referencedPattern context inParens
 
         ElmSyntaxTypeInfer.PatternTuple parts ->
-            RustPatternTuple
-                { part0 = parts.part0 |> referencedPattern context
-                , part1 = parts.part1 |> referencedPattern context
-                , part2Up = []
-                }
+            let
+                rustPart0 : { pattern : RustPattern, guardConditions : List RustExpression }
+                rustPart0 =
+                    parts.part0 |> referencedPattern context
+
+                rustPart1 : { pattern : RustPattern, guardConditions : List RustExpression }
+                rustPart1 =
+                    parts.part1 |> referencedPattern context
+            in
+            { pattern =
+                RustPatternTuple
+                    { part0 = rustPart0.pattern
+                    , part1 = rustPart1.pattern
+                    , part2Up = []
+                    }
+            , guardConditions =
+                rustPart0.guardConditions
+                    ++ rustPart1.guardConditions
+            }
 
         ElmSyntaxTypeInfer.PatternTriple parts ->
-            RustPatternTuple
-                { part0 = parts.part0 |> referencedPattern context
-                , part1 = parts.part1 |> referencedPattern context
-                , part2Up = [ parts.part2 |> referencedPattern context ]
-                }
+            let
+                rustPart0 : { pattern : RustPattern, guardConditions : List RustExpression }
+                rustPart0 =
+                    parts.part0 |> referencedPattern context
+
+                rustPart1 : { pattern : RustPattern, guardConditions : List RustExpression }
+                rustPart1 =
+                    parts.part1 |> referencedPattern context
+
+                rustPart2 : { pattern : RustPattern, guardConditions : List RustExpression }
+                rustPart2 =
+                    parts.part2 |> referencedPattern context
+            in
+            { pattern =
+                RustPatternTuple
+                    { part0 = rustPart0.pattern
+                    , part1 = rustPart1.pattern
+                    , part2Up = [ rustPart2.pattern ]
+                    }
+            , guardConditions =
+                rustPart0.guardConditions
+                    ++ rustPart1.guardConditions
+                    ++ rustPart2.guardConditions
+            }
 
         ElmSyntaxTypeInfer.PatternRecord patternFields ->
             let
@@ -2611,12 +2828,9 @@ referencedPattern context patternInferred =
                                         )
                                     )
                                 |> FastDict.fromList
-            in
-            RustPatternStructNotExhaustive
-                { name =
-                    generatedRecordStructTypeName
-                        (allRecordFieldsIncludingOmitted |> FastDict.keys)
-                , fields =
+
+                rustFieldPatterns : FastDict.Dict String RustPattern
+                rustFieldPatterns =
                     patternFields
                         |> List.foldl
                             (\field soFar ->
@@ -2641,20 +2855,35 @@ referencedPattern context patternInferred =
                                         )
                             )
                             FastDict.empty
-                }
+            in
+            { pattern =
+                RustPatternStructNotExhaustive
+                    { name =
+                        generatedRecordStructTypeName
+                            (allRecordFieldsIncludingOmitted |> FastDict.keys)
+                    , fields = rustFieldPatterns
+                    }
+            , guardConditions = []
+            }
 
         ElmSyntaxTypeInfer.PatternListCons listCons ->
-            rustPatternListCons
-                (listCons.head |> referencedPattern context)
-                (listCons.tail |> referencedPattern context)
+            let
+                rustHead : { pattern : RustPattern, guardConditions : List RustExpression }
+                rustHead =
+                    listCons.head |> referencedPattern context
+
+                rustTail : { pattern : RustPattern, guardConditions : List RustExpression }
+                rustTail =
+                    listCons.tail |> referencedPattern context
+            in
+            { pattern = rustPatternListCons rustHead.pattern rustTail.pattern
+            , guardConditions =
+                rustHead.guardConditions
+                    ++ rustTail.guardConditions
+            }
 
         ElmSyntaxTypeInfer.PatternListExact elementPatterns ->
-            elementPatterns
-                |> List.foldr
-                    (\element soFar ->
-                        rustPatternListCons (element |> referencedPattern context) soFar
-                    )
-                    rustPatternListEmpty
+            referencedPatternListExact context elementPatterns
 
         ElmSyntaxTypeInfer.PatternVariant variant ->
             let
@@ -2677,8 +2906,9 @@ referencedPattern context patternInferred =
             in
             case asBool of
                 Just bool ->
-                    -- is the special-casing still necessary
-                    RustPatternBool bool
+                    { pattern = RustPatternBool bool
+                    , guardConditions = []
+                    }
 
                 Nothing ->
                     let
@@ -2709,29 +2939,94 @@ referencedPattern context patternInferred =
                                     , name = variant.name |> toPascalCaseRustName
                                     }
 
-                        values : List RustPattern
-                        values =
+                        rustValues : { patterns : List RustPattern, guardConditions : List RustExpression }
+                        rustValues =
                             variant.values
-                                |> List.map
-                                    (\variantValue ->
-                                        variantValue |> referencedPattern context
+                                |> List.foldr
+                                    (\variantValue soFar ->
+                                        let
+                                            rustValue : { pattern : RustPattern, guardConditions : List RustExpression }
+                                            rustValue =
+                                                variantValue |> referencedPattern context
+                                        in
+                                        { patterns = rustValue.pattern :: soFar.patterns
+                                        , guardConditions =
+                                            rustValue.guardConditions
+                                                ++ soFar.guardConditions
+                                        }
                                     )
+                                    { patterns = [], guardConditions = [] }
                     in
-                    RustPatternVariant
-                        { originTypeName = reference.originTypeName
-                        , name = reference.name
-                        , values = values
-                        }
+                    { pattern =
+                        RustPatternVariant
+                            { originTypeName = reference.originTypeName
+                            , name = reference.name
+                            , values = rustValues.patterns
+                            }
+                    , guardConditions = rustValues.guardConditions
+                    }
 
         ElmSyntaxTypeInfer.PatternAs patternAs ->
-            RustPatternAlias
-                { variable =
-                    patternAs.variable.value |> toSnakeCaseRustName
-                , variableIsRef = False
-                , type_ = patternAs.variable.type_ |> type_ context
-                , pattern =
+            let
+                rustPattern : { pattern : RustPattern, guardConditions : List RustExpression }
+                rustPattern =
                     patternAs.pattern |> referencedPattern context
+            in
+            { pattern =
+                RustPatternAlias
+                    { variable =
+                        patternAs.variable.value |> toSnakeCaseRustName
+                    , variableIsRef = False
+                    , type_ = patternAs.variable.type_ |> type_ context
+                    , pattern = rustPattern.pattern
+                    }
+            , guardConditions = rustPattern.guardConditions
+            }
+
+
+referencedPatternListExact :
+    { typeAliasesInModule :
+        String
+        ->
+            Maybe
+                (FastDict.Dict
+                    String
+                    { parameters : List String
+                    , recordFieldOrder : Maybe (List String)
+                    , type_ : ElmSyntaxTypeInfer.Type
+                    }
+                )
+    , rustEnumTypes :
+        FastDict.Dict
+            String
+            { lifetimeParameters : List String
+            , isCopy : Bool
+            , variantReferencedValueIndexes : FastDict.Dict String (List Int)
+            }
+    }
+    -> List (ElmSyntaxTypeInfer.TypedNode ElmSyntaxTypeInfer.Pattern)
+    ->
+        { pattern : RustPattern
+        , guardConditions : List RustExpression
+        }
+referencedPatternListExact context elements =
+    elements
+        |> List.foldr
+            (\element soFar ->
+                let
+                    rustElement : { pattern : RustPattern, guardConditions : List RustExpression }
+                    rustElement =
+                        element |> referencedPattern context
+                in
+                { pattern = rustPatternListCons rustElement.pattern soFar.pattern
+                , guardConditions =
+                    rustElement.guardConditions
+                        ++ soFar.guardConditions
                 }
+            )
+            { pattern = rustPatternListEmpty
+            , guardConditions = []
+            }
 
 
 bindingsToDerefCloneToRustStatements :
@@ -2883,8 +3178,8 @@ typeConstructReferenceToCoreRust :
         Maybe
             { qualification : List String
             , name : String
-            , referenceOrValueType : ReferenceOrValueType
             , lifetimeParameters : List String
+            , isCopy : Bool
             }
 typeConstructReferenceToCoreRust reference =
     case reference.moduleOrigin of
@@ -2895,7 +3190,7 @@ typeConstructReferenceToCoreRust reference =
                         { qualification = [ "std", "cmp" ]
                         , name = "Ordering"
                         , lifetimeParameters = []
-                        , referenceOrValueType = ValueType
+                        , isCopy = True
                         }
 
                 "Bool" ->
@@ -2903,7 +3198,7 @@ typeConstructReferenceToCoreRust reference =
                         { qualification = []
                         , name = "bool"
                         , lifetimeParameters = []
-                        , referenceOrValueType = ValueType
+                        , isCopy = True
                         }
 
                 "Int" ->
@@ -2918,7 +3213,7 @@ typeConstructReferenceToCoreRust reference =
                         { qualification = []
                         , name = "BasicsNever"
                         , lifetimeParameters = []
-                        , referenceOrValueType = ValueType
+                        , isCopy = True
                         }
 
                 _ ->
@@ -2942,7 +3237,7 @@ typeConstructReferenceToCoreRust reference =
                 { qualification = []
                 , name = "ArrayArray"
                 , lifetimeParameters = [ "a" ]
-                , referenceOrValueType = ValueType
+                , isCopy = True
                 }
 
         "Maybe" ->
@@ -2959,7 +3254,7 @@ typeConstructReferenceToCoreRust reference =
                 { qualification = []
                 , name = "JsonValue"
                 , lifetimeParameters = [ generatedLifetimeVariableName ]
-                , referenceOrValueType = ValueType
+                , isCopy = True
                 }
 
         "Json.Decode" ->
@@ -2969,7 +3264,7 @@ typeConstructReferenceToCoreRust reference =
                         { qualification = []
                         , name = "JsonValue"
                         , lifetimeParameters = [ generatedLifetimeVariableName ]
-                        , referenceOrValueType = ValueType
+                        , isCopy = True
                         }
 
                 "Decoder" ->
@@ -2977,7 +3272,7 @@ typeConstructReferenceToCoreRust reference =
                         { qualification = []
                         , name = "JsonDecodeDecoder"
                         , lifetimeParameters = [ generatedLifetimeVariableName ]
-                        , referenceOrValueType = ValueType
+                        , isCopy = True
                         }
 
                 "Error" ->
@@ -2985,7 +3280,7 @@ typeConstructReferenceToCoreRust reference =
                         { qualification = []
                         , name = "JsonDecodeError"
                         , lifetimeParameters = [ generatedLifetimeVariableName ]
-                        , referenceOrValueType = ReferenceType
+                        , isCopy = False
                         }
 
                 _ ->
@@ -2998,7 +3293,7 @@ typeConstructReferenceToCoreRust reference =
                         { qualification = []
                         , name = "RegexRegex"
                         , lifetimeParameters = [ generatedLifetimeVariableName ]
-                        , referenceOrValueType = ValueType
+                        , isCopy = True
                         }
 
                 "Options" ->
@@ -3006,7 +3301,7 @@ typeConstructReferenceToCoreRust reference =
                         { qualification = []
                         , name = "RegexOptions"
                         , lifetimeParameters = []
-                        , referenceOrValueType = ValueType
+                        , isCopy = True
                         }
 
                 "Match" ->
@@ -3014,7 +3309,7 @@ typeConstructReferenceToCoreRust reference =
                         { qualification = []
                         , name = "RegexMatch"
                         , lifetimeParameters = []
-                        , referenceOrValueType = ValueType
+                        , isCopy = False
                         }
 
                 _ ->
@@ -3027,7 +3322,7 @@ typeConstructReferenceToCoreRust reference =
                         { qualification = []
                         , name = "RandomSeed"
                         , lifetimeParameters = []
-                        , referenceOrValueType = ValueType
+                        , isCopy = True
                         }
 
                 "Generator" ->
@@ -3035,7 +3330,7 @@ typeConstructReferenceToCoreRust reference =
                         { qualification = []
                         , name = "RandomGenerator"
                         , lifetimeParameters = [ generatedLifetimeVariableName ]
-                        , referenceOrValueType = ValueType
+                        , isCopy = True
                         }
 
                 _ ->
@@ -3048,7 +3343,7 @@ typeConstructReferenceToCoreRust reference =
                         { qualification = []
                         , name = "TimePosix"
                         , lifetimeParameters = []
-                        , referenceOrValueType = ValueType
+                        , isCopy = True
                         }
 
                 "Zone" ->
@@ -3056,7 +3351,7 @@ typeConstructReferenceToCoreRust reference =
                         { qualification = []
                         , name = "TimeZone"
                         , lifetimeParameters = []
-                        , referenceOrValueType = ValueType
+                        , isCopy = True
                         }
 
                 "Month" ->
@@ -3064,7 +3359,7 @@ typeConstructReferenceToCoreRust reference =
                         { qualification = []
                         , name = "TimeMonth"
                         , lifetimeParameters = []
-                        , referenceOrValueType = ValueType
+                        , isCopy = True
                         }
 
                 "Weekday" ->
@@ -3072,15 +3367,15 @@ typeConstructReferenceToCoreRust reference =
                         { qualification = []
                         , name = "TimeWeekday"
                         , lifetimeParameters = []
-                        , referenceOrValueType = ValueType
+                        , isCopy = True
                         }
 
-                "TimeZoneName" ->
+                "ZoneName" ->
                     Just
                         { qualification = []
                         , name = "TimeZoneName"
                         , lifetimeParameters = []
-                        , referenceOrValueType = ValueType
+                        , isCopy = False
                         }
 
                 _ ->
@@ -3093,7 +3388,7 @@ typeConstructReferenceToCoreRust reference =
                         { qualification = []
                         , name = "BytesEndianness"
                         , lifetimeParameters = []
-                        , referenceOrValueType = ValueType
+                        , isCopy = True
                         }
 
                 "Bytes" ->
@@ -3101,7 +3396,7 @@ typeConstructReferenceToCoreRust reference =
                         { qualification = []
                         , name = "BytesBytes"
                         , lifetimeParameters = [ generatedLifetimeVariableName ]
-                        , referenceOrValueType = ValueType
+                        , isCopy = True
                         }
 
                 _ ->
@@ -3114,7 +3409,7 @@ typeConstructReferenceToCoreRust reference =
                         { qualification = []
                         , name = "BytesDecodeDecoder"
                         , lifetimeParameters = [ generatedLifetimeVariableName ]
-                        , referenceOrValueType = ValueType
+                        , isCopy = True
                         }
 
                 "Step" ->
@@ -3122,7 +3417,7 @@ typeConstructReferenceToCoreRust reference =
                         { qualification = []
                         , name = "BytesDecodeStep"
                         , lifetimeParameters = []
-                        , referenceOrValueType = ValueType
+                        , isCopy = True
                         }
 
                 _ ->
@@ -3134,7 +3429,7 @@ typeConstructReferenceToCoreRust reference =
                 { qualification = []
                 , name = "BytesEncodeEncoder"
                 , lifetimeParameters = [ generatedLifetimeVariableName ]
-                , referenceOrValueType = ReferenceType
+                , isCopy = True
                 }
 
         "VirtualDom" ->
@@ -3144,7 +3439,7 @@ typeConstructReferenceToCoreRust reference =
                         { qualification = []
                         , name = "VirtualDomNode"
                         , lifetimeParameters = [ generatedLifetimeVariableName ]
-                        , referenceOrValueType = ReferenceType
+                        , isCopy = True
                         }
 
                 "Attribute" ->
@@ -3152,7 +3447,7 @@ typeConstructReferenceToCoreRust reference =
                         { qualification = []
                         , name = "VirtualDomAttribute"
                         , lifetimeParameters = [ generatedLifetimeVariableName ]
-                        , referenceOrValueType = ValueType
+                        , isCopy = True
                         }
 
                 "Handler" ->
@@ -3160,7 +3455,7 @@ typeConstructReferenceToCoreRust reference =
                         { qualification = []
                         , name = "VirtualDomHandler"
                         , lifetimeParameters = [ generatedLifetimeVariableName ]
-                        , referenceOrValueType = ValueType
+                        , isCopy = True
                         }
 
                 _ ->
@@ -3173,7 +3468,7 @@ typeConstructReferenceToCoreRust reference =
                         { qualification = []
                         , name = "MathVector2Vec2"
                         , lifetimeParameters = []
-                        , referenceOrValueType = ValueType
+                        , isCopy = True
                         }
 
                 _ ->
@@ -3186,7 +3481,7 @@ typeConstructReferenceToCoreRust reference =
                         { qualification = []
                         , name = "MathVector3Vec3"
                         , lifetimeParameters = []
-                        , referenceOrValueType = ValueType
+                        , isCopy = True
                         }
 
                 _ ->
@@ -3199,7 +3494,7 @@ typeConstructReferenceToCoreRust reference =
                         { qualification = []
                         , name = "MathVector4Vec4"
                         , lifetimeParameters = []
-                        , referenceOrValueType = ValueType
+                        , isCopy = True
                         }
 
                 _ ->
@@ -3216,7 +3511,7 @@ typeConstructReferenceToCoreRust reference =
                         { qualification = []
                         , name = "PlatformProgram"
                         , lifetimeParameters = [ generatedLifetimeVariableName ]
-                        , referenceOrValueType = ValueType
+                        , isCopy = True
                         }
 
                 -- "Task" | "ProcessId" | "Router"
@@ -3229,7 +3524,7 @@ typeConstructReferenceToCoreRust reference =
                 { qualification = []
                 , name = "PlatformCmdCmd"
                 , lifetimeParameters = []
-                , referenceOrValueType = ValueType
+                , isCopy = True
                 }
 
         "Platform.Sub" ->
@@ -3238,7 +3533,7 @@ typeConstructReferenceToCoreRust reference =
                 { qualification = []
                 , name = "PlatformSubSub"
                 , lifetimeParameters = [ generatedLifetimeVariableName ]
-                , referenceOrValueType = ValueType
+                , isCopy = True
                 }
 
         _ ->
@@ -3250,7 +3545,7 @@ justRustReferenceF64 :
         { qualification : List String
         , name : String
         , lifetimeParameters : List String
-        , referenceOrValueType : ReferenceOrValueType
+        , isCopy : Bool
         }
 justRustReferenceF64 =
     Just rustReferenceF64
@@ -3260,13 +3555,13 @@ rustReferenceF64 :
     { qualification : List String
     , name : String
     , lifetimeParameters : List String
-    , referenceOrValueType : ReferenceOrValueType
+    , isCopy : Bool
     }
 rustReferenceF64 =
     { qualification = []
     , name = "f64"
     , lifetimeParameters = []
-    , referenceOrValueType = ValueType
+    , isCopy = True
     }
 
 
@@ -3275,14 +3570,25 @@ justRustReferenceStringString :
         { qualification : List String
         , name : String
         , lifetimeParameters : List String
-        , referenceOrValueType : ReferenceOrValueType
+        , isCopy : Bool
         }
 justRustReferenceStringString =
     Just
         { qualification = []
         , name = "StringString"
         , lifetimeParameters = [ "a" ]
-        , referenceOrValueType = ValueType
+        , isCopy = False
+        }
+
+
+rustTypeStringString : RustType
+rustTypeStringString =
+    RustTypeConstruct
+        { qualification = []
+        , name = "StringString"
+        , lifetimeArguments = [ "a" ]
+        , arguments = []
+        , isCopy = False
         }
 
 
@@ -3291,14 +3597,14 @@ justRustReferenceChar :
         { qualification : List String
         , name : String
         , lifetimeParameters : List String
-        , referenceOrValueType : ReferenceOrValueType
+        , isCopy : Bool
         }
 justRustReferenceChar =
     Just
         { qualification = []
         , name = "char"
         , lifetimeParameters = []
-        , referenceOrValueType = ValueType
+        , isCopy = True
         }
 
 
@@ -3307,14 +3613,14 @@ justRustReferenceListList :
         { qualification : List String
         , name : String
         , lifetimeParameters : List String
-        , referenceOrValueType : ReferenceOrValueType
+        , isCopy : Bool
         }
 justRustReferenceListList =
     Just
         { qualification = []
         , name = "ListList"
         , lifetimeParameters = [ "a" ]
-        , referenceOrValueType = ValueType
+        , isCopy = True
         }
 
 
@@ -3323,14 +3629,14 @@ justRustReferenceOption :
         { qualification : List String
         , name : String
         , lifetimeParameters : List String
-        , referenceOrValueType : ReferenceOrValueType
+        , isCopy : Bool
         }
 justRustReferenceOption =
     Just
         { qualification = []
         , name = "Option"
         , lifetimeParameters = []
-        , referenceOrValueType = ValueType
+        , isCopy = True
         }
 
 
@@ -3339,14 +3645,14 @@ justRustReferenceResultResult :
         { qualification : List String
         , name : String
         , lifetimeParameters : List String
-        , referenceOrValueType : ReferenceOrValueType
+        , isCopy : Bool
         }
 justRustReferenceResultResult =
     Just
         { qualification = []
         , name = "ResultResult"
         , lifetimeParameters = []
-        , referenceOrValueType = ValueType
+        , isCopy = True
         }
 
 
@@ -3878,56 +4184,70 @@ referenceToCoreRust reference =
                 "append" ->
                     Just
                         { qualification = []
+                        , name = "string_append"
+                        , requiresAllocator = False
+                        }
+
+                "concat" ->
+                    Just
+                        { qualification = []
                         , name = "string_concat"
-                        , requiresAllocator = True
+                        , requiresAllocator = False
                         }
 
                 "trim" ->
                     Just
                         { qualification = []
                         , name = "string_trim"
-                        , requiresAllocator = False
+                        , requiresAllocator = True
                         }
 
                 "trimLeft" ->
                     Just
                         { qualification = []
                         , name = "string_trim_left"
-                        , requiresAllocator = False
+                        , requiresAllocator = True
                         }
 
                 "trimRight" ->
                     Just
                         { qualification = []
                         , name = "string_trim_right"
-                        , requiresAllocator = False
+                        , requiresAllocator = True
                         }
 
                 "left" ->
                     Just
                         { qualification = []
                         , name = "string_left"
-                        , requiresAllocator = False
+                        , requiresAllocator = True
                         }
 
                 "right" ->
                     Just
                         { qualification = []
                         , name = "string_right"
-                        , requiresAllocator = False
+                        , requiresAllocator = True
                         }
 
                 "dropLeft" ->
                     Just
                         { qualification = []
                         , name = "string_drop_left"
-                        , requiresAllocator = False
+                        , requiresAllocator = True
                         }
 
                 "dropRight" ->
                     Just
                         { qualification = []
                         , name = "string_drop_right"
+                        , requiresAllocator = True
+                        }
+
+                "pad" ->
+                    Just
+                        { qualification = []
+                        , name = "string_pad"
                         , requiresAllocator = False
                         }
 
@@ -3935,21 +4255,35 @@ referenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "string_pad_left"
-                        , requiresAllocator = True
+                        , requiresAllocator = False
                         }
 
                 "padRight" ->
                     Just
                         { qualification = []
                         , name = "string_pad_right"
-                        , requiresAllocator = True
+                        , requiresAllocator = False
                         }
 
                 "replace" ->
                     Just
                         { qualification = []
                         , name = "string_replace"
-                        , requiresAllocator = True
+                        , requiresAllocator = False
+                        }
+
+                "reverse" ->
+                    Just
+                        { qualification = []
+                        , name = "string_reverse"
+                        , requiresAllocator = False
+                        }
+
+                "fromList" ->
+                    Just
+                        { qualification = []
+                        , name = "string_from_list"
+                        , requiresAllocator = False
                         }
 
                 "toList" ->
@@ -3977,14 +4311,14 @@ referenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "string_join"
-                        , requiresAllocator = True
+                        , requiresAllocator = False
                         }
 
                 "filter" ->
                     Just
                         { qualification = []
                         , name = "string_filter"
-                        , requiresAllocator = True
+                        , requiresAllocator = False
                         }
 
                 "any" ->
@@ -4005,14 +4339,14 @@ referenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "string_map"
-                        , requiresAllocator = True
+                        , requiresAllocator = False
                         }
 
                 "repeat" ->
                     Just
                         { qualification = []
                         , name = "string_repeat"
-                        , requiresAllocator = True
+                        , requiresAllocator = False
                         }
 
                 "split" ->
@@ -4068,14 +4402,14 @@ referenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "string_from_int"
-                        , requiresAllocator = True
+                        , requiresAllocator = False
                         }
 
                 "fromFloat" ->
                     Just
                         { qualification = []
                         , name = "string_from_float"
-                        , requiresAllocator = True
+                        , requiresAllocator = False
                         }
 
                 "contains" ->
@@ -4089,42 +4423,42 @@ referenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "string_from_char"
-                        , requiresAllocator = True
+                        , requiresAllocator = False
                         }
 
                 "cons" ->
                     Just
                         { qualification = []
                         , name = "string_cons"
-                        , requiresAllocator = True
+                        , requiresAllocator = False
                         }
 
                 "uncons" ->
                     Just
                         { qualification = []
                         , name = "string_uncons"
-                        , requiresAllocator = False
+                        , requiresAllocator = True
                         }
 
                 "slice" ->
                     Just
                         { qualification = []
                         , name = "string_slice"
-                        , requiresAllocator = False
+                        , requiresAllocator = True
                         }
 
                 "toLower" ->
                     Just
                         { qualification = []
                         , name = "string_to_lower"
-                        , requiresAllocator = True
+                        , requiresAllocator = False
                         }
 
                 "toUpper" ->
                     Just
                         { qualification = []
                         , name = "string_to_upper"
-                        , requiresAllocator = True
+                        , requiresAllocator = False
                         }
 
                 _ ->
@@ -4756,7 +5090,7 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "debug_log", requiresAllocator = False }
 
                 "toString" ->
-                    Just { qualification = [], name = "debug_to_string", requiresAllocator = True }
+                    Just { qualification = [], name = "debug_to_string", requiresAllocator = False }
 
                 "todo" ->
                     Just { qualification = [], name = "debug_todo", requiresAllocator = False }
@@ -4767,7 +5101,7 @@ referenceToCoreRust reference =
         "Json.Encode" ->
             case reference.name of
                 "encode" ->
-                    Just { qualification = [], name = "json_encode_encode", requiresAllocator = True }
+                    Just { qualification = [], name = "json_encode_encode", requiresAllocator = False }
 
                 "null" ->
                     Just { qualification = [], name = "json_encode_null", requiresAllocator = False }
@@ -4776,7 +5110,7 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "json_encode_bool", requiresAllocator = False }
 
                 "string" ->
-                    Just { qualification = [], name = "json_encode_string", requiresAllocator = False }
+                    Just { qualification = [], name = "json_encode_string", requiresAllocator = True }
 
                 "int" ->
                     Just { qualification = [], name = "json_encode_int", requiresAllocator = False }
@@ -6679,6 +7013,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                         FastDict.Dict
                             String
                             { lifetimeParameters : List String
+                            , isCopy : Bool
                             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
                             }
                     , rustConsts : FastSet.Set String
@@ -6853,6 +7188,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                             FastDict.Dict
                                                 String
                                                 { lifetimeParameters : List String
+                                                , isCopy : Bool
                                                 , variantReferencedValueIndexes : FastDict.Dict String (List Int)
                                                 }
                                         }
@@ -6911,6 +7247,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                             { parameters : List String
                                                                             , lifetimeParameters : List String
                                                                             , variants : FastDict.Dict String (List RustType)
+                                                                            , isCopy : Bool
                                                                             }
                                                                         rustEnumDeclaration =
                                                                             choiceTypeDeclaration
@@ -6926,6 +7263,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                         soFar.rustEnumTypes
                                                                             |> FastDict.insert rustName
                                                                                 { lifetimeParameters = rustEnumDeclaration.lifetimeParameters
+                                                                                , isCopy = rustEnumDeclaration.isCopy
                                                                                 , variantReferencedValueIndexes = FastDict.empty
                                                                                 }
                                                                     , rustEnumDeclarations =
@@ -7016,6 +7354,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                         { parameters : List String
                                                                                         , lifetimeParameters : List String
                                                                                         , variants : FastDict.Dict String (List RustType)
+                                                                                        , isCopy : Bool
                                                                                         }
                                                                                     rustEnumDeclaration =
                                                                                         choiceTypeDeclaration
@@ -7031,6 +7370,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                     withCycleDeclarationsSoFar.rustEnumTypes
                                                                                         |> FastDict.insert rustName
                                                                                             { lifetimeParameters = rustEnumDeclaration.lifetimeParameters
+                                                                                            , isCopy = rustEnumDeclaration.isCopy
                                                                                             , variantReferencedValueIndexes =
                                                                                                 rustEnumDeclaration.variants
                                                                                                     |> FastDict.map
@@ -7687,6 +8027,7 @@ valueOrFunctionDeclaration :
         FastDict.Dict
             String
             { lifetimeParameters : List String
+            , isCopy : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
     , rustConsts : FastSet.Set String
@@ -7819,7 +8160,11 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
                             |> List.foldr
                                 (\parameter soFar ->
                                     let
-                                        rustParameter : { pattern : RustPattern, bindingsToDerefClone : List { name : String, type_ : RustType } }
+                                        rustParameter :
+                                            { pattern : RustPattern
+                                            , guardConditions : List RustExpression
+                                            , bindingsToDerefClone : List { name : String, type_ : RustType }
+                                            }
                                         rustParameter =
                                             parameter
                                                 |> pattern
@@ -8042,9 +8387,6 @@ rustExpressionIsConst context rustExpression =
                 ( [], "char_to_code" ) ->
                     True
 
-                ( [], "string_is_empty" ) ->
-                    True
-
                 ( [], "bytes_width" ) ->
                     True
 
@@ -8090,6 +8432,10 @@ rustExpressionIsConst context rustExpression =
 
         RustExpressionStructAccess structAccess ->
             rustExpressionIsConst context structAccess.struct
+
+        RustExpressionBinaryOperation binaryOperation ->
+            (binaryOperation.left |> rustExpressionIsConst context)
+                && (binaryOperation.right |> rustExpressionIsConst context)
 
         RustExpressionTuple parts ->
             (parts.part0 |> rustExpressionIsConst context)
@@ -8185,7 +8531,7 @@ rustTypeConstructBumpaloBump =
     RustTypeConstruct
         { qualification = []
         , name = "Bump"
-        , isFunction = False
+        , isCopy = False
         , arguments = []
         , lifetimeArguments = []
         }
@@ -8370,6 +8716,7 @@ type alias ExpressionToRustContext =
         FastDict.Dict
             String
             { lifetimeParameters : List String
+            , isCopy : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
     , rustConsts : FastSet.Set String
@@ -8436,7 +8783,12 @@ expression context expressionTypedNode =
             Ok (RustExpressionChar charValue)
 
         ElmSyntaxTypeInfer.ExpressionString stringValue ->
-            Ok (RustExpressionString stringValue)
+            Ok
+                (RustExpressionCall
+                    { called = rustExpressionReferenceStdBorrowCowBorrowed
+                    , arguments = [ RustExpressionString stringValue ]
+                    }
+                )
 
         ElmSyntaxTypeInfer.ExpressionRecordAccessFunction fieldName ->
             case expressionTypedNode.type_ of
@@ -8756,8 +9108,7 @@ expression context expressionTypedNode =
                                                 , name = "string_append"
                                                 }
                                         , arguments =
-                                            [ generatedAllocatorVariableReference
-                                            , left
+                                            [ left
                                             , right
                                             ]
                                         }
@@ -9826,7 +10177,11 @@ expression context expressionTypedNode =
                                 |> List.map
                                     (\parameter ->
                                         let
-                                            rustParameter : { pattern : RustPattern, bindingsToDerefClone : List { name : String, type_ : RustType } }
+                                            rustParameter :
+                                                { pattern : RustPattern
+                                                , guardConditions : List RustExpression
+                                                , bindingsToDerefClone : List { name : String, type_ : RustType }
+                                                }
                                             rustParameter =
                                                 parameter
                                                     |> pattern
@@ -9931,7 +10286,11 @@ expression context expressionTypedNode =
                             Result.map
                                 (\result ->
                                     let
-                                        rustPattern : { pattern : RustPattern, bindingsToDerefClone : List { name : String, type_ : RustType } }
+                                        rustPattern :
+                                            { pattern : RustPattern
+                                            , guardConditions : List RustExpression
+                                            , bindingsToDerefClone : List { name : String, type_ : RustType }
+                                            }
                                         rustPattern =
                                             syntaxCase.pattern
                                                 |> pattern
@@ -9944,6 +10303,7 @@ expression context expressionTypedNode =
                                                     }
                                     in
                                     { pattern = rustPattern.pattern
+                                    , guardConditions = rustPattern.guardConditions
                                     , result =
                                         rustExpressionPrependStatements
                                             (rustPattern.bindingsToDerefClone
@@ -10093,11 +10453,19 @@ expression context expressionTypedNode =
                 )
 
 
+rustExpressionReferenceStdBorrowCowBorrowed : RustExpression
+rustExpressionReferenceStdBorrowCowBorrowed =
+    RustExpressionReference
+        { qualification = [ "std", "borrow", "Cow" ]
+        , name = "Borrowed"
+        }
+
+
 rustTypeJsonValue : RustType
 rustTypeJsonValue =
     RustTypeConstruct
         { qualification = []
-        , isFunction = False
+        , isCopy = True
         , name = "JsonValue"
         , arguments = []
         , lifetimeArguments = [ generatedLifetimeVariableName ]
@@ -11071,6 +11439,12 @@ rustExpressionCallCondense call =
                 , arguments = [ call.argument ]
                 }
 
+        RustExpressionBinaryOperation _ ->
+            RustExpressionCall
+                { called = call.called
+                , arguments = [ call.argument ]
+                }
+
         RustExpressionTuple _ ->
             RustExpressionCall
                 { called = call.called
@@ -11160,8 +11534,18 @@ rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck rustExpressi
             rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                 rustExpressionAs.expression
 
+        RustExpressionBinaryOperation binaryOperation ->
+            (binaryOperation.left
+                |> rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
+            )
+                || (binaryOperation.right
+                        |> rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
+                   )
+
         RustExpressionTuple parts ->
-            (parts.part0 |> rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck)
+            (parts.part0
+                |> rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
+            )
                 || (parts.part1
                         |> rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                    )
@@ -11305,6 +11689,9 @@ rustExpressionInnermostLambdaResult rustExpression =
         RustExpressionStructAccess _ ->
             { statements = [], result = rustExpression }
 
+        RustExpressionBinaryOperation _ ->
+            { statements = [], result = rustExpression }
+
         RustExpressionTuple _ ->
             { statements = [], result = rustExpression }
 
@@ -11395,7 +11782,7 @@ rustStatementUsesReferenceInLambdaOrFnDeclaration referenceToCheck rustStatement
                    )
 
 
-{-| Not to be confused with `rustExpressionIsConst`
+{-| Does not require computation, not to be confused with `rustExpressionIsConst`
 -}
 rustExpressionIsConstant : RustExpression -> Bool
 rustExpressionIsConstant rustExpression =
@@ -11421,25 +11808,23 @@ rustExpressionIsConstant rustExpression =
         RustExpressionReferenceVariant _ ->
             True
 
-        RustExpressionReferenceMethod _ ->
-            False
-
         RustExpressionNegateOperation _ ->
-            -- maybe?
             False
 
         RustExpressionBorrow _ ->
-            -- maybe?
+            -- TODO yes if in borrow is constant?
             False
 
         RustExpressionDeref _ ->
-            -- maybe?
             False
 
         RustExpressionStructAccess _ ->
             False
 
         RustExpressionAs _ ->
+            False
+
+        RustExpressionBinaryOperation _ ->
             False
 
         RustExpressionTuple _ ->
@@ -11465,6 +11850,9 @@ rustExpressionIsConstant rustExpression =
 
         RustExpressionAfterStatement _ ->
             False
+
+        RustExpressionReferenceMethod reference ->
+            rustExpressionIsConstant reference.subject
 
 
 rustExpressionCountUsesOfReference :
@@ -11526,6 +11914,25 @@ rustExpressionCountUsesOfReference referenceToCountUsesOf rustExpression =
         RustExpressionClosure lambda ->
             rustExpressionCountUsesOfReference referenceToCountUsesOf lambda.result
 
+        RustExpressionBinaryOperation binaryOperation ->
+            (binaryOperation.left
+                |> rustExpressionCountUsesOfReference referenceToCountUsesOf
+            )
+                + (binaryOperation.right
+                    |> rustExpressionCountUsesOfReference referenceToCountUsesOf
+                  )
+
+        RustExpressionIfElse ifThenElse ->
+            (ifThenElse.condition
+                |> rustExpressionCountUsesOfReference referenceToCountUsesOf
+            )
+                + (ifThenElse.onTrue
+                    |> rustExpressionCountUsesOfReference referenceToCountUsesOf
+                  )
+                + (ifThenElse.onFalse
+                    |> rustExpressionCountUsesOfReference referenceToCountUsesOf
+                  )
+
         RustExpressionCall call ->
             (call.called
                 |> rustExpressionCountUsesOfReference referenceToCountUsesOf
@@ -11553,17 +11960,6 @@ rustExpressionCountUsesOfReference referenceToCountUsesOf rustExpression =
                             + (fieldValue |> rustExpressionCountUsesOfReference referenceToCountUsesOf)
                     )
                     0
-
-        RustExpressionIfElse ifThenElse ->
-            (ifThenElse.condition
-                |> rustExpressionCountUsesOfReference referenceToCountUsesOf
-            )
-                + (ifThenElse.onTrue
-                    |> rustExpressionCountUsesOfReference referenceToCountUsesOf
-                  )
-                + (ifThenElse.onFalse
-                    |> rustExpressionCountUsesOfReference referenceToCountUsesOf
-                  )
 
         RustExpressionMatch match ->
             (match.matched
@@ -11772,6 +12168,17 @@ rustExpressionCloneWhereNecessary context rustExpression =
                         |> rustExpressionCloneWhereNecessary context
                 }
 
+        RustExpressionBinaryOperation binaryOperation ->
+            RustExpressionBinaryOperation
+                { operator = binaryOperation.operator
+                , left =
+                    binaryOperation.left
+                        |> rustExpressionCloneWhereNecessary context
+                , right =
+                    binaryOperation.right
+                        |> rustExpressionCloneWhereNecessary context
+                }
+
         RustExpressionIfElse ifElse ->
             RustExpressionIfElse
                 { condition =
@@ -11922,6 +12329,7 @@ rustExpressionCloneWhereNecessary context rustExpression =
                                             |> rustTypedBindingsKeepThoseRequiringClone
                                 in
                                 { pattern = matchCase.pattern
+                                , guardConditions = matchCase.guardConditions
                                 , result =
                                     matchCase.result
                                         |> rustExpressionCloneWhereNecessary
@@ -12037,6 +12445,7 @@ rustStatementCloneWhereNecessary context rustStatement =
                                             |> rustTypedBindingsKeepThoseRequiringClone
                                 in
                                 { pattern = matchCase.pattern
+                                , guardConditions = matchCase.guardConditions
                                 , statements =
                                     casePatternIntroducedBindings
                                         |> List.foldl
@@ -12208,6 +12617,17 @@ rustExpressionCloneVariables variableShouldBeCloned rustExpression =
                         |> rustExpressionCloneVariables variableShouldBeCloned
                 }
 
+        RustExpressionBinaryOperation binaryOperation ->
+            RustExpressionBinaryOperation
+                { operator = binaryOperation.operator
+                , left =
+                    binaryOperation.left
+                        |> rustExpressionCloneVariables variableShouldBeCloned
+                , right =
+                    binaryOperation.right
+                        |> rustExpressionCloneVariables variableShouldBeCloned
+                }
+
         RustExpressionIfElse ifElse ->
             RustExpressionIfElse
                 { condition =
@@ -12301,6 +12721,7 @@ rustExpressionCloneVariables variableShouldBeCloned rustExpression =
                         |> List.map
                             (\matchCase ->
                                 { pattern = matchCase.pattern
+                                , guardConditions = matchCase.guardConditions
                                 , result =
                                     matchCase.result
                                         |> rustExpressionCloneVariables variableShouldBeCloned
@@ -12403,6 +12824,7 @@ rustStatementCloneVariables variableShouldBeCloned rustStatement =
                         |> List.map
                             (\matchCase ->
                                 { pattern = matchCase.pattern
+                                , guardConditions = matchCase.guardConditions
                                 , statements =
                                     matchCase.statements
                                         |> List.map
@@ -12600,6 +13022,41 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                     }
             }
 
+        RustExpressionBinaryOperation binaryOperation ->
+            let
+                forRight : { withClones : RustExpression, bindingWasUsed : Bool }
+                forRight =
+                    binaryOperation.right
+                        |> rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast
+            in
+            if forRight.bindingWasUsed then
+                { bindingWasUsed = True
+                , withClones =
+                    RustExpressionBinaryOperation
+                        { operator = binaryOperation.operator
+                        , left =
+                            binaryOperation.left
+                                |> rustExpressionCloneBindingUses bindingToCloneBeforeLast
+                        , right = forRight.withClones
+                        }
+                }
+
+            else
+                let
+                    forLeft : { withClones : RustExpression, bindingWasUsed : Bool }
+                    forLeft =
+                        binaryOperation.left
+                            |> rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast
+                in
+                { bindingWasUsed = forLeft.bindingWasUsed
+                , withClones =
+                    RustExpressionBinaryOperation
+                        { operator = binaryOperation.operator
+                        , left = forLeft.withClones
+                        , right = forRight.withClones
+                        }
+                }
+
         RustExpressionTuple parts ->
             let
                 forPart2Up : { bindingWasUsed : Bool, withClones : List RustExpression }
@@ -12784,6 +13241,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                     { withClones :
                         List
                             { pattern : RustPattern
+                            , guardConditions : List RustExpression
                             , result : RustExpression
                             }
                     , bindingWasUsed : Bool
@@ -12801,6 +13259,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                                 { bindingWasUsed = soFar.bindingWasUsed || forCaseResult.bindingWasUsed
                                 , withClones =
                                     { pattern = matchCase.pattern
+                                    , guardConditions = matchCase.guardConditions
                                     , result = forCaseResult.withClones
                                     }
                                         :: soFar.withClones
@@ -12995,6 +13454,7 @@ rustStatementCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustStatement =
                     { withClones :
                         List
                             { pattern : RustPattern
+                            , guardConditions : List RustExpression
                             , statements : List RustStatement
                             }
                     , bindingWasUsed : Bool
@@ -13012,6 +13472,7 @@ rustStatementCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustStatement =
                                 { bindingWasUsed = soFar.bindingWasUsed || forStatementsResult.bindingWasUsed
                                 , withClones =
                                     { pattern = matchCase.pattern
+                                    , guardConditions = matchCase.guardConditions
                                     , statements = forStatementsResult.withClones
                                     }
                                         :: soFar.withClones
@@ -13129,37 +13590,8 @@ rustTypedBindingsKeepThoseRequiringClone rustTypedBindings =
         |> List.filter
             (\rustTypedBinding ->
                 (rustTypedBinding.name /= generatedAllocatorVariableName)
-                    && (rustTypedBinding.type_ |> rustTypeRequiresClone)
+                    && Basics.not (rustTypeIsCopy rustTypedBinding.type_)
             )
-
-
-rustTypeRequiresClone : RustType -> Bool
-rustTypeRequiresClone rustType =
-    -- IGNORE TCO
-    case rustType of
-        RustTypeUnit ->
-            False
-
-        RustTypeFunction _ ->
-            False
-
-        RustTypeBorrow inBorrow ->
-            rustTypeRequiresClone inBorrow.type_
-
-        RustTypeInfer ->
-            True
-
-        RustTypeVariable _ ->
-            True
-
-        RustTypeTuple parts ->
-            (parts.part0 |> rustTypeRequiresClone)
-                || (parts.part1 |> rustTypeRequiresClone)
-                || (parts.part2Up |> List.any rustTypeRequiresClone)
-
-        RustTypeConstruct _ ->
-            -- TODO typeConstruct.requiresClone || it's values
-            True
 
 
 rustStatementCloneBindingUses : String -> RustStatement -> RustStatement
@@ -13235,6 +13667,14 @@ rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures rustExpression =
         RustExpressionAs rustExpressionAs ->
             rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
                 rustExpressionAs.expression
+
+        RustExpressionBinaryOperation binaryOperation ->
+            binaryOperation.left
+                |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                |> FastSet.union
+                    (binaryOperation.right
+                        |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                    )
 
         RustExpressionTuple parts ->
             parts.part0
@@ -13431,6 +13871,17 @@ rustExpressionSubstituteReferences referenceToExpression rustExpression =
                         |> rustExpressionSubstituteReferences referenceToExpression
                 }
 
+        RustExpressionBinaryOperation binaryOperation ->
+            RustExpressionBinaryOperation
+                { operator = binaryOperation.operator
+                , left =
+                    binaryOperation.left
+                        |> rustExpressionSubstituteReferences referenceToExpression
+                , right =
+                    binaryOperation.right
+                        |> rustExpressionSubstituteReferences referenceToExpression
+                }
+
         RustExpressionIfElse ifElse ->
             RustExpressionIfElse
                 { condition =
@@ -13504,6 +13955,7 @@ rustExpressionSubstituteReferences referenceToExpression rustExpression =
                         |> List.map
                             (\matchCase ->
                                 { pattern = matchCase.pattern
+                                , guardConditions = matchCase.guardConditions
                                 , result =
                                     matchCase.result
                                         |> rustExpressionSubstituteReferences referenceToExpression
@@ -13606,6 +14058,7 @@ rustStatementSubstituteReferences referenceToExpression rustStatement =
                         |> List.map
                             (\matchCase ->
                                 { pattern = matchCase.pattern
+                                , guardConditions = matchCase.guardConditions
                                 , statements =
                                     matchCase.statements
                                         |> List.map
@@ -13630,7 +14083,11 @@ letDeclaration context syntaxLetDeclarationNode =
             Result.map
                 (\destructuredExpression ->
                     let
-                        rustPattern : { pattern : RustPattern, bindingsToDerefClone : List { name : String, type_ : RustType } }
+                        rustPattern :
+                            { pattern : RustPattern
+                            , guardConditions : List RustExpression
+                            , bindingsToDerefClone : List { name : String, type_ : RustType }
+                            }
                         rustPattern =
                             letDestructuring.pattern
                                 |> pattern
@@ -13923,7 +14380,11 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                 |> List.foldr
                     (\parameter soFar ->
                         let
-                            rustParameter : { pattern : RustPattern, bindingsToDerefClone : List { name : String, type_ : RustType } }
+                            rustParameter :
+                                { pattern : RustPattern
+                                , guardConditions : List RustExpression
+                                , bindingsToDerefClone : List { name : String, type_ : RustType }
+                                }
                             rustParameter =
                                 parameter
                                     |> pattern
@@ -14740,7 +15201,7 @@ okReferenceStringAppend =
     Ok
         { qualification = []
         , name = "string_append"
-        , requiresAllocator = True
+        , requiresAllocator = False
         }
 
 
@@ -14783,7 +15244,6 @@ printRustFnGenerics typeVariablesToDeclare =
             ++ (typeVariablesToDeclare.typeParameters
                     |> List.map
                         (\typeParameter ->
-                            -- TODO Copy → Clone
                             if typeParameter |> String.startsWith "Comparable" then
                                 typeParameter ++ ": Clone + PartialOrd"
 
@@ -17132,6 +17592,9 @@ printRustExpressionParenthesizedIfSpaceSeparated rustExpression =
         RustExpressionAs _ ->
             printParenthesized notParenthesizedPrint
 
+        RustExpressionBinaryOperation _ ->
+            printParenthesized notParenthesizedPrint
+
         RustExpressionIfElse _ ->
             printParenthesized notParenthesizedPrint
 
@@ -17188,6 +17651,40 @@ printRustExpressionNotParenthesizedNotCurlyEmbracedIfAfterStatement rustExpressi
 
         RustExpressionCall call ->
             printRustExpressionCall call
+
+        RustExpressionBinaryOperation binaryOperation ->
+            let
+                leftPrint : Print
+                leftPrint =
+                    printRustExpressionParenthesizedIfSpaceSeparated
+                        binaryOperation.left
+
+                rightPrint : Print
+                rightPrint =
+                    printRustExpressionParenthesizedIfSpaceSeparated
+                        binaryOperation.right
+
+                lineSpread : Print.LineSpread
+                lineSpread =
+                    leftPrint
+                        |> Print.lineSpread
+                        |> Print.lineSpreadMergeWith
+                            (\() -> rightPrint |> Print.lineSpread)
+            in
+            leftPrint
+                |> Print.followedBy
+                    (Print.spaceOrLinebreakIndented
+                        lineSpread
+                    )
+                |> Print.followedBy
+                    (Print.exactly binaryOperation.operator)
+                |> Print.followedBy
+                    (Print.withIndentAtNextMultipleOf4
+                        (Print.spaceOrLinebreakIndented
+                            lineSpread
+                            |> Print.followedBy rightPrint
+                        )
+                    )
 
         RustExpressionIfElse ifElse ->
             printRustExpressionIfElse ifElse
@@ -17419,6 +17916,9 @@ printRustExpressionCall call =
                     printParenthesized calledNotParenthesizedPrint
 
                 RustExpressionAs _ ->
+                    printParenthesized calledNotParenthesizedPrint
+
+                RustExpressionBinaryOperation _ ->
                     printParenthesized calledNotParenthesizedPrint
 
                 RustExpressionIfElse _ ->
@@ -17762,6 +18262,7 @@ printRustStatementMatch :
     , cases :
         List
             { pattern : RustPattern
+            , guardConditions : List RustExpression
             , statements : List RustStatement
             }
     }
@@ -17805,23 +18306,27 @@ printExactlyMatch =
 
 printRustStatementMatchCase :
     { pattern : RustPattern
+    , guardConditions : List RustExpression
     , statements : List RustStatement
     }
     -> Print
-printRustStatementMatchCase branch =
+printRustStatementMatchCase arm =
     let
         patternPrint : Print
         patternPrint =
-            printRustPattern branch.pattern
+            printRustPattern arm.pattern
     in
     Print.withIndentIncreasedBy 2
-        patternPrint
+        (patternPrint
+            |> Print.followedBy
+                (printWithRustGuardConditions arm.guardConditions)
+        )
         |> Print.followedBy printExactlyColon
         |> Print.followedBy
             (Print.withIndentAtNextMultipleOf4
                 (Print.linebreakIndented
                     |> Print.followedBy
-                        (printRustStatements branch.statements)
+                        (printRustStatements arm.statements)
                 )
             )
 
@@ -17831,6 +18336,7 @@ printRustExpressionMatch :
     , cases :
         List
             { pattern : RustPattern
+            , guardConditions : List RustExpression
             , result : RustExpression
             }
     }
@@ -17871,29 +18377,54 @@ printRustExpressionMatch rustMatch =
 
 printRustExpressionMatchCase :
     { pattern : RustPattern
+    , guardConditions : List RustExpression
     , result : RustExpression
     }
     -> Print
-printRustExpressionMatchCase branch =
+printRustExpressionMatchCase arm =
     let
         patternPrint : Print
         patternPrint =
-            printRustPattern branch.pattern
+            printRustPattern arm.pattern
     in
     Print.withIndentIncreasedBy 2
-        patternPrint
+        (patternPrint
+            |> Print.followedBy
+                (printWithRustGuardConditions arm.guardConditions)
+        )
         |> Print.followedBy (Print.exactly " => {")
         |> Print.followedBy
             (Print.withIndentAtNextMultipleOf4
                 (Print.linebreakIndented
                     |> Print.followedBy
                         (printRustExpressionNotParenthesizedNotCurlyEmbracedIfAfterStatement
-                            branch.result
+                            arm.result
                         )
                 )
             )
         |> Print.followedBy Print.linebreakIndented
         |> Print.followedBy (Print.exactly "}")
+
+
+printWithRustGuardConditions : List RustExpression -> Print
+printWithRustGuardConditions guardConditions =
+    case guardConditions of
+        [] ->
+            Print.empty
+
+        guardCondition0 :: guardCondition1Up ->
+            Print.exactly " if "
+                |> Print.followedBy
+                    (Print.withIndentIncreasedBy 4
+                        ((guardCondition0 :: guardCondition1Up)
+                            |> Print.listMapAndIntersperseAndFlatten
+                                printRustExpressionParenthesizedIfSpaceSeparated
+                                (Print.linebreakIndented
+                                    |> Print.followedBy
+                                        (Print.exactly " && ")
+                                )
+                        )
+                    )
 
 
 printRustStatements : List RustStatement -> Print
@@ -31707,10 +32238,12 @@ impl<'a, A> Iterator for ListListRefIterator<'a, A> {
 }
 
 /// prefer ListListRefIterator when Clone is decently expensive
-pub struct ListListIterator<'a, A: Clone> {
+pub struct ListListIterator<'a, A> {
     remaining_list: ListList<'a, A>,
 }
 
+// TODO remove in favor of ref_iter().cloned() or similar
+// as with the necessary double-cloning this has no point
 impl<'a, A: Clone> Iterator for ListListIterator<'a, A> {
     type Item = A;
     fn next(&mut self) -> Option<Self::Item> {
@@ -32584,42 +33117,34 @@ pub fn char_from_code(code: f64) -> char {
     char::from_u32(code as u32).unwrap_or('\\0')
 }
 
-pub type StringString<'a> = &'a str;
+pub type StringString<'a> = std::borrow::Cow<'a, str>;
 
-pub const fn string_is_empty(string: StringString) -> bool {
+pub fn string_is_empty(string: StringString) -> bool {
     string.is_empty()
 }
 pub fn string_length(string: StringString) -> f64 {
     string.chars().count() as f64
 }
-pub fn string_from_int<'a>(allocator: &'a Bump, int: f64) -> StringString<'a> {
-    allocator.alloc((int as i64).to_string())
+pub fn string_from_int<'a>(int: f64) -> StringString<'a> {
+    std::borrow::Cow::Owned((int as i64).to_string())
 }
-pub fn string_from_float<'a>(allocator: &'a Bump, float: f64) -> StringString<'a> {
-    allocator.alloc(float.to_string())
+pub fn string_from_float<'a>(float: f64) -> StringString<'a> {
+    std::borrow::Cow::Owned(float.to_string())
 }
-pub fn string_from_char<'a>(allocator: &'a Bump, char: char) -> StringString<'a> {
-    allocator.alloc(char.to_string())
+pub fn string_from_char<'a>(char: char) -> StringString<'a> {
+    std::borrow::Cow::Owned(char.to_string())
 }
-pub fn string_repeat<'a>(
-    allocator: &'a Bump,
-    length: f64,
-    segment: StringString,
-) -> StringString<'a> {
+pub fn string_repeat<'a>(length: f64, segment: StringString) -> StringString<'a> {
     if length <= 0_f64 {
-        &""
+        std::borrow::Cow::Borrowed("")
     } else {
-        allocator.alloc(segment.repeat(length as usize))
+        std::borrow::Cow::Owned(segment.repeat(length as usize))
     }
 }
-pub fn string_cons<'a>(
-    allocator: &'a Bump,
-    new_first_char: char,
-    tail_string: StringString,
-) -> StringString<'a> {
-    let mut combined_string: String = tail_string.to_string();
+pub fn string_cons<'a>(new_first_char: char, tail_string: StringString) -> StringString<'a> {
+    let mut combined_string: String = tail_string.into_owned();
     combined_string.insert(0, new_first_char);
-    allocator.alloc(combined_string)
+    std::borrow::Cow::Owned(combined_string)
 }
 pub fn string_all(is_expected: impl Fn(char) -> bool, string: StringString) -> bool {
     string.chars().all(is_expected)
@@ -32627,12 +33152,8 @@ pub fn string_all(is_expected: impl Fn(char) -> bool, string: StringString) -> b
 pub fn string_any(is_needle: impl Fn(char) -> bool, string: StringString) -> bool {
     string.chars().any(is_needle)
 }
-pub fn string_filter<'a>(
-    allocator: &'a Bump,
-    keep: impl Fn(char) -> bool,
-    string: StringString,
-) -> StringString<'a> {
-    allocator.alloc(
+pub fn string_filter<'a>(keep: impl Fn(char) -> bool, string: StringString) -> StringString<'a> {
+    std::borrow::Cow::Owned(
         string
             .chars()
             .filter(|&element| keep(element))
@@ -32640,11 +33161,10 @@ pub fn string_filter<'a>(
     )
 }
 pub fn string_map<'a>(
-    allocator: &'a Bump,
     element_change: impl Fn(char) -> char,
     string: StringString,
 ) -> StringString<'a> {
-    allocator.alloc(string.chars().map(element_change).collect::<String>())
+    std::borrow::Cow::Owned(string.chars().map(element_change).collect::<String>())
 }
 pub fn string_foldl<State, Reduce: Fn(char) -> Reduce1, Reduce1: Fn(State) -> State>(
     reduce: Reduce,
@@ -32668,54 +33188,89 @@ pub fn string_foldr<State, Reduce: Fn(char) -> Reduce1, Reduce1: Fn(State) -> St
 pub fn string_to_list<'a>(allocator: &'a Bump, string: StringString) -> ListList<'a, char> {
     double_ended_iterator_to_list(allocator, string.chars())
 }
-pub fn string_from_list<'a>(allocator: &'a Bump, list: ListList<char>) -> StringString<'a> {
-    allocator.alloc(list.ref_iter().collect::<String>())
+pub fn string_from_list<'a>(list: ListList<char>) -> StringString<'a> {
+    std::borrow::Cow::Owned(list.ref_iter().collect::<String>())
 }
-pub fn string_reverse<'a>(allocator: &'a Bump, string: StringString) -> StringString<'a> {
-    allocator.alloc(string.chars().rev().collect::<String>())
+pub fn string_reverse<'a>(string: StringString) -> StringString<'a> {
+    std::borrow::Cow::Owned(string.chars().rev().collect::<String>())
 }
-pub fn string_uncons<'a>(string: StringString<'a>) -> Option<(char, StringString<'a>)> {
-    let mut string_chars_iterator: std::str::Chars = string.chars();
-    match string_chars_iterator.next() {
+pub fn string_uncons<'a>(
+    allocator: &'a Bump,
+    string: StringString<'a>,
+) -> Option<(char, StringString<'a>)> {
+    match string.chars().next() {
         Option::None => Option::None,
-        Option::Some(head_char) => Option::Some((head_char, string_chars_iterator.as_str())),
+        Option::Some(head_char) => Option::Some((
+            head_char,
+            std::borrow::Cow::Borrowed(
+                &str_cow_alloc(allocator, string)[char::len_utf8(head_char)..],
+            ),
+        )),
+    }
+}
+fn str_cow_alloc<'a>(allocator: &'a Bump, cow: std::borrow::Cow<'a, str>) -> &'a str {
+    match cow {
+        std::borrow::Cow::Owned(owned) => allocator.alloc(owned),
+        std::borrow::Cow::Borrowed(borrowed) => borrowed,
     }
 }
 
-pub fn string_left(taken_count: f64, string: StringString) -> StringString {
+pub fn string_left<'a>(
+    allocator: &'a Bump,
+    taken_count: f64,
+    string: StringString<'a>,
+) -> StringString<'a> {
     if taken_count <= 0_f64 {
-        &""
+        std::borrow::Cow::Borrowed("")
     } else {
         match string.char_indices().nth(taken_count as usize) {
             Option::None => string,
-            Option::Some((end_exclusive, _)) => &string[..end_exclusive],
+            Option::Some((end_exclusive, _)) => {
+                std::borrow::Cow::Borrowed(&str_cow_alloc(allocator, string)[..end_exclusive])
+            }
         }
     }
 }
-pub fn string_drop_left(skipped_count: f64, string: StringString) -> StringString {
+pub fn string_drop_left<'a>(
+    allocator: &'a Bump,
+    skipped_count: f64,
+    string: StringString<'a>,
+) -> StringString<'a> {
     if skipped_count <= 0_f64 {
         string
     } else {
         match string.char_indices().nth(skipped_count as usize) {
-            Option::None => &"",
-            Option::Some((start, _)) => &string[start..],
+            Option::None => std::borrow::Cow::Borrowed(""),
+            Option::Some((start, _)) => {
+                std::borrow::Cow::Borrowed(&str_cow_alloc(allocator, string)[start..])
+            }
         }
     }
 }
-pub fn string_right(taken_count: f64, string: StringString) -> StringString {
+pub fn string_right<'a>(
+    allocator: &'a Bump,
+    taken_count: f64,
+    string: StringString<'a>,
+) -> StringString<'a> {
     if taken_count <= 0_f64 {
-        &""
+        std::borrow::Cow::Borrowed("")
     } else {
         match string
             .char_indices()
             .nth_back((taken_count - 1_f64) as usize)
         {
             Option::None => string,
-            Option::Some((start, _)) => &string[start..],
+            Option::Some((start, _)) => {
+                std::borrow::Cow::Borrowed(&str_cow_alloc(allocator, string)[start..])
+            }
         }
     }
 }
-pub fn string_drop_right(skipped_count: f64, string: StringString) -> StringString {
+pub fn string_drop_right<'a>(
+    allocator: &'a Bump,
+    skipped_count: f64,
+    string: StringString<'a>,
+) -> StringString<'a> {
     if skipped_count <= 0_f64 {
         string
     } else {
@@ -32723,12 +33278,15 @@ pub fn string_drop_right(skipped_count: f64, string: StringString) -> StringStri
             .char_indices()
             .nth_back((skipped_count - 1_f64) as usize)
         {
-            Option::None => &"",
-            Option::Some((end_exclusive, _)) => &string[..end_exclusive],
+            Option::None => std::borrow::Cow::Borrowed(""),
+            Option::Some((end_exclusive, _)) => {
+                std::borrow::Cow::Borrowed(&str_cow_alloc(allocator, string)[..end_exclusive])
+            }
         }
     }
 }
 pub fn string_slice<'a>(
+    allocator: &'a Bump,
     start_inclusive_possibly_negative: f64,
     end_exclusive_possibly_negative: f64,
     string: StringString<'a>,
@@ -32736,23 +33294,27 @@ pub fn string_slice<'a>(
     let start_inclusive_or_none_if_too_big: Option<usize> =
         normalize_string_slice_index_from_end_if_negative(
             start_inclusive_possibly_negative,
-            string,
+            &string,
         );
     match start_inclusive_or_none_if_too_big {
-        Option::None => &"",
+        Option::None => std::borrow::Cow::Borrowed(""),
         Option::Some(start_inclusive) => {
             let end_exclusive_or_none_if_too_big: Option<usize> =
                 normalize_string_slice_index_from_end_if_negative(
                     end_exclusive_possibly_negative,
-                    string,
+                    &string,
                 );
             match end_exclusive_or_none_if_too_big {
-                Option::None => &string[start_inclusive..],
+                Option::None => {
+                    std::borrow::Cow::Borrowed(&str_cow_alloc(allocator, string)[start_inclusive..])
+                }
                 Option::Some(end_exclusive) => {
                     if end_exclusive <= start_inclusive {
-                        &""
+                        std::borrow::Cow::Borrowed("")
                     } else {
-                        &string[start_inclusive..end_exclusive]
+                        std::borrow::Cow::Borrowed(
+                            &str_cow_alloc(allocator, string)[start_inclusive..end_exclusive],
+                        )
                     }
                 }
             }
@@ -32762,7 +33324,7 @@ pub fn string_slice<'a>(
 /// Option::None means too big
 fn normalize_string_slice_index_from_end_if_negative(
     elm_index: f64,
-    string: StringString,
+    string: &str,
 ) -> Option<usize> {
     if elm_index >= 0_f64 {
         match string.char_indices().nth(elm_index as usize) {
@@ -32780,44 +33342,35 @@ fn normalize_string_slice_index_from_end_if_negative(
     }
 }
 pub fn string_replace<'a>(
-    allocator: &'a Bump,
     from: StringString,
     to: StringString,
     string: StringString<'a>,
 ) -> StringString<'a> {
-    allocator.alloc(string.replace(from, to))
+    std::borrow::Cow::Owned(string.replace(from.as_ref(), &to))
 }
-pub fn string_append<'a>(
-    allocator: &'a Bump,
-    left: StringString,
-    right: StringString,
-) -> StringString<'a> {
-    allocator.alloc(left.to_string() + right)
+pub fn string_append<'a>(left: StringString, right: StringString) -> StringString<'a> {
+    std::borrow::Cow::Owned(left.into_owned() + &right)
 }
-pub fn string_concat<'a>(
-    allocator: &'a Bump,
-    segments: ListList<StringString>,
-) -> StringString<'a> {
+pub fn string_concat<'a>(segments: ListList<StringString>) -> StringString<'a> {
     let mut concatenated: String = String::new();
     for segment in segments.ref_iter() {
         concatenated.push_str(segment);
     }
-    allocator.alloc(concatenated)
+    std::borrow::Cow::Owned(concatenated)
 }
 pub fn string_join<'a>(
-    allocator: &'a Bump,
     in_between: StringString,
     segments: ListList<StringString>,
 ) -> StringString<'a> {
     match segments {
-        ListList::Empty => &"",
+        ListList::Empty => std::borrow::Cow::Borrowed(""),
         ListList::Cons(head_segment, tail_segments) => {
             let mut joined: String = head_segment.to_string();
             for segment in tail_segments.ref_iter() {
-                joined.push_str(in_between);
+                joined.push_str(&in_between);
                 joined.push_str(segment);
             }
-            allocator.alloc(joined)
+            std::borrow::Cow::Owned(joined)
         }
     }
 }
@@ -32826,22 +33379,37 @@ pub fn string_split<'a>(
     separator: StringString,
     string: StringString<'a>,
 ) -> ListList<'a, StringString<'a>> {
-    iterator_to_list(allocator, string.split(separator))
+    iterator_to_list(
+        allocator,
+        str_cow_alloc(allocator, string)
+            .split(separator.as_ref())
+            .map(std::borrow::Cow::Borrowed),
+    )
 }
 pub fn string_words<'a>(
     allocator: &'a Bump,
     string: StringString<'a>,
 ) -> ListList<'a, StringString<'a>> {
-    iterator_to_list(allocator, string.split_whitespace())
+    iterator_to_list(
+        allocator,
+        str_cow_alloc(allocator, string)
+            .split_whitespace()
+            .map(std::borrow::Cow::Borrowed),
+    )
 }
 pub fn string_lines<'a>(
     allocator: &'a Bump,
     string: StringString<'a>,
 ) -> ListList<'a, StringString<'a>> {
-    iterator_to_list(allocator, string.lines())
+    iterator_to_list(
+        allocator,
+        str_cow_alloc(allocator, string)
+            .lines()
+            .map(std::borrow::Cow::Borrowed),
+    )
 }
 pub fn string_contains(needle: StringString, string: StringString) -> bool {
-    string.contains(needle)
+    string.contains(needle.as_ref())
 }
 pub fn string_indexes<'a>(
     allocator: &'a Bump,
@@ -32852,7 +33420,7 @@ pub fn string_indexes<'a>(
     iterator_to_list(
         allocator,
         string
-            .match_indices(needle)
+            .match_indices(needle.as_ref())
             .filter_map(|(instance_byte_index, _)| {
                 // translate byte index to char position
                 string
@@ -32872,10 +33440,10 @@ pub fn string_indices<'a>(
     string_indexes(allocator, needle, string)
 }
 pub fn string_starts_with(prefix_to_check_for: StringString, string: StringString) -> bool {
-    string.starts_with(prefix_to_check_for)
+    string.starts_with(prefix_to_check_for.as_ref())
 }
 pub fn string_ends_with(suffix_to_check_for: StringString, string: StringString) -> bool {
-    string.ends_with(suffix_to_check_for)
+    string.ends_with(suffix_to_check_for.as_ref())
 }
 pub fn string_to_float(string: StringString) -> Option<f64> {
     match string.parse::<f64>() {
@@ -32889,14 +33457,13 @@ pub fn string_to_int(string: StringString) -> Option<f64> {
         Result::Ok(int) => Option::Some(int as f64),
     }
 }
-pub fn string_to_upper<'a>(allocator: &'a Bump, string: StringString) -> StringString<'a> {
-    allocator.alloc(string.to_uppercase())
+pub fn string_to_upper<'a>(string: StringString) -> StringString<'a> {
+    std::borrow::Cow::Owned(string.to_uppercase())
 }
-pub fn string_to_lower<'a>(allocator: &'a Bump, string: StringString) -> StringString<'a> {
-    allocator.alloc(string.to_lowercase())
+pub fn string_to_lower<'a>(string: StringString) -> StringString<'a> {
+    std::borrow::Cow::Owned(string.to_lowercase())
 }
 pub fn string_pad<'a>(
-    allocator: &'a Bump,
     minimum_full_char_count: f64,
     padding: char,
     string: StringString,
@@ -32904,12 +33471,11 @@ pub fn string_pad<'a>(
     let half_to_pad: f64 = (minimum_full_char_count - string.chars().count() as f64) / 2_f64;
     let padding_string: String = padding.to_string();
     let mut padded: String = padding_string.repeat(half_to_pad.ceil() as usize);
-    padded.push_str(string);
+    padded.push_str(&string);
     padded.push_str(&padding_string.repeat(half_to_pad.floor() as usize));
-    allocator.alloc(padded)
+    std::borrow::Cow::Owned(padded)
 }
 pub fn string_pad_left<'a>(
-    allocator: &'a Bump,
     minimum_length: f64,
     padding: char,
     string: StringString,
@@ -32917,35 +33483,35 @@ pub fn string_pad_left<'a>(
     let mut padded: String = padding
         .to_string()
         .repeat((minimum_length - string.chars().count() as f64) as usize);
-    padded.push_str(string);
-    allocator.alloc(padded)
+    padded.push_str(&string);
+    std::borrow::Cow::Owned(padded)
 }
 pub fn string_pad_right<'a>(
-    allocator: &'a Bump,
     minimum_length: f64,
     padding: char,
     string: StringString,
 ) -> StringString<'a> {
-    let mut padded: String = string.to_owned();
+    let string_char_count: usize = string.chars().count();
+    let mut padded: String = string.into_owned();
     padded.push_str(
         &padding
             .to_string()
-            .repeat((minimum_length - string.chars().count() as f64) as usize),
+            .repeat((minimum_length - string_char_count as f64) as usize),
     );
-    allocator.alloc(padded)
+    std::borrow::Cow::Owned(padded)
 }
-pub fn string_trim(string: StringString) -> StringString {
-    string.trim()
+pub fn string_trim<'a>(allocator: &'a Bump, string: StringString<'a>) -> StringString<'a> {
+    std::borrow::Cow::Borrowed(str_cow_alloc(allocator, string).trim())
 }
-pub fn string_trim_left(string: StringString) -> StringString {
-    string.trim_start()
+pub fn string_trim_left<'a>(allocator: &'a Bump, string: StringString<'a>) -> StringString<'a> {
+    std::borrow::Cow::Borrowed(str_cow_alloc(allocator, string).trim_start())
 }
-pub fn string_trim_right(string: StringString) -> StringString {
-    string.trim_end()
+pub fn string_trim_right<'a>(allocator: &'a Bump, string: StringString<'a>) -> StringString<'a> {
+    std::borrow::Cow::Borrowed(str_cow_alloc(allocator, string).trim_end())
 }
 
-pub fn debug_to_string<'a, A: std::fmt::Debug>(allocator: &'a Bump, data: A) -> StringString<'a> {
-    allocator.alloc(format!("{:?}", data)).as_str()
+pub fn debug_to_string<'a, A: std::fmt::Debug>(data: A) -> StringString<'a> {
+    std::borrow::Cow::Owned(format!("{:?}", data))
 }
 pub fn debug_log<'a, A: std::fmt::Debug>(data: A) -> A {
     println!("{:?}", data);
@@ -33143,17 +33709,12 @@ pub enum JsonValue<'a> {
     Null,
     Bool(bool),
     Number(f64),
-    String(StringString<'a>),
+    String(&'a str),
     Array(&'a [JsonValue<'a>]),
-    Object(&'a std::collections::BTreeMap<StringString<'a>, JsonValue<'a>>),
+    Object(&'a std::collections::BTreeMap<&'a str, JsonValue<'a>>),
 }
-pub fn json_encode_encode<'a>(
-    allocator: &'a Bump,
-    indent_size: f64,
-    json: JsonValue<'a>,
-) -> StringString<'a> {
-    allocator.alloc(json_encode_encode_from(
-        allocator,
+pub fn json_encode_encode<'a>(indent_size: f64, json: JsonValue<'a>) -> StringString<'a> {
+    std::borrow::Cow::Owned(json_encode_encode_from(
         indent_size as usize,
         0,
         String::new(),
@@ -33162,7 +33723,6 @@ pub fn json_encode_encode<'a>(
 }
 
 pub fn json_encode_encode_from<'a>(
-    allocator: &'a Bump,
     indent_size: usize,
     current_indent: usize,
     mut so_far: String,
@@ -33203,13 +33763,13 @@ pub fn json_encode_encode_from<'a>(
                 Option::None => {
                     so_far.push_str("[]");
                 }
-                Option::Some(&first_json_element) => {
-                    let linebreak_indented: StringString = if indent_size == 0 {
+                Option::Some(first_json_element) => {
+                    let linebreak_indented: &str = if indent_size == 0 {
                         ""
                     } else {
                         &("\\n".to_string() + &" ".repeat(current_indent * indent_size))
                     };
-                    let inner_linebreak_indented: StringString = if indent_size == 0 {
+                    let inner_linebreak_indented: &str = if indent_size == 0 {
                         ""
                     } else {
                         &("\\n".to_string() + &" ".repeat((current_indent + 1) * indent_size))
@@ -33217,21 +33777,19 @@ pub fn json_encode_encode_from<'a>(
                     so_far.push('[');
                     so_far.push_str(inner_linebreak_indented);
                     so_far = json_encode_encode_from(
-                        allocator,
                         indent_size,
                         current_indent + 1,
                         so_far,
-                        first_json_element,
+                        first_json_element.clone(),
                     );
-                    for &json_element in json_elements_iterator {
+                    for json_element in json_elements_iterator {
                         so_far.push(',');
                         so_far.push_str(inner_linebreak_indented);
                         so_far = json_encode_encode_from(
-                            allocator,
                             indent_size,
                             current_indent + 1,
                             so_far,
-                            json_element,
+                            json_element.clone(),
                         );
                     }
                     so_far.push_str(linebreak_indented);
@@ -33245,13 +33803,13 @@ pub fn json_encode_encode_from<'a>(
                 Option::None => {
                     so_far.push_str("{}");
                 }
-                Option::Some((&first_field_name, &first_field_json)) => {
-                    let linebreak_indented: StringString = if indent_size == 0 {
+                Option::Some((first_field_name, first_field_json)) => {
+                    let linebreak_indented: &str = if indent_size == 0 {
                         ""
                     } else {
                         &("\\n".to_string() + &" ".repeat(current_indent * indent_size))
                     };
-                    let inner_linebreak_indented: StringString = if indent_size == 0 {
+                    let inner_linebreak_indented: &str = if indent_size == 0 {
                         ""
                     } else {
                         &("\\n".to_string() + &" ".repeat((current_indent + 1) * indent_size))
@@ -33262,23 +33820,21 @@ pub fn json_encode_encode_from<'a>(
                     so_far.push_str(first_field_name);
                     so_far.push_str(between_field_name_and_value);
                     so_far = json_encode_encode_from(
-                        allocator,
                         indent_size,
                         current_indent + 1,
                         so_far,
-                        first_field_json,
+                        first_field_json.clone(),
                     );
-                    for (&field_name, &field_value) in json_elements_iterator {
+                    for (field_name, field_value) in json_elements_iterator {
                         so_far.push(',');
                         so_far.push_str(inner_linebreak_indented);
                         so_far.push_str(field_name);
                         so_far.push_str(between_field_name_and_value);
                         so_far = json_encode_encode_from(
-                            allocator,
                             indent_size,
                             current_indent + 1,
                             so_far,
-                            field_value,
+                            field_value.clone(),
                         );
                     }
                     so_far.push_str(linebreak_indented);
@@ -33295,8 +33851,8 @@ pub fn json_encode_null<'a>() -> JsonValue<'a> {
 pub fn json_encode_bool<'a>(bool: bool) -> JsonValue<'a> {
     JsonValue::Bool(bool)
 }
-pub fn json_encode_string<'a>(string: StringString<'a>) -> JsonValue<'a> {
-    JsonValue::String(string)
+pub fn json_encode_string<'a>(allocator: &'a Bump, string: StringString<'a>) -> JsonValue<'a> {
+    JsonValue::String(str_cow_alloc(allocator, string))
 }
 pub fn json_encode_int<'a>(int: f64) -> JsonValue<'a> {
     JsonValue::Number(int)
@@ -33339,11 +33895,14 @@ pub fn json_encode_object<'a>(
         allocator.alloc(
             entries
                 .into_iter()
-                .collect::<std::collections::BTreeMap<StringString, JsonValue>>(),
+                .map(|(field_name, field_value)| {
+                    (str_cow_alloc(allocator, field_name), field_value.clone())
+                })
+                .collect::<std::collections::BTreeMap<&str, JsonValue>>(),
         ),
     )
 }
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum JsonDecodeError<'a> {
     Field(StringString<'a>, &'a JsonDecodeError<'a>),
     Index(f64, &'a JsonDecodeError<'a>),
@@ -33359,12 +33918,12 @@ pub fn json_decode_error_to_string<'a>(
     error: JsonDecodeError<'a>,
 ) -> StringString<'a> {
     let mut builder = String::new();
-    json_decode_error_to_string_help(allocator, error, String::new(), &mut builder, 0);
-    allocator.alloc(builder)
+    json_decode_error_to_string_help(allocator, &error, String::new(), &mut builder, 0);
+    std::borrow::Cow::Owned(builder)
 }
 pub fn json_decode_error_to_string_help<'a>(
     allocator: &'a Bump,
-    error: JsonDecodeError,
+    error: &JsonDecodeError,
     mut context: String,
     so_far: &mut String,
     indent: usize,
@@ -33372,12 +33931,12 @@ pub fn json_decode_error_to_string_help<'a>(
     let mut current_error = error;
     'the_loop: loop {
         match current_error {
-            JsonDecodeError::Field(field_name, &field_value_error) => {
+            JsonDecodeError::Field(field_name, field_value_error) => {
                 let field_description: String = match field_name.chars().next() {
                     Option::Some(field_name_first_char)
                         if field_name_first_char.is_alphanumeric() =>
                     {
-                        ".".to_string() + field_name
+                        ".".to_string() + field_name.as_ref()
                     }
 
                     _ => format!("[{field_name}]"),
@@ -33385,8 +33944,8 @@ pub fn json_decode_error_to_string_help<'a>(
                 context.push_str(&field_description);
                 current_error = field_value_error;
             }
-            JsonDecodeError::Index(index, &element_error) => {
-                let index_description: String = format!("[{}]", (index as usize).to_string());
+            JsonDecodeError::Index(index, element_error) => {
+                let index_description: String = format!("[{}]", (*index as usize).to_string());
                 context.push_str(&index_description);
                 current_error = element_error;
             }
@@ -33417,7 +33976,7 @@ pub fn json_decode_error_to_string_help<'a>(
                     so_far.push_str(" ways=>");
                     so_far.push_str(&linebreak_indented);
                     so_far.push_str(&linebreak_indented);
-                    for (i, &error) in errors.ref_iter().enumerate() {
+                    for (i, error) in errors.ref_iter().enumerate() {
                         so_far.push_str(&linebreak_indented);
                         so_far.push_str(&linebreak_indented);
                         so_far.push_str(&linebreak_indented);
@@ -33451,11 +34010,11 @@ pub fn json_decode_error_to_string_help<'a>(
                 };
                 so_far.push_str(&indent_by(
                     indent + 4,
-                    json_encode_encode(allocator, 4_f64, json),
+                    json_encode_encode(4_f64, json.clone()),
                 ));
                 so_far.push_str(&linebreak_indented);
                 so_far.push_str(&linebreak_indented);
-                so_far.push_str(message);
+                so_far.push_str(&message);
                 break 'the_loop;
             }
         }
@@ -33464,7 +34023,7 @@ pub fn json_decode_error_to_string_help<'a>(
 fn indent_by(indent: usize, string: StringString) -> String {
     string
         .split("\\n")
-        .collect::<Vec<StringString>>()
+        .collect::<Vec<&str>>()
         .join(&("\\n".to_string() + &" ".repeat(indent)))
 }
 
@@ -33487,7 +34046,8 @@ pub fn json_decode_fail<'a, A>(
     error_message: StringString<'a>,
 ) -> JsonDecodeDecoder<'a, A> {
     JsonDecodeDecoder {
-        decode: allocator.alloc(|json| Result::Err(JsonDecodeError::Failure(error_message, json))),
+        decode: allocator
+            .alloc(move |json| Result::Err(JsonDecodeError::Failure(error_message.clone(), json))),
     }
 }
 pub fn json_decode_lazy<'a, A>(
@@ -33799,7 +34359,10 @@ pub fn json_decode_null<'a, A: Clone>(allocator: &'a Bump, value: A) -> JsonDeco
     JsonDecodeDecoder {
         decode: allocator.alloc(move |json| match json {
             JsonValue::Null => Result::Ok(value.clone()),
-            json_not_null => Result::Err(JsonDecodeError::Failure("Expecting NULL", json_not_null)),
+            json_not_null => Result::Err(JsonDecodeError::Failure(
+                std::borrow::Cow::Borrowed("Expecting NULL"),
+                json_not_null,
+            )),
         }),
     }
 }
@@ -33807,9 +34370,10 @@ pub fn json_decode_bool<'a>() -> JsonDecodeDecoder<'a, bool> {
     JsonDecodeDecoder {
         decode: &|json| match json {
             JsonValue::Bool(decoded) => Result::Ok(decoded),
-            json_not_bool => {
-                Result::Err(JsonDecodeError::Failure("Expecting a BOOL", json_not_bool))
-            }
+            json_not_bool => Result::Err(JsonDecodeError::Failure(
+                std::borrow::Cow::Borrowed("Expecting a BOOL"),
+                json_not_bool,
+            )),
         },
     }
 }
@@ -33817,7 +34381,10 @@ pub fn json_decode_int<'a>() -> JsonDecodeDecoder<'a, f64> {
     JsonDecodeDecoder {
         decode: &|json| match json {
             JsonValue::Number(decoded) if decoded.trunc() == decoded => Result::Ok(decoded),
-            json_not_int => Result::Err(JsonDecodeError::Failure("Expecting a INT", json_not_int)),
+            json_not_int => Result::Err(JsonDecodeError::Failure(
+                std::borrow::Cow::Borrowed("Expecting an INT"),
+                json_not_int,
+            )),
         },
     }
 }
@@ -33826,7 +34393,7 @@ pub fn json_decode_float<'a>() -> JsonDecodeDecoder<'a, f64> {
         decode: &|json| match json {
             JsonValue::Number(decoded) => Result::Ok(decoded),
             json_not_number => Result::Err(JsonDecodeError::Failure(
-                "Expecting a NUMBER",
+                std::borrow::Cow::Borrowed("Expecting a NUMBER"),
                 json_not_number,
             )),
         },
@@ -33835,9 +34402,9 @@ pub fn json_decode_float<'a>() -> JsonDecodeDecoder<'a, f64> {
 pub fn json_decode_string<'a>() -> JsonDecodeDecoder<'a, StringString<'a>> {
     JsonDecodeDecoder {
         decode: &|json| match json {
-            JsonValue::String(decoded) => Result::Ok(decoded),
+            JsonValue::String(decoded) => Result::Ok(std::borrow::Cow::Borrowed(decoded)),
             json_not_string => Result::Err(JsonDecodeError::Failure(
-                "Expecting a STRING",
+                std::borrow::Cow::Borrowed("Expecting a STRING"),
                 json_not_string,
             )),
         },
@@ -33857,7 +34424,10 @@ pub fn json_decode_nullable<'a, A>(
                     Result::Err(JsonDecodeError::OneOf(allocator.alloc(list(
                         allocator,
                         [
-                            JsonDecodeError::Failure("Expecting NULL", json_not_null),
+                            JsonDecodeError::Failure(
+                                std::borrow::Cow::Borrowed("Expecting NULL"),
+                                json_not_null,
+                            ),
                             on_not_null_error,
                         ],
                     ))))
@@ -33876,12 +34446,14 @@ pub fn json_decode_index<'a, A>(
             JsonValue::Array(decoded_array) => match decoded_array.get(index as usize) {
                 Option::Some(&decoded_element) => (element_decoder.decode)(decoded_element),
                 Option::None => Result::Err(JsonDecodeError::Failure(
-                    "Expecting an ARRAY with an element at index {index}",
+                    std::borrow::Cow::Borrowed(
+                        "Expecting an ARRAY with an element at index {index}",
+                    ),
                     json,
                 )),
             },
             json_not_array => Result::Err(JsonDecodeError::Failure(
-                "Expecting an ARRAY",
+                std::borrow::Cow::Borrowed("Expecting an ARRAY"),
                 json_not_array,
             )),
         }),
@@ -33909,7 +34481,7 @@ pub fn json_decode_array<'a, A>(
                 Result::Ok(allocator.alloc(decoded_array).as_slice())
             }
             json_not_array => Result::Err(JsonDecodeError::Failure(
-                "Expecting an ARRAY",
+                std::borrow::Cow::Borrowed("Expecting an ARRAY"),
                 json_not_array,
             )),
         }),
@@ -33939,7 +34511,7 @@ pub fn json_decode_list<'a, A>(
                 Result::Ok(decoded_list)
             }
             json_not_array => Result::Err(JsonDecodeError::Failure(
-                "Expecting an ARRAY",
+                std::borrow::Cow::Borrowed("Expecting an ARRAY"),
                 json_not_array,
             )),
         }),
@@ -33975,7 +34547,7 @@ pub fn json_decode_one_or_more<
                 }
                 match decoded_list {
                     ListList::Empty => Result::Err(JsonDecodeError::Failure(
-                        "Expecting an ARRAY with at least ONE element",
+                        std::borrow::Cow::Borrowed("Expecting an ARRAY with at least ONE element"),
                         json,
                     )),
                     ListList::Cons(decoded_head, decoded_tail) => {
@@ -33984,7 +34556,7 @@ pub fn json_decode_one_or_more<
                 }
             }
             json_not_array => Result::Err(JsonDecodeError::Failure(
-                "Expecting an ARRAY",
+                std::borrow::Cow::Borrowed("Expecting an ARRAY"),
                 json_not_array,
             )),
         }),
@@ -33992,7 +34564,7 @@ pub fn json_decode_one_or_more<
 }
 pub fn json_decode_field_value<'a>(
     allocator: &'a Bump,
-    field_name: StringString<'a>,
+    field_name: &'a str,
 ) -> JsonDecodeDecoder<'a, JsonValue<'a>> {
     JsonDecodeDecoder {
         decode: allocator.alloc(move |json| match json {
@@ -34000,18 +34572,18 @@ pub fn json_decode_field_value<'a>(
                 Option::Some(&decoded_field_value) => Result::Ok(decoded_field_value),
                 Option::None => {
                     let mut field_name_chars: std::str::Chars<'a> = field_name.chars();
-                    let field_description = match field_name_chars.next() {
+                    let field_description: &str = match field_name_chars.next() {
                         Option::Some(field_name_first_char)
                             if field_name_first_char.is_ascii_alphanumeric()
                                 && field_name_chars
                                     .all(|tail_char| tail_char.is_ascii_alphanumeric()) =>
                         {
-                            field_name
+                            field_name.as_ref()
                         }
                         _ => &format!("[{field_name}]"),
                     };
                     Result::Err(JsonDecodeError::Failure(
-                        allocator.alloc(format!(
+                        std::borrow::Cow::Owned(format!(
                             "Expecting an OBJECT with a field {field_description}"
                         )),
                         json,
@@ -34019,7 +34591,7 @@ pub fn json_decode_field_value<'a>(
                 }
             },
             json_not_object => Result::Err(JsonDecodeError::Failure(
-                "Expecting an OBJECT",
+                std::borrow::Cow::Borrowed("Expecting an OBJECT"),
                 json_not_object,
             )),
         }),
@@ -34031,11 +34603,40 @@ pub fn json_decode_field<'a, A>(
     field_value_decoder: JsonDecodeDecoder<'a, A>,
 ) -> JsonDecodeDecoder<'a, A> {
     JsonDecodeDecoder {
-        decode: allocator.alloc(move |json| {
-            ((json_decode_field_value(allocator, field_name)).decode)(json).and_then(|decoded| {
-                ((|json| (field_value_decoder.decode)(json))(decoded))
-                    .map_err(|error| JsonDecodeError::Field(field_name, allocator.alloc(error)))
-            })
+        decode: alloc_shared(allocator, move |json| match json {
+            JsonValue::Object(decoded_object) => match decoded_object.get(field_name.as_ref()) {
+                Option::Some(&decoded_field_value) => {
+                    ((|json| (field_value_decoder.decode)(json))(decoded_field_value)).map_err({
+                        let field_name = field_name.clone();
+                        move |error| {
+                            JsonDecodeError::Field(field_name.clone(), allocator.alloc(error))
+                        }
+                    })
+                }
+                Option::None => {
+                    let mut field_name_chars: std::str::Chars = field_name.chars();
+                    let field_description: &str = match field_name_chars.next() {
+                        Option::Some(field_name_first_char)
+                            if field_name_first_char.is_ascii_alphanumeric()
+                                && field_name_chars
+                                    .all(|tail_char| tail_char.is_ascii_alphanumeric()) =>
+                        {
+                            field_name.as_ref()
+                        }
+                        _ => &format!("[{field_name}]"),
+                    };
+                    Result::Err(JsonDecodeError::Failure(
+                        std::borrow::Cow::Owned(format!(
+                            "Expecting an OBJECT with a field {field_description}"
+                        )),
+                        json,
+                    ))
+                }
+            },
+            json_not_object => Result::Err(JsonDecodeError::Failure(
+                std::borrow::Cow::Borrowed("Expecting an OBJECT"),
+                json_not_object,
+            )),
         }),
     }
 }
@@ -34045,34 +34646,51 @@ pub fn at<'a, A>(
     inner_decoder: JsonDecodeDecoder<'a, A>,
 ) -> JsonDecodeDecoder<'a, A> {
     JsonDecodeDecoder {
-        decode: allocator.alloc(move |json| {
-            let mut successfully_decoded_field_names = Vec::new();
-            let mut remaining_json: JsonValue = json;
-            for next_field_name in path.ref_iter() {
-                match (json_decode_field_value(allocator, next_field_name).decode)(remaining_json) {
-                    Result::Ok(fiel_value_json) => {
-                        remaining_json = fiel_value_json;
-                        successfully_decoded_field_names.push(next_field_name)
-                    }
-                    Result::Err(field_value_decode_error) => {
-                        return Result::Err(successfully_decoded_field_names.into_iter().fold(
-                            field_value_decode_error,
-                            |so_far, field_name| {
-                                JsonDecodeError::Field(field_name, allocator.alloc(so_far))
-                            },
-                        ));
+        decode: alloc_shared(
+            allocator,
+            move |json: JsonValue<'a>| -> Result<A, JsonDecodeError<'a>> {
+                let mut successfully_decoded_field_names: Vec<&str> = Vec::new();
+                let mut remaining_json: JsonValue = json;
+                for next_field_name in path
+                    .ref_iter()
+                    .map(|cow| str_cow_alloc(allocator, cow.clone()))
+                {
+                    match (json_decode_field_value(allocator, next_field_name).decode)(
+                        remaining_json,
+                    ) {
+                        Result::Ok(fiel_value_json) => {
+                            remaining_json = fiel_value_json;
+                            successfully_decoded_field_names.push(next_field_name)
+                        }
+                        Result::Err(inner_error) => {
+                            return Result::Err(successfully_decoded_field_names.into_iter().fold(
+                                inner_error,
+                                |so_far: JsonDecodeError<'a>, field_name: &str| {
+                                    JsonDecodeError::Field(
+                                        std::borrow::Cow::Borrowed(field_name),
+                                        alloc_shared(allocator, so_far),
+                                    )
+                                },
+                            ));
+                        }
                     }
                 }
-            }
-            (inner_decoder.decode)(remaining_json).map_err(|inner_error| {
-                successfully_decoded_field_names.into_iter().fold(
-                    inner_error,
-                    |so_far, field_name| {
-                        JsonDecodeError::Field(field_name, allocator.alloc(so_far))
-                    },
-                )
-            })
-        }),
+                match (inner_decoder.decode)(remaining_json) {
+                    Result::Ok(decoded) => Result::Ok(decoded),
+                    Result::Err(inner_error) => {
+                        Result::Err(successfully_decoded_field_names.into_iter().fold(
+                            inner_error,
+                            move |so_far, field_name| {
+                                JsonDecodeError::Field(
+                                    std::borrow::Cow::Borrowed(field_name),
+                                    alloc_shared(allocator, so_far),
+                                )
+                            },
+                        ))
+                    }
+                }
+            },
+        ),
     }
 }
 pub fn json_decode_key_value_pairs<'a, A>(
@@ -34087,20 +34705,23 @@ pub fn json_decode_key_value_pairs<'a, A>(
                     match (value_decoder.decode)(value_json) {
                         Result::Err(value_error) => {
                             return Result::Err(JsonDecodeError::Field(
-                                key,
+                                std::borrow::Cow::Borrowed(key),
                                 allocator.alloc(value_error),
                             ));
                         }
                         Result::Ok(decoded_value) => {
-                            decoded_entries =
-                                list_cons(allocator, (key, decoded_value), decoded_entries)
+                            decoded_entries = list_cons(
+                                allocator,
+                                (std::borrow::Cow::Borrowed(key), decoded_value),
+                                decoded_entries,
+                            )
                         }
                     }
                 }
                 Result::Ok(decoded_entries)
             }
             json_not_array => Result::Err(JsonDecodeError::Failure(
-                "Expecting an OBJECT",
+                std::borrow::Cow::Borrowed("Expecting an OBJECT"),
                 json_not_array,
             )),
         }),
@@ -34161,7 +34782,7 @@ pub enum TimeZone<'a> {
     Zone(i64, ListList<'a, TimeEra>),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TimeZoneName<'a> {
     Name(StringString<'a>),
     Offset(f64),
@@ -34435,7 +35056,7 @@ pub fn elm_kernel_parser_find_sub_string(
     match big_string.char_indices().nth(offset_original) {
         Option::None => (-1_f64, row_original, col_original),
         Option::Some((offset_original_as_char_index, _)) => {
-            match big_string[offset_original_as_char_index..].find(small_string) {
+            match big_string[offset_original_as_char_index..].find(small_string.as_ref()) {
                 Option::None => (-1_f64, row_original, col_original),
                 Option::Some(found_start_offset_from_offset) => {
                     let small_string_char_count = small_string.chars().count();
