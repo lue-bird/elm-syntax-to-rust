@@ -9235,10 +9235,10 @@ expression context expressionTypedNode =
                     Result.map2
                         (\left right ->
                             if infixOperation.left.type_ == inferredTypeString then
-                                if left |> rustExpressionIsEmptyString then
+                                if left |> rustExpressionIsEmptyStringString then
                                     right
 
-                                else if right |> rustExpressionIsEmptyString then
+                                else if right |> rustExpressionIsEmptyStringString then
                                     left
 
                                 else
@@ -11267,14 +11267,17 @@ inferredReferenceToInfoString reference =
                 ++ reference.name
 
 
-rustExpressionIsEmptyString : RustExpression -> Bool
-rustExpressionIsEmptyString rustExpression =
-    rustExpression == rustExpressionStringLiteralEmpty
+rustExpressionIsEmptyStringString : RustExpression -> Bool
+rustExpressionIsEmptyStringString rustExpression =
+    rustExpression == rustExpressionStringStringEmpty
 
 
-rustExpressionStringLiteralEmpty : RustExpression
-rustExpressionStringLiteralEmpty =
-    RustExpressionString ""
+rustExpressionStringStringEmpty : RustExpression
+rustExpressionStringStringEmpty =
+    RustExpressionCall
+        { called = rustExpressionReferenceStdBorrowCowBorrowed
+        , arguments = [ RustExpressionString "" ]
+        }
 
 
 inferredTypeExpandFunction :
