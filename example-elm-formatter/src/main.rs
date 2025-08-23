@@ -1,9 +1,7 @@
-use std::borrow::Cow;
-use std::io::Read;
-
-mod elm;
-
 // use like  example-elm-formatter < src/...elm
+
+use std::io::Read;
+mod elm;
 
 pub fn main() {
     let allocator: bumpalo::Bump = bumpalo::Bump::new();
