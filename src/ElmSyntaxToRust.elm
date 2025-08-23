@@ -2657,20 +2657,30 @@ pattern context patternInferred =
 
 stringAsGeneratedRustPatternBindingName : String -> String
 stringAsGeneratedRustPatternBindingName stringValue =
-    "generated_string_"
-        ++ (stringValue
+    let
+        sanitizedStringValue : String
+        sanitizedStringValue =
+            stringValue
                 |> String.toList
                 |> List.map
                     (\char ->
-                        if char |> Char.isAlphaNum then
+                        if (char |> Char.isLower) || (char |> Char.isDigit) then
                             String.fromChar char
 
                         else
-                            "_u" ++ (char |> Char.toCode |> String.fromInt)
+                            "_u"
+                                ++ (char
+                                        |> Char.toCode
+                                        |> String.fromInt
+                                   )
+                                ++ "_"
                     )
                 |> String.concat
-                |> toSnakeCase
-           )
+    in
+    ("generated_string"
+        ++ sanitizedStringValue
+    )
+        |> String.replace "__" "_"
 
 
 referencedPattern :
@@ -12259,7 +12269,7 @@ rustExpressionCloneWhereNecessary context rustExpression =
                 capturedClones : List RustStatement
                 capturedClones =
                     closure.result
-                        |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                        |> rustExpressionUsedLocalBindings
                         |> FastSet.foldl
                             (\closureResultLocalBinding soFar ->
                                 case
@@ -13617,8 +13627,9 @@ rustExpressionClone rustExpression =
         }
 
 
-rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures : RustExpression -> FastSet.Set String
-rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures rustExpression =
+rustExpressionUsedLocalBindings : RustExpression -> FastSet.Set String
+rustExpressionUsedLocalBindings rustExpression =
+    -- IGNORE TCO
     case rustExpression of
         RustExpressionUnit ->
             FastSet.empty
@@ -13638,9 +13649,6 @@ rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures rustExpression =
         RustExpressionReferenceVariant _ ->
             FastSet.empty
 
-        RustExpressionClosure _ ->
-            FastSet.empty
-
         RustExpressionReference reference ->
             case reference.qualification of
                 _ :: _ ->
@@ -13649,46 +13657,49 @@ rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures rustExpression =
                 [] ->
                     FastSet.singleton reference.name
 
+        RustExpressionClosure closure ->
+            rustExpressionUsedLocalBindings closure.result
+
         RustExpressionReferenceMethod referenceMethod ->
-            rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures referenceMethod.subject
+            rustExpressionUsedLocalBindings referenceMethod.subject
 
         RustExpressionNegateOperation inNegation ->
-            rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures inNegation
+            rustExpressionUsedLocalBindings inNegation
 
         RustExpressionBorrow inBorrow ->
-            rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures inBorrow
+            rustExpressionUsedLocalBindings inBorrow
 
         RustExpressionDeref inDeref ->
-            rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures inDeref
+            rustExpressionUsedLocalBindings inDeref
 
         RustExpressionStructAccess structAccess ->
-            rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures structAccess.struct
+            rustExpressionUsedLocalBindings structAccess.struct
 
         RustExpressionAs rustExpressionAs ->
-            rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+            rustExpressionUsedLocalBindings
                 rustExpressionAs.expression
 
         RustExpressionBinaryOperation binaryOperation ->
             binaryOperation.left
-                |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                |> rustExpressionUsedLocalBindings
                 |> FastSet.union
                     (binaryOperation.right
-                        |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                        |> rustExpressionUsedLocalBindings
                     )
 
         RustExpressionTuple parts ->
             parts.part0
-                |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                |> rustExpressionUsedLocalBindings
                 |> FastSet.union
-                    (parts.part1 |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures)
+                    (parts.part1 |> rustExpressionUsedLocalBindings)
                 |> FastSet.union
                     (parts.part2Up
-                        |> listMapToFastSetsAndUnify rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                        |> listMapToFastSetsAndUnify rustExpressionUsedLocalBindings
                     )
 
         RustExpressionArrayLiteral elements ->
             elements
-                |> listMapToFastSetsAndUnify rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                |> listMapToFastSetsAndUnify rustExpressionUsedLocalBindings
 
         RustExpressionStruct struct ->
             struct.fields
@@ -13696,37 +13707,37 @@ rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures rustExpression =
                     (\_ fieldValue soFar ->
                         soFar
                             |> FastSet.union
-                                (rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures fieldValue)
+                                (rustExpressionUsedLocalBindings fieldValue)
                     )
                     FastSet.empty
 
         RustExpressionCall call ->
             call.called
-                |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                |> rustExpressionUsedLocalBindings
                 |> FastSet.union
                     (call.arguments
-                        |> listMapToFastSetsAndUnify rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                        |> listMapToFastSetsAndUnify rustExpressionUsedLocalBindings
                     )
 
         RustExpressionIfElse ifElse ->
             ifElse.condition
-                |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                |> rustExpressionUsedLocalBindings
                 |> FastSet.union
-                    (ifElse.onTrue |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures)
+                    (ifElse.onTrue |> rustExpressionUsedLocalBindings)
                 |> FastSet.union
                     (ifElse.onFalse
-                        |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                        |> rustExpressionUsedLocalBindings
                     )
 
         RustExpressionMatch match ->
             match.matched
-                |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                |> rustExpressionUsedLocalBindings
                 |> FastSet.union
                     (match.cases
                         |> listMapToFastSetsAndUnify
                             (\matchCase ->
                                 matchCase.result
-                                    |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                                    |> rustExpressionUsedLocalBindings
                             )
                     )
 
@@ -13735,38 +13746,39 @@ rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures rustExpression =
                 |> rustStatementUsedLocalBindingsOutsideOfFnsAndClosures
                 |> FastSet.union
                     (expressionAfterStatement.result
-                        |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                        |> rustExpressionUsedLocalBindings
                     )
 
 
 rustStatementUsedLocalBindingsOutsideOfFnsAndClosures : RustStatement -> FastSet.Set String
 rustStatementUsedLocalBindingsOutsideOfFnsAndClosures rustStatement =
+    -- IGNORE TCO
     case rustStatement of
-        RustStatementFnDeclaration _ ->
-            FastSet.empty
+        RustStatementFnDeclaration fnDeclaration ->
+            rustExpressionUsedLocalBindings fnDeclaration.result
 
         RustStatementLetDeclarationUninitialized _ ->
             FastSet.empty
 
         RustStatementLetDestructuring letDestructuring ->
-            rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+            rustExpressionUsedLocalBindings
                 letDestructuring.expression
 
         RustStatementLetDeclaration statementLetDeclaration ->
-            rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+            rustExpressionUsedLocalBindings
                 statementLetDeclaration.result
 
         RustStatementLetMutDeclaration letMutDeclaration ->
-            rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+            rustExpressionUsedLocalBindings
                 letMutDeclaration.value
 
         RustStatementBindingAssignment assignment ->
-            rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+            rustExpressionUsedLocalBindings
                 assignment.assignedValue
 
         RustStatementIfElse ifElse ->
             ifElse.condition
-                |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                |> rustExpressionUsedLocalBindings
                 |> FastSet.union
                     (ifElse.onTrue
                         |> listMapToFastSetsAndUnify
@@ -13780,7 +13792,7 @@ rustStatementUsedLocalBindingsOutsideOfFnsAndClosures rustStatement =
 
         RustStatementMatch match ->
             match.matched
-                |> rustExpressionUsedLocalBindingsOutsideOfFnsAndClosures
+                |> rustExpressionUsedLocalBindings
                 |> FastSet.union
                     (match.cases
                         |> listMapToFastSetsAndUnify
