@@ -2628,31 +2628,44 @@ pattern context patternInferred =
             -- possible optimization: if rustPattern.pattern
             -- does not capture any values (in an owning way),
             -- just make the alias binding owning
-            { pattern =
-                RustPatternAlias
-                    { variable =
-                        rustAliasBindingName |> generatedPatternRefBindingName
-                    , variableIsRef = True
-                    , type_ = rustType
-                    , pattern =
-                        rustPattern.pattern
-                            |> rustPatternMapBindings
-                                (\binding ->
-                                    { name = binding |> generatedPatternRefBindingName
-                                    , isRef = True
-                                    }
-                                )
-                    }
-            , guardConditions = rustPattern.guardConditions
-            , bindingsToDerefClone =
-                { name = rustAliasBindingName
-                , type_ = rustType
+            if rustType |> rustTypeIsCopy then
+                { pattern =
+                    RustPatternAlias
+                        { variable = rustAliasBindingName |> generatedPatternRefBindingName
+                        , variableIsRef = False
+                        , type_ = rustType
+                        , pattern = rustPattern.pattern
+                        }
+                , guardConditions = rustPattern.guardConditions
+                , bindingsToDerefClone = rustPattern.bindingsToDerefClone
                 }
-                    :: (rustPattern.pattern
-                            |> rustPatternIntroducedBindings
-                       )
-                    ++ rustPattern.bindingsToDerefClone
-            }
+
+            else
+                { pattern =
+                    RustPatternAlias
+                        { variable =
+                            rustAliasBindingName |> generatedPatternRefBindingName
+                        , variableIsRef = True
+                        , type_ = rustType
+                        , pattern =
+                            rustPattern.pattern
+                                |> rustPatternMapBindings
+                                    (\binding ->
+                                        { name = binding |> generatedPatternRefBindingName
+                                        , isRef = True
+                                        }
+                                    )
+                        }
+                , guardConditions = rustPattern.guardConditions
+                , bindingsToDerefClone =
+                    { name = rustAliasBindingName
+                    , type_ = rustType
+                    }
+                        :: (rustPattern.pattern
+                                |> rustPatternIntroducedBindings
+                           )
+                        ++ rustPattern.bindingsToDerefClone
+                }
 
 
 stringAsGeneratedRustPatternBindingName : String -> String
@@ -3046,12 +3059,14 @@ bindingsToDerefCloneToRustStatements bindingsToDerefClone =
     bindingsToDerefClone
         |> List.map
             (\bindingToDeref ->
-                RustStatementLetDeclaration
-                    { name = bindingToDeref.name
-                    , resultType = bindingToDeref.type_
-                    , result =
-                        rustExpressionClone
-                            (RustExpressionDeref
+                -- TODO prevent them being put in bindingsToDerefClone
+                -- and given a new name in the first place
+                if bindingToDeref.type_ |> rustTypeIsCopy then
+                    RustStatementLetDeclaration
+                        { name = bindingToDeref.name
+                        , resultType = bindingToDeref.type_
+                        , result =
+                            RustExpressionDeref
                                 (RustExpressionReference
                                     { qualification = []
                                     , name =
@@ -3059,8 +3074,24 @@ bindingsToDerefCloneToRustStatements bindingsToDerefClone =
                                             bindingToDeref.name
                                     }
                                 )
-                            )
-                    }
+                        }
+
+                else
+                    RustStatementLetDeclaration
+                        { name = bindingToDeref.name
+                        , resultType = bindingToDeref.type_
+                        , result =
+                            rustExpressionClone
+                                (RustExpressionDeref
+                                    (RustExpressionReference
+                                        { qualification = []
+                                        , name =
+                                            generatedPatternRefBindingName
+                                                bindingToDeref.name
+                                        }
+                                    )
+                                )
+                        }
             )
 
 
