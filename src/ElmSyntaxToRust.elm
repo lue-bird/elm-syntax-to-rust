@@ -753,6 +753,8 @@ printRustEnumDeclaration rustEnumType =
         |> Print.followedBy printExactlyCurlyClosing
 
 
+{-| TODO add parameter { typeVariablesAreDebug : Bool }
+-}
 rustTypeIsDebug : RustType -> Bool
 rustTypeIsDebug rustType =
     -- IGNORE TCO
@@ -784,6 +786,8 @@ rustTypeIsDebug rustType =
                 |> List.all rustTypeIsDebug
 
 
+{-| TODO add parameter { typeVariablesAreCopy : Bool }
+-}
 rustTypeIsCopy : RustType -> Bool
 rustTypeIsCopy rustType =
     -- IGNORE TCO
@@ -816,6 +820,8 @@ rustTypeIsCopy rustType =
                    )
 
 
+{-| TODO add parameter { typeVariablesArePartial : Bool }
+-}
 rustTypeIsPartialEq : RustType -> Bool
 rustTypeIsPartialEq rustType =
     -- IGNORE TCO
@@ -1198,9 +1204,7 @@ typeNotVariable context inferredTypeNotVariable =
                                     , lifetimeArguments = originRustEnumType.lifetimeParameters
                                     , qualification = []
                                     , name = rustName
-                                    , isCopy =
-                                        -- TODO store in originRustEnumType
-                                        False
+                                    , isCopy = originRustEnumType.isCopy
                                     }
 
         ElmSyntaxTypeInfer.TypeTuple typeTuple ->
@@ -2631,7 +2635,7 @@ pattern context patternInferred =
             if rustType |> rustTypeIsCopy then
                 { pattern =
                     RustPatternAlias
-                        { variable = rustAliasBindingName |> generatedPatternRefBindingName
+                        { variable = rustAliasBindingName
                         , variableIsRef = False
                         , type_ = rustType
                         , pattern = rustPattern.pattern
