@@ -634,52 +634,42 @@ pub fn list_map5<
     )
 }
 
-pub type ArrayArray<'a, A> = &'a [A];
+pub type ArrayArray<'a, A> = std::borrow::Cow<'a, [A]>;
 
-pub const fn array_empty<'a, A>() -> ArrayArray<'a, A> {
-    &[]
+pub const fn array_empty<'a, A: Clone>() -> ArrayArray<'a, A> {
+    std::borrow::Cow::Borrowed(&[] as &[A])
 }
-pub fn array_singleton<'a, A>(allocator: &'a Bump, only_element: A) -> ArrayArray<'a, A> {
-    allocator.alloc([only_element])
+pub fn array_singleton<'a, A: Clone>(only_element: A) -> ArrayArray<'a, A> {
+    std::borrow::Cow::Owned(vec![only_element])
 }
-pub fn array_repeat<'a, A: Clone>(
-    allocator: &'a Bump,
-    length: f64,
-    element: A,
-) -> ArrayArray<'a, A> {
-    allocator.alloc(std::vec::from_elem(element, length as usize))
+pub fn array_repeat<'a, A: Clone>(length: f64, element: A) -> ArrayArray<'a, A> {
+    std::borrow::Cow::Owned(std::vec::from_elem(element, length as usize))
 }
-pub fn array_initialize<'a, A>(
-    allocator: &'a Bump,
+pub fn array_initialize<'a, A: Clone>(
     length: f64,
     index_to_element: impl Fn(f64) -> A,
 ) -> ArrayArray<'a, A> {
-    allocator.alloc(
+    std::borrow::Cow::Owned(
         (0..(length as i64))
             .map(|i| index_to_element(i as f64))
             .collect::<Vec<A>>(),
     )
 }
-pub const fn array_is_empty<A>(array: ArrayArray<A>) -> bool {
+pub fn array_is_empty<A: Clone>(array: ArrayArray<A>) -> bool {
     array.is_empty()
 }
-pub const fn array_length<A>(array: ArrayArray<A>) -> f64 {
+pub fn array_length<A: Clone>(array: ArrayArray<A>) -> f64 {
     array.len() as f64
 }
 pub fn array_get<A: Clone>(index: f64, array: ArrayArray<A>) -> Option<A> {
     array.get(index as usize).cloned()
 }
-pub fn array_push<'a, A: Clone>(
-    allocator: &'a Bump,
-    new_last_element: A,
-    array: ArrayArray<A>,
-) -> ArrayArray<'a, A> {
-    let mut array_as_vec: Vec<A> = array.to_vec();
+pub fn array_push<'a, A: Clone>(new_last_element: A, array: ArrayArray<A>) -> ArrayArray<'a, A> {
+    let mut array_as_vec: Vec<A> = array.into_owned();
     array_as_vec.push(new_last_element);
-    allocator.alloc(array_as_vec)
+    std::borrow::Cow::Owned(array_as_vec)
 }
 pub fn array_set<'a, A: Clone>(
-    allocator: &'a Bump,
     index: f64,
     new_element: A,
     array: ArrayArray<'a, A>,
@@ -691,17 +681,25 @@ pub fn array_set<'a, A: Clone>(
         if index_usize > array.len() {
             array
         } else {
-            let mut array_as_vec: Vec<A> = array.to_vec();
-            if index_usize == array.len() {
+            let mut array_as_vec: Vec<A> = array.into_owned();
+            if index_usize == array_as_vec.len() {
                 array_as_vec.push(new_element)
             } else {
                 array_as_vec[index as usize] = new_element;
             }
-            allocator.alloc(array_as_vec)
+            std::borrow::Cow::Owned(array_as_vec)
         }
     }
 }
-pub fn array_slice<'a, A>(
+
+fn slice_cow_alloc<'a, A: Clone>(allocator: &'a Bump, cow: std::borrow::Cow<'a, [A]>) -> &'a [A] {
+    match cow {
+        std::borrow::Cow::Owned(owned) => allocator.alloc(owned),
+        std::borrow::Cow::Borrowed(borrowed) => borrowed,
+    }
+}
+pub fn array_slice<'a, A: Clone>(
+    allocator: &'a Bump,
     start_inclusive_possibly_negative: f64,
     end_exclusive_possibly_negative: f64,
     array: ArrayArray<'a, A>,
@@ -711,9 +709,11 @@ pub fn array_slice<'a, A>(
     let end_exclusive: usize =
         index_from_end_if_negative(end_exclusive_possibly_negative, array.len());
     if end_exclusive <= start_inclusive {
-        &[]
+        array_empty()
     } else {
-        &array[start_inclusive..end_exclusive]
+        std::borrow::Cow::Borrowed(
+            &slice_cow_alloc(allocator, array)[start_inclusive..end_exclusive],
+        )
     }
 }
 /// For an index where -1 meaning one before the last element, 1 meaning one after the first element,
@@ -725,21 +725,20 @@ fn index_from_end_if_negative(index_possibly_negative: f64, full_length: usize) 
         ((full_length as f64 + index_possibly_negative).max(0_f64) as usize).min(full_length)
     }
 }
-pub fn array_from_list<'a, A: Clone>(allocator: &'a Bump, list: ListList<A>) -> ArrayArray<'a, A> {
-    allocator.alloc(list.into_iter().collect::<Vec<A>>())
+pub fn array_from_list<'a, A: Clone>(list: ListList<A>) -> ArrayArray<'a, A> {
+    std::borrow::Cow::Owned(list.into_iter().collect::<Vec<A>>())
 }
 
-pub fn array_reverse<'a, A: Clone>(allocator: &'a Bump, array: ArrayArray<A>) -> ArrayArray<'a, A> {
-    let mut vec: Vec<A> = array.to_vec();
+pub fn array_reverse<'a, A: Clone>(array: ArrayArray<A>) -> ArrayArray<'a, A> {
+    let mut vec: Vec<A> = array.into_owned();
     vec.reverse();
-    allocator.alloc(vec)
+    std::borrow::Cow::Owned(vec)
 }
 pub fn array_filter<'a, A: Clone>(
-    allocator: &'a Bump,
     keep: impl Fn(A) -> bool,
     array: ArrayArray<'a, A>,
 ) -> ArrayArray<'a, A> {
-    allocator.alloc(
+    std::borrow::Cow::Owned(
         array
             .into_iter()
             .cloned()
@@ -747,12 +746,11 @@ pub fn array_filter<'a, A: Clone>(
             .collect::<Vec<A>>(),
     )
 }
-pub fn array_map<'a, A: Clone, B>(
-    allocator: &'a Bump,
+pub fn array_map<'a, A: Clone, B: Clone>(
     element_change: impl Fn(A) -> B,
     array: ArrayArray<'a, A>,
 ) -> ArrayArray<'a, B> {
-    allocator.alloc(
+    std::borrow::Cow::Owned(
         array
             .into_iter()
             .map(|element| element_change(element.clone()))
@@ -762,15 +760,14 @@ pub fn array_map<'a, A: Clone, B>(
 pub fn array_indexed_map<
     'a,
     A: Clone,
-    B,
+    B: Clone,
     IndexedElementToNew: Fn(f64) -> IndexedElementToNew1,
     IndexedElementToNew1: Fn(A) -> B,
 >(
-    allocator: &'a Bump,
     element_change: IndexedElementToNew,
     array: ArrayArray<'a, A>,
 ) -> ArrayArray<'a, B> {
-    allocator.alloc(
+    std::borrow::Cow::Owned(
         array
             .into_iter()
             .enumerate()
@@ -778,48 +775,12 @@ pub fn array_indexed_map<
             .collect::<Vec<B>>(),
     )
 }
-pub fn array_sort<'a, A: Clone + PartialOrd>(
-    allocator: &'a Bump,
-    array: ArrayArray<A>,
-) -> ArrayArray<'a, A> {
-    let mut vec: Vec<A> = array.to_vec();
-    vec.sort_by(|a, b| basics_compare(a, b));
-    allocator.alloc(vec)
-}
-pub fn array_sort_by<'a, A: Clone, Comparable: PartialOrd>(
-    allocator: &'a Bump,
-    element_to_comparable: impl Fn(A) -> Comparable,
-    array: ArrayArray<'a, A>,
-) -> ArrayArray<'a, A> {
-    let mut vec: Vec<A> = array.to_vec();
-    vec.sort_by(|a, b| {
-        basics_compare(
-            element_to_comparable(a.clone()),
-            element_to_comparable(b.clone()),
-        )
-    });
-    allocator.alloc(vec)
-}
-pub fn array_sort_with<
-    'a,
-    A: Clone,
-    ElementCompare: Fn(A) -> ElementCompare1,
-    ElementCompare1: Fn(A) -> std::cmp::Ordering,
->(
-    allocator: &'a Bump,
-    element_compare: ElementCompare,
-    array: ArrayArray<'a, A>,
-) -> ArrayArray<'a, A> {
-    let mut vec: Vec<A> = array.to_vec();
-    vec.sort_by(|a, b| element_compare(a.clone())(b.clone()));
-    allocator.alloc(vec)
-}
 
 pub fn array_to_list<'a, A: Clone>(
     allocator: &'a Bump,
     array: ArrayArray<'a, A>,
 ) -> ListList<'a, A> {
-    double_ended_ref_iterator_to_list(allocator, array.into_iter())
+    double_ended_ref_iterator_to_list(allocator, slice_cow_alloc(allocator, array).into_iter())
 }
 pub fn array_to_indexed_list<'a, A: Clone>(
     allocator: &'a Bump,
@@ -855,14 +816,10 @@ pub fn array_foldr<'a, A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(St
         })
 }
 
-pub fn array_append<'a, A: Clone>(
-    allocator: &'a Bump,
-    left: ArrayArray<A>,
-    right: ArrayArray<A>,
-) -> ArrayArray<'a, A> {
-    let mut left_as_vec: Vec<A> = left.to_vec();
-    left_as_vec.extend_from_slice(right);
-    allocator.alloc(left_as_vec)
+pub fn array_append<'a, A: Clone>(left: ArrayArray<A>, right: ArrayArray<A>) -> ArrayArray<'a, A> {
+    let mut left_as_vec: Vec<A> = left.into_owned();
+    left_as_vec.extend_from_slice(&right);
+    std::borrow::Cow::Owned(left_as_vec)
 }
 
 pub const fn char_is_upper(char: char) -> bool {
@@ -2250,7 +2207,7 @@ pub fn json_decode_index<'a, A>(
         }),
     }
 }
-pub fn json_decode_array<'a, A>(
+pub fn json_decode_array<'a, A: Clone>(
     allocator: &'a Bump,
     element_decoder: JsonDecodeDecoder<'a, A>,
 ) -> JsonDecodeDecoder<'a, ArrayArray<'a, A>> {
@@ -2269,7 +2226,7 @@ pub fn json_decode_array<'a, A>(
                         Result::Ok(decoded_value) => decoded_array.push(decoded_value),
                     }
                 }
-                Result::Ok(allocator.alloc(decoded_array).as_slice())
+                Result::Ok(std::borrow::Cow::Owned(decoded_array))
             }
             json_not_array => Result::Err(JsonDecodeError::Failure(
                 std::borrow::Cow::Borrowed("Expecting an ARRAY"),
