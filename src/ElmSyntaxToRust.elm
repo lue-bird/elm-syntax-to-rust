@@ -3224,13 +3224,6 @@ rustPatternMapBindings bindingChange rustPattern =
                 }
 
 
-{-| TODO remove
--}
-type ReferenceOrValueType
-    = ValueType
-    | ReferenceType
-
-
 typeConstructReferenceToCoreRust :
     { moduleOrigin : String
     , name : String
@@ -9281,181 +9274,147 @@ expression context expressionTypedNode =
 
         ElmSyntaxTypeInfer.ExpressionReferenceVariant reference ->
             let
-                asBool : Maybe RustExpression
-                asBool =
-                    case reference.moduleOrigin of
-                        "Basics" ->
-                            case reference.name of
-                                "True" ->
-                                    Just
-                                        (RustExpressionReference
-                                            { qualification = []
-                                            , name = "true"
-                                            }
-                                        )
+                asRustVariant :
+                    { originTypeName : List String
+                    , name : String
+                    , referencedValueIndexes : List Int
+                    }
+                asRustVariant =
+                    case
+                        { moduleOrigin = reference.moduleOrigin
+                        , name = reference.name
+                        , type_ = expressionTypedNode.type_
+                        }
+                            |> variantToCoreRust
+                    of
+                        Just rustCoreReference ->
+                            rustCoreReference
 
-                                "False" ->
-                                    Just
-                                        (RustExpressionReference
-                                            { qualification = []
-                                            , name = "false"
-                                            }
-                                        )
-
-                                _ ->
-                                    Nothing
-
-                        _ ->
-                            Nothing
-            in
-            case asBool of
-                -- TODO I don't think this special casing is necessary anymore
-                Just bool ->
-                    Ok bool
-
-                Nothing ->
-                    let
-                        asRustVariant :
-                            { originTypeName : List String
-                            , name : String
-                            , referencedValueIndexes : List Int
-                            }
-                        asRustVariant =
-                            case
-                                { moduleOrigin = reference.moduleOrigin
-                                , name = reference.name
-                                , type_ = expressionTypedNode.type_
-                                }
-                                    |> variantToCoreRust
-                            of
-                                Just rustCoreReference ->
-                                    rustCoreReference
-
-                                Nothing ->
-                                    let
-                                        originTypeRustName : String
-                                        originTypeRustName =
-                                            { moduleOrigin = reference.moduleOrigin
-                                            , name = reference.choiceTypeName
-                                            }
-                                                |> elmReferenceToPascalCaseRustName
-                                    in
-                                    { name = reference.name |> toPascalCaseRustName
-                                    , originTypeName = [ originTypeRustName ]
-                                    , referencedValueIndexes =
-                                        case context.rustEnumTypes |> FastDict.get originTypeRustName of
-                                            Nothing ->
-                                                -- error
-                                                []
-
-                                            Just originRustEnumType ->
-                                                originRustEnumType.variantReferencedValueIndexes
-                                                    |> FastDict.get (reference.name |> toPascalCaseRustName)
-                                                    |> Maybe.withDefault []
+                        Nothing ->
+                            let
+                                originTypeRustName : String
+                                originTypeRustName =
+                                    { moduleOrigin = reference.moduleOrigin
+                                    , name = reference.choiceTypeName
                                     }
+                                        |> elmReferenceToPascalCaseRustName
+                            in
+                            { name = reference.name |> toPascalCaseRustName
+                            , originTypeName = [ originTypeRustName ]
+                            , referencedValueIndexes =
+                                case context.rustEnumTypes |> FastDict.get originTypeRustName of
+                                    Nothing ->
+                                        -- error
+                                        []
 
-                        rustExpressionVariantValue : RustExpression
-                        rustExpressionVariantValue =
-                            RustExpressionReferenceVariant
-                                { originTypeName = asRustVariant.originTypeName
-                                , name = asRustVariant.name
-                                }
+                                    Just originRustEnumType ->
+                                        originRustEnumType.variantReferencedValueIndexes
+                                            |> FastDict.get (reference.name |> toPascalCaseRustName)
+                                            |> Maybe.withDefault []
+                            }
 
-                        variantReferenceTypeExpandedAsFunction : { inputs : List ElmSyntaxTypeInfer.Type, output : ElmSyntaxTypeInfer.Type }
-                        variantReferenceTypeExpandedAsFunction =
-                            expressionTypedNode.type_
-                                |> inferredTypeExpandFunction
-                    in
-                    Ok
-                        (case variantReferenceTypeExpandedAsFunction.inputs of
-                            [] ->
-                                rustExpressionVariantValue
+                rustExpressionVariantValue : RustExpression
+                rustExpressionVariantValue =
+                    RustExpressionReferenceVariant
+                        { originTypeName = asRustVariant.originTypeName
+                        , name = asRustVariant.name
+                        }
 
-                            valueType0 :: valueType1Up ->
-                                let
-                                    typeAliasesInModule :
-                                        String
-                                        ->
-                                            Maybe
-                                                (FastDict.Dict
-                                                    String
-                                                    { parameters : List String
-                                                    , recordFieldOrder : Maybe (List String)
-                                                    , type_ : ElmSyntaxTypeInfer.Type
-                                                    }
-                                                )
-                                    typeAliasesInModule moduleNameToAccess =
-                                        context.moduleInfo
-                                            |> FastDict.get moduleNameToAccess
-                                            |> Maybe.map .typeAliases
-                                in
-                                (valueType0 :: valueType1Up)
-                                    |> List.indexedMap
-                                        (\valueIndex valueType ->
-                                            { name = generatedParameterNameForIndexAtPath valueIndex context.path
-                                            , type_ =
-                                                valueType
-                                                    |> type_
-                                                        { typeAliasesInModule = typeAliasesInModule
-                                                        , rustEnumTypes = context.rustEnumTypes
-                                                        }
+                variantReferenceTypeExpandedAsFunction : { inputs : List ElmSyntaxTypeInfer.Type, output : ElmSyntaxTypeInfer.Type }
+                variantReferenceTypeExpandedAsFunction =
+                    expressionTypedNode.type_
+                        |> inferredTypeExpandFunction
+            in
+            Ok
+                (case variantReferenceTypeExpandedAsFunction.inputs of
+                    [] ->
+                        rustExpressionVariantValue
+
+                    valueType0 :: valueType1Up ->
+                        let
+                            typeAliasesInModule :
+                                String
+                                ->
+                                    Maybe
+                                        (FastDict.Dict
+                                            String
+                                            { parameters : List String
+                                            , recordFieldOrder : Maybe (List String)
+                                            , type_ : ElmSyntaxTypeInfer.Type
                                             }
                                         )
-                                    |> List.foldr
-                                        (\parameter resultSoFar ->
-                                            { expression =
-                                                rustExpressionClosureReference
-                                                    { parameters =
-                                                        [ { pattern =
-                                                                RustPatternVariable
-                                                                    { name = parameter.name
-                                                                    , type_ = parameter.type_
-                                                                    , isRef = False
-                                                                    }
-                                                          , type_ = parameter.type_ |> Just
-                                                          }
-                                                        ]
-                                                    , resultType = Just resultSoFar.type_
-                                                    , result = resultSoFar.expression
-                                                    }
-                                            , type_ =
-                                                rustTypeBorrowDynFn
-                                                    { input = [ parameter.type_ ]
-                                                    , output = resultSoFar.type_
-                                                    }
-                                            }
-                                        )
-                                        { type_ =
-                                            variantReferenceTypeExpandedAsFunction.output
-                                                |> type_
-                                                    { typeAliasesInModule = typeAliasesInModule
-                                                    , rustEnumTypes = context.rustEnumTypes
-                                                    }
-                                        , expression =
-                                            RustExpressionCall
-                                                { called = rustExpressionVariantValue
-                                                , arguments =
-                                                    (valueType0 :: valueType1Up)
-                                                        |> List.indexedMap
-                                                            (\valueIndex _ ->
-                                                                let
-                                                                    rustValueParameterReference : RustExpression
-                                                                    rustValueParameterReference =
-                                                                        RustExpressionReference
-                                                                            { qualification = []
-                                                                            , name = generatedParameterNameForIndexAtPath valueIndex context.path
-                                                                            }
-                                                                in
-                                                                if asRustVariant.referencedValueIndexes |> List.member valueIndex then
-                                                                    rustExpressionAlloc rustValueParameterReference
-
-                                                                else
-                                                                    rustValueParameterReference
-                                                            )
+                            typeAliasesInModule moduleNameToAccess =
+                                context.moduleInfo
+                                    |> FastDict.get moduleNameToAccess
+                                    |> Maybe.map .typeAliases
+                        in
+                        (valueType0 :: valueType1Up)
+                            |> List.indexedMap
+                                (\valueIndex valueType ->
+                                    { name = generatedParameterNameForIndexAtPath valueIndex context.path
+                                    , type_ =
+                                        valueType
+                                            |> type_
+                                                { typeAliasesInModule = typeAliasesInModule
+                                                , rustEnumTypes = context.rustEnumTypes
                                                 }
+                                    }
+                                )
+                            |> List.foldr
+                                (\parameter resultSoFar ->
+                                    { expression =
+                                        rustExpressionClosureReference
+                                            { parameters =
+                                                [ { pattern =
+                                                        RustPatternVariable
+                                                            { name = parameter.name
+                                                            , type_ = parameter.type_
+                                                            , isRef = False
+                                                            }
+                                                  , type_ = parameter.type_ |> Just
+                                                  }
+                                                ]
+                                            , resultType = Just resultSoFar.type_
+                                            , result = resultSoFar.expression
+                                            }
+                                    , type_ =
+                                        rustTypeBorrowDynFn
+                                            { input = [ parameter.type_ ]
+                                            , output = resultSoFar.type_
+                                            }
+                                    }
+                                )
+                                { type_ =
+                                    variantReferenceTypeExpandedAsFunction.output
+                                        |> type_
+                                            { typeAliasesInModule = typeAliasesInModule
+                                            , rustEnumTypes = context.rustEnumTypes
+                                            }
+                                , expression =
+                                    RustExpressionCall
+                                        { called = rustExpressionVariantValue
+                                        , arguments =
+                                            (valueType0 :: valueType1Up)
+                                                |> List.indexedMap
+                                                    (\valueIndex _ ->
+                                                        let
+                                                            rustValueParameterReference : RustExpression
+                                                            rustValueParameterReference =
+                                                                RustExpressionReference
+                                                                    { qualification = []
+                                                                    , name = generatedParameterNameForIndexAtPath valueIndex context.path
+                                                                    }
+                                                        in
+                                                        if asRustVariant.referencedValueIndexes |> List.member valueIndex then
+                                                            rustExpressionAlloc rustValueParameterReference
+
+                                                        else
+                                                            rustValueParameterReference
+                                                    )
                                         }
-                                    |> .expression
-                        )
+                                }
+                            |> .expression
+                )
 
         ElmSyntaxTypeInfer.ExpressionReferenceRecordTypeAliasConstructorFunction reference ->
             case
@@ -12772,17 +12731,21 @@ rustExpressionCloneVariables variableShouldBeCloned rustExpression =
 
         RustExpressionCall call ->
             let
+                callIsCloneOfReference : Bool
                 callIsCloneOfReference =
                     case call.called of
                         RustExpressionReferenceMethod calledMethod ->
-                            (calledMethod.method == "clone")
-                                && (case calledMethod.subject of
+                            case calledMethod.method of
+                                "clone" ->
+                                    case calledMethod.subject of
                                         RustExpressionReference _ ->
                                             True
 
                                         _ ->
                                             False
-                                   )
+
+                                _ ->
+                                    False
 
                         _ ->
                             False
@@ -13101,15 +13064,13 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
             }
 
         RustExpressionClosure closure ->
-            -- having the closure own the value would make it FnOnce
-            -- TODO handling it here with rustExpressionCloneBindingUses
-            -- seems really, really sus to me
             { bindingWasUsed = False
             , withClones =
                 RustExpressionClosure
                     { parameters = closure.parameters
                     , resultType = closure.resultType
                     , result =
+                        -- having the closure own the value would make it FnOnce
                         closure.result
                             |> rustExpressionCloneBindingUses bindingToCloneBeforeLast
                     }
@@ -14432,123 +14393,6 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
         rustName =
             inferredLetDeclarationValueOrFunctionNode.declaration.name
                 |> toSnakeCaseRustName
-
-        syntaxParameterCount : Int
-        syntaxParameterCount =
-            inferredLetDeclarationValueOrFunctionNode.declaration.parameters
-                |> List.length
-
-        additionalGeneratedParameters : List { name : String, type_ : RustType }
-        additionalGeneratedParameters =
-            rustFullTypeAsFunction.inputs
-                |> List.drop syntaxParameterCount
-                |> List.indexedMap
-                    (\additionalParameterIndex additionalParameterInferredType ->
-                        { name =
-                            generatedParameterNameForIndexAtPath
-                                (syntaxParameterCount + additionalParameterIndex)
-                                context.path
-                        , type_ =
-                            additionalParameterInferredType
-                                |> type_
-                                    { typeAliasesInModule = typeAliasesInModule
-                                    , rustEnumTypes = context.rustEnumTypes
-                                    }
-                        }
-                    )
-
-        capturedVariables : List { name : String, type_ : ElmSyntaxTypeInfer.Type }
-        capturedVariables =
-            inferredExpressionCapturedVariablesFromContext
-                { bindings =
-                    context.localElmBindingsInScope
-                        |> FastDict.remove inferredLetDeclarationValueOrFunctionNode.declaration.name
-                , letDeclaredValueAndFunctionTypes =
-                    context.letDeclaredValueAndFunctionTypes
-                        |> FastDict.remove inferredLetDeclarationValueOrFunctionNode.declaration.name
-                }
-                inferredLetDeclarationValueOrFunctionNode.declaration.result.value
-
-        elmParametersAsRust :
-            { patterns : List { pattern : RustPattern, type_ : RustType }
-            , bindingsToDerefClone : List { name : String, type_ : RustType }
-            }
-        elmParametersAsRust =
-            inferredLetDeclarationValueOrFunctionNode.declaration.parameters
-                |> List.foldr
-                    (\parameter soFar ->
-                        let
-                            rustParameter :
-                                { pattern : RustPattern
-                                , guardConditions : List RustExpression
-                                , bindingsToDerefClone : List { name : String, type_ : RustType }
-                                }
-                            rustParameter =
-                                parameter
-                                    |> pattern
-                                        { typeAliasesInModule = typeAliasesInModule
-                                        , rustEnumTypes = context.rustEnumTypes
-                                        }
-                        in
-                        { patterns =
-                            { pattern = rustParameter.pattern
-                            , type_ =
-                                parameter.type_
-                                    |> type_
-                                        { typeAliasesInModule = typeAliasesInModule
-                                        , rustEnumTypes = context.rustEnumTypes
-                                        }
-                            }
-                                :: soFar.patterns
-                        , bindingsToDerefClone =
-                            rustParameter.bindingsToDerefClone
-                                ++ soFar.bindingsToDerefClone
-                        }
-                    )
-                    { patterns = []
-                    , bindingsToDerefClone = []
-                    }
-
-        allRustParametersAfterAllocator : List { pattern : RustPattern, type_ : RustType }
-        allRustParametersAfterAllocator =
-            (capturedVariables
-                |> List.map
-                    (\parameter ->
-                        let
-                            rustType : RustType
-                            rustType =
-                                parameter.type_
-                                    |> type_
-                                        { typeAliasesInModule = typeAliasesInModule
-                                        , rustEnumTypes = context.rustEnumTypes
-                                        }
-                        in
-                        { pattern =
-                            RustPatternVariable
-                                { name =
-                                    parameter.name
-                                        |> toSnakeCaseRustName
-                                , isRef = False
-                                , type_ = rustType
-                                }
-                        , type_ = rustType
-                        }
-                    )
-            )
-                ++ elmParametersAsRust.patterns
-                ++ (additionalGeneratedParameters
-                        |> List.map
-                            (\generatedAdditionalParameter ->
-                                { type_ = generatedAdditionalParameter.type_
-                                , pattern =
-                                    RustPatternVariable
-                                        { name = generatedAdditionalParameter.name
-                                        , isRef = False
-                                        , type_ = generatedAdditionalParameter.type_
-                                        }
-                                }
-                            )
-                   )
     in
     if
         (rustFullTypeAsFunction.inputs |> List.isEmpty)
@@ -14593,6 +14437,123 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
         Result.map
             (\result ->
                 let
+                    syntaxParameterCount : Int
+                    syntaxParameterCount =
+                        inferredLetDeclarationValueOrFunctionNode.declaration.parameters
+                            |> List.length
+
+                    additionalGeneratedParameters : List { name : String, type_ : RustType }
+                    additionalGeneratedParameters =
+                        rustFullTypeAsFunction.inputs
+                            |> List.drop syntaxParameterCount
+                            |> List.indexedMap
+                                (\additionalParameterIndex additionalParameterInferredType ->
+                                    { name =
+                                        generatedParameterNameForIndexAtPath
+                                            (syntaxParameterCount + additionalParameterIndex)
+                                            context.path
+                                    , type_ =
+                                        additionalParameterInferredType
+                                            |> type_
+                                                { typeAliasesInModule = typeAliasesInModule
+                                                , rustEnumTypes = context.rustEnumTypes
+                                                }
+                                    }
+                                )
+
+                    capturedVariables : List { name : String, type_ : ElmSyntaxTypeInfer.Type }
+                    capturedVariables =
+                        inferredExpressionCapturedVariablesFromContext
+                            { bindings =
+                                context.localElmBindingsInScope
+                                    |> FastDict.remove inferredLetDeclarationValueOrFunctionNode.declaration.name
+                            , letDeclaredValueAndFunctionTypes =
+                                context.letDeclaredValueAndFunctionTypes
+                                    |> FastDict.remove inferredLetDeclarationValueOrFunctionNode.declaration.name
+                            }
+                            inferredLetDeclarationValueOrFunctionNode.declaration.result.value
+
+                    elmParametersAsRust :
+                        { patterns : List { pattern : RustPattern, type_ : RustType }
+                        , bindingsToDerefClone : List { name : String, type_ : RustType }
+                        }
+                    elmParametersAsRust =
+                        inferredLetDeclarationValueOrFunctionNode.declaration.parameters
+                            |> List.foldr
+                                (\parameter soFar ->
+                                    let
+                                        rustParameter :
+                                            { pattern : RustPattern
+                                            , guardConditions : List RustExpression
+                                            , bindingsToDerefClone : List { name : String, type_ : RustType }
+                                            }
+                                        rustParameter =
+                                            parameter
+                                                |> pattern
+                                                    { typeAliasesInModule = typeAliasesInModule
+                                                    , rustEnumTypes = context.rustEnumTypes
+                                                    }
+                                    in
+                                    { patterns =
+                                        { pattern = rustParameter.pattern
+                                        , type_ =
+                                            parameter.type_
+                                                |> type_
+                                                    { typeAliasesInModule = typeAliasesInModule
+                                                    , rustEnumTypes = context.rustEnumTypes
+                                                    }
+                                        }
+                                            :: soFar.patterns
+                                    , bindingsToDerefClone =
+                                        rustParameter.bindingsToDerefClone
+                                            ++ soFar.bindingsToDerefClone
+                                    }
+                                )
+                                { patterns = []
+                                , bindingsToDerefClone = []
+                                }
+
+                    allRustParametersAfterAllocator : List { pattern : RustPattern, type_ : RustType }
+                    allRustParametersAfterAllocator =
+                        (capturedVariables
+                            |> List.map
+                                (\parameter ->
+                                    let
+                                        rustType : RustType
+                                        rustType =
+                                            parameter.type_
+                                                |> type_
+                                                    { typeAliasesInModule = typeAliasesInModule
+                                                    , rustEnumTypes = context.rustEnumTypes
+                                                    }
+                                    in
+                                    { pattern =
+                                        RustPatternVariable
+                                            { name =
+                                                parameter.name
+                                                    |> toSnakeCaseRustName
+                                            , isRef = False
+                                            , type_ = rustType
+                                            }
+                                    , type_ = rustType
+                                    }
+                                )
+                        )
+                            ++ elmParametersAsRust.patterns
+                            ++ (additionalGeneratedParameters
+                                    |> List.map
+                                        (\generatedAdditionalParameter ->
+                                            { type_ = generatedAdditionalParameter.type_
+                                            , pattern =
+                                                RustPatternVariable
+                                                    { name = generatedAdditionalParameter.name
+                                                    , isRef = False
+                                                    , type_ = generatedAdditionalParameter.type_
+                                                    }
+                                            }
+                                        )
+                               )
+
                     resultWithAdditionalParameters : RustExpression
                     resultWithAdditionalParameters =
                         additionalGeneratedParameters
