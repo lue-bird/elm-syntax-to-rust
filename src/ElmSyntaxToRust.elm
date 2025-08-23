@@ -12209,10 +12209,10 @@ the transpiled code tends to contains a bunch of
 "expand, then condense if possible" steps, like
 
     List.append x x
-    → (|a| |b| list_append(a, b))(x)(x)
-    → (|b| list_append(x, b))(x)
-    → list_append(x, x)
-    → list_append(x.clone(), x)
+    -> (|a| |b| list_append(a, b))(x)(x)
+    -> (|b| list_append(x, b))(x)
+    -> list_append(x, x)
+    -> list_append(x.clone(), x)
 
 as you can see none of the intermediate syntax would pass ownership checking
 but the end result is.
@@ -12710,12 +12710,33 @@ rustExpressionCloneVariables variableShouldBeCloned rustExpression =
                 )
 
         RustExpressionStructAccess recordAccess ->
-            RustExpressionStructAccess
-                { struct =
-                    recordAccess.struct
-                        |> rustExpressionCloneVariables variableShouldBeCloned
-                , field = recordAccess.field
-                }
+            -- _hand-wave_ optimization possibility:
+            -- do not clone anything if field value type of is copy (e.g. a shared reference)
+            let
+                canCloneOnlyFieldValue : Bool
+                canCloneOnlyFieldValue =
+                    case recordAccess.struct of
+                        RustExpressionReference reference ->
+                            case reference.qualification of
+                                _ :: _ ->
+                                    False
+
+                                [] ->
+                                    reference.name |> variableShouldBeCloned
+
+                        _ ->
+                            False
+            in
+            if canCloneOnlyFieldValue then
+                rustExpressionClone rustExpression
+
+            else
+                RustExpressionStructAccess
+                    { struct =
+                        recordAccess.struct
+                            |> rustExpressionCloneVariables variableShouldBeCloned
+                    , field = recordAccess.field
+                    }
 
         RustExpressionReferenceMethod reference ->
             RustExpressionReferenceMethod
@@ -12827,18 +12848,57 @@ rustExpressionCloneVariables variableShouldBeCloned rustExpression =
                 rustExpression
 
             else
-                RustExpressionCall
-                    { called =
+                -- tiny "optimization": do not clone functions.
+                -- redundant once references are typed and can be determined to be Copy or not
+                let
+                    calledWithClones : RustExpression
+                    calledWithClones =
                         call.called
                             |> rustExpressionCloneVariables variableShouldBeCloned
-                    , arguments =
-                        call.arguments
-                            |> List.map
-                                (\argument ->
-                                    argument
-                                        |> rustExpressionCloneVariables variableShouldBeCloned
-                                )
-                    }
+
+                    calledAsCloned : Maybe RustExpression
+                    calledAsCloned =
+                        case calledWithClones of
+                            RustExpressionCall calledCall ->
+                                case calledCall.called of
+                                    RustExpressionReferenceMethod calledMethod ->
+                                        case calledMethod.method of
+                                            "clone" ->
+                                                Just calledMethod.subject
+
+                                            _ ->
+                                                Nothing
+
+                                    _ ->
+                                        Nothing
+
+                            _ ->
+                                Nothing
+                in
+                case calledAsCloned of
+                    Just calledUncloned ->
+                        RustExpressionCall
+                            { called = calledUncloned
+                            , arguments =
+                                call.arguments
+                                    |> List.map
+                                        (\argument ->
+                                            argument
+                                                |> rustExpressionCloneVariables variableShouldBeCloned
+                                        )
+                            }
+
+                    Nothing ->
+                        RustExpressionCall
+                            { called = calledWithClones
+                            , arguments =
+                                call.arguments
+                                    |> List.map
+                                        (\argument ->
+                                            argument
+                                                |> rustExpressionCloneVariables variableShouldBeCloned
+                                        )
+                            }
 
         RustExpressionMatch match ->
             RustExpressionMatch
@@ -17199,7 +17259,7 @@ inferredTypeNotVariableExpand expansions syntaxType =
 
                                 ElmSyntaxTypeInfer.TypeConstruct _ ->
                                     -- should already be expanded, which means it is a choice type
-                                    -- → invalid expansion
+                                    -- -> invalid expansion
                                     ElmSyntaxTypeInfer.TypeRecordExtension
                                         { recordVariable = typeRecordExtension.recordVariable
                                         , fields = fieldsExpanded
