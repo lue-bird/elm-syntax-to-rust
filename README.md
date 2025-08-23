@@ -108,6 +108,7 @@ So overall, if you intend to let the transpiled code handle a memory-hungry long
 Use it for classic arena-friendly loop steps like state → interface, request → response etc.
 
 ### improvement ideas
-- replace immutable string type by `Cow<str>` and array by `Cow<[A]>` to make appending strings or setting array elements cheap. As a result, when a variable's type contains a string/array, use `_.clone()` every use but the last and pattern match with `(Owned("x") | Borrowed("x"))`. Also consider the same pattern for `Dict` (as `BTreeMap`) and `Set` (as `BTreeSet`)
-- for fns: switch to introducing type parameters with Fn constraints instead of taking `&dyn Fn` (at least for direct parameters), then possibly also avoid `alloc` for lambdas in direct call (not easy generally because the lambda could be additionally nested, so either walk the original type (meh) or just be satisfied removing only the outermost layer)
+- support `Dict` (as `Cow<BTreeMap>`) and `Set` (as `Cow<BTreeSet>`)
+- for fns: switch to introducing type parameters with Fn constraints instead of taking `&dyn Fn` (at least for direct parameters), then possibly also avoid `alloc` for lambdas in direct call (not easy generally because the lambda could be additionally nested, so either walk the original type (meh) or just be satisfied removing only the outermost layer).
+  Alternative: take lambdas as parameters e.g. `Fn(First, Second, Third) -> Out`, then look up for each called reference use what the exact number is and "un-nest" accordingly.
 - if lambda is called with a function, always inline that function
