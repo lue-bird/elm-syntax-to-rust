@@ -598,7 +598,11 @@ choiceTypeDeclaration context syntaxChoiceType =
         rustVariants
             |> fastDictAll
                 (\_ values ->
-                    values |> List.all rustTypeIsCopy
+                    values
+                        |> List.all
+                            (\value ->
+                                value |> rustTypeIsCopy { typeVariablesAreCopy = True }
+                            )
                 )
     }
 
@@ -686,7 +690,11 @@ printRustEnumDeclaration rustEnumType =
                     rustEnumType.variants
                         |> fastDictAll
                             (\_ values ->
-                                values |> List.all rustTypeIsCopy
+                                values
+                                    |> List.all
+                                        (\value ->
+                                            value |> rustTypeIsCopy { typeVariablesAreCopy = True }
+                                        )
                             )
                   then
                     Just "Copy"
@@ -760,7 +768,7 @@ rustTypeIsDebug rustType =
     -- IGNORE TCO
     case rustType of
         RustTypeInfer ->
-            -- not decide-able at least
+            -- not decide-able
             False
 
         RustTypeUnit ->
@@ -786,16 +794,11 @@ rustTypeIsDebug rustType =
                 |> List.all rustTypeIsDebug
 
 
-{-| TODO add parameter { typeVariablesAreCopy : Bool }
--}
-rustTypeIsCopy : RustType -> Bool
-rustTypeIsCopy rustType =
+rustTypeIsCopy : { typeVariablesAreCopy : Bool } -> RustType -> Bool
+rustTypeIsCopy context rustType =
     -- IGNORE TCO
     case rustType of
         RustTypeInfer ->
-            False
-
-        RustTypeVariable _ ->
             False
 
         RustTypeUnit ->
@@ -808,15 +811,26 @@ rustTypeIsCopy rustType =
             -- all references implement Copy
             True
 
+        RustTypeVariable _ ->
+            context.typeVariablesAreCopy
+
         RustTypeTuple parts ->
-            (parts.part0 |> rustTypeIsCopy)
-                && (parts.part1 |> rustTypeIsCopy)
-                && (parts.part2Up |> List.all rustTypeIsCopy)
+            (parts.part0 |> rustTypeIsCopy context)
+                && (parts.part1 |> rustTypeIsCopy context)
+                && (parts.part2Up
+                        |> List.all
+                            (\part ->
+                                part |> rustTypeIsCopy context
+                            )
+                   )
 
         RustTypeConstruct typeConstruct ->
             typeConstruct.isCopy
                 && (typeConstruct.arguments
-                        |> List.all rustTypeIsCopy
+                        |> List.all
+                            (\argument ->
+                                argument |> rustTypeIsCopy context
+                            )
                    )
 
 
@@ -1178,7 +1192,9 @@ typeNotVariable context inferredTypeNotVariable =
                                     |> FastSet.toList
                             , qualification = []
                             , name = rustName
-                            , isCopy = expandedRustType |> rustTypeIsCopy
+                            , isCopy =
+                                expandedRustType
+                                    |> rustTypeIsCopy { typeVariablesAreCopy = False }
                             }
 
                     else
@@ -2632,7 +2648,7 @@ pattern context patternInferred =
             -- possible optimization: if rustPattern.pattern
             -- does not capture any values (in an owning way),
             -- just make the alias binding owning
-            if rustType |> rustTypeIsCopy then
+            if rustType |> rustTypeIsCopy { typeVariablesAreCopy = False } then
                 { pattern =
                     RustPatternAlias
                         { variable = rustAliasBindingName
@@ -3065,7 +3081,7 @@ bindingsToDerefCloneToRustStatements bindingsToDerefClone =
             (\bindingToDeref ->
                 -- TODO prevent them being put in bindingsToDerefClone
                 -- and given a new name in the first place
-                if bindingToDeref.type_ |> rustTypeIsCopy then
+                if bindingToDeref.type_ |> rustTypeIsCopy { typeVariablesAreCopy = False } then
                     RustStatementLetDeclaration
                         { name = bindingToDeref.name
                         , resultType = bindingToDeref.type_
@@ -13667,7 +13683,10 @@ rustTypedBindingsKeepThoseRequiringClone rustTypedBindings =
         |> List.filter
             (\rustTypedBinding ->
                 (rustTypedBinding.name /= generatedAllocatorVariableName)
-                    && Basics.not (rustTypeIsCopy rustTypedBinding.type_)
+                    && Basics.not
+                        (rustTypeIsCopy { typeVariablesAreCopy = False }
+                            rustTypedBinding.type_
+                        )
             )
 
 
