@@ -66,8 +66,6 @@ type RustType
 -}
 type RustPattern
     = RustPatternIgnore
-    | -- TODO redundant with RustPatternVariant
-      RustPatternBool Bool
     | RustPatternInteger Int
     | RustPatternChar Char
     | RustPatternStringLiteral String
@@ -2571,133 +2569,107 @@ pattern context patternInferred =
 
         ElmSyntaxTypeInfer.PatternVariant variant ->
             let
-                asBool : Maybe Bool
-                asBool =
-                    case variant.moduleOrigin of
-                        "Basics" ->
-                            case variant.name of
-                                "True" ->
-                                    Just True
-
-                                "False" ->
-                                    Just False
-
-                                _ ->
-                                    Nothing
-
-                        _ ->
-                            Nothing
-            in
-            case asBool of
-                Just bool ->
-                    { pattern = RustPatternBool bool
-                    , guardConditions = []
-                    , bindingsToDerefClone = []
+                reference :
+                    { originTypeName : List String
+                    , name : String
+                    , referencedValueIndexes : List Int
                     }
+                reference =
+                    case
+                        { moduleOrigin = variant.moduleOrigin
+                        , name = variant.name
+                        , type_ = patternInferred.type_
+                        }
+                            |> variantToCoreRust
+                    of
+                        Just rustReference ->
+                            rustReference
 
-                Nothing ->
-                    let
-                        reference :
-                            { originTypeName : List String
-                            , name : String
-                            , referencedValueIndexes : List Int
+                        Nothing ->
+                            let
+                                originTypeRustName : String
+                                originTypeRustName =
+                                    { moduleOrigin = variant.moduleOrigin
+                                    , name = variant.choiceTypeName
+                                    }
+                                        |> elmReferenceToPascalCaseRustName
+                            in
+                            { originTypeName = [ originTypeRustName ]
+                            , name = variant.name |> toPascalCaseRustName
+                            , referencedValueIndexes =
+                                case context.rustEnumTypes |> FastDict.get originTypeRustName of
+                                    Nothing ->
+                                        -- error
+                                        []
+
+                                    Just originRustEnumType ->
+                                        originRustEnumType.variantReferencedValueIndexes
+                                            |> FastDict.get (variant.name |> toPascalCaseRustName)
+                                            |> Maybe.withDefault []
                             }
-                        reference =
-                            case
-                                { moduleOrigin = variant.moduleOrigin
-                                , name = variant.name
-                                , type_ = patternInferred.type_
-                                }
-                                    |> variantToCoreRust
-                            of
-                                Just rustReference ->
-                                    rustReference
 
-                                Nothing ->
+                rustValues :
+                    { patterns : List RustPattern
+                    , guardConditions : List RustExpression
+                    , bindingsToDerefClone : List { name : String, type_ : RustType }
+                    }
+                rustValues =
+                    variant.values
+                        |> List.indexedMap Tuple.pair
+                        |> List.foldr
+                            (\( valueIndex, variantValue ) soFar ->
+                                if reference.referencedValueIndexes |> List.member valueIndex then
                                     let
-                                        originTypeRustName : String
-                                        originTypeRustName =
-                                            { moduleOrigin = variant.moduleOrigin
-                                            , name = variant.choiceTypeName
-                                            }
-                                                |> elmReferenceToPascalCaseRustName
+                                        rustValue : { pattern : RustPattern, guardConditions : List RustExpression }
+                                        rustValue =
+                                            variantValue |> referencedPattern context
                                     in
-                                    { originTypeName = [ originTypeRustName ]
-                                    , name = variant.name |> toPascalCaseRustName
-                                    , referencedValueIndexes =
-                                        case context.rustEnumTypes |> FastDict.get originTypeRustName of
-                                            Nothing ->
-                                                -- error
-                                                []
-
-                                            Just originRustEnumType ->
-                                                originRustEnumType.variantReferencedValueIndexes
-                                                    |> FastDict.get (variant.name |> toPascalCaseRustName)
-                                                    |> Maybe.withDefault []
+                                    { patterns =
+                                        (rustValue.pattern
+                                            |> rustPatternAlterBindings generatedPatternRefBindingName
+                                        )
+                                            :: soFar.patterns
+                                    , guardConditions =
+                                        rustValue.guardConditions
+                                            ++ soFar.guardConditions
+                                    , bindingsToDerefClone =
+                                        (rustValue.pattern |> rustPatternIntroducedBindings)
+                                            ++ soFar.bindingsToDerefClone
                                     }
 
-                        rustValues :
-                            { patterns : List RustPattern
-                            , guardConditions : List RustExpression
-                            , bindingsToDerefClone : List { name : String, type_ : RustType }
-                            }
-                        rustValues =
-                            variant.values
-                                |> List.indexedMap Tuple.pair
-                                |> List.foldr
-                                    (\( valueIndex, variantValue ) soFar ->
-                                        if reference.referencedValueIndexes |> List.member valueIndex then
-                                            let
-                                                rustValue : { pattern : RustPattern, guardConditions : List RustExpression }
-                                                rustValue =
-                                                    variantValue |> referencedPattern context
-                                            in
-                                            { patterns =
-                                                (rustValue.pattern
-                                                    |> rustPatternAlterBindings generatedPatternRefBindingName
-                                                )
-                                                    :: soFar.patterns
-                                            , guardConditions =
-                                                rustValue.guardConditions
-                                                    ++ soFar.guardConditions
-                                            , bindingsToDerefClone =
-                                                (rustValue.pattern |> rustPatternIntroducedBindings)
-                                                    ++ soFar.bindingsToDerefClone
+                                else
+                                    let
+                                        rustValue :
+                                            { pattern : RustPattern
+                                            , guardConditions : List RustExpression
+                                            , bindingsToDerefClone : List { name : String, type_ : RustType }
                                             }
-
-                                        else
-                                            let
-                                                rustValue :
-                                                    { pattern : RustPattern
-                                                    , guardConditions : List RustExpression
-                                                    , bindingsToDerefClone : List { name : String, type_ : RustType }
-                                                    }
-                                                rustValue =
-                                                    variantValue |> pattern context
-                                            in
-                                            { patterns = rustValue.pattern :: soFar.patterns
-                                            , guardConditions =
-                                                rustValue.guardConditions
-                                                    ++ soFar.guardConditions
-                                            , bindingsToDerefClone =
-                                                rustValue.bindingsToDerefClone
-                                                    ++ soFar.bindingsToDerefClone
-                                            }
-                                    )
-                                    { patterns = []
-                                    , guardConditions = []
-                                    , bindingsToDerefClone = []
+                                        rustValue =
+                                            variantValue |> pattern context
+                                    in
+                                    { patterns = rustValue.pattern :: soFar.patterns
+                                    , guardConditions =
+                                        rustValue.guardConditions
+                                            ++ soFar.guardConditions
+                                    , bindingsToDerefClone =
+                                        rustValue.bindingsToDerefClone
+                                            ++ soFar.bindingsToDerefClone
                                     }
-                    in
-                    { pattern =
-                        RustPatternVariant
-                            { originTypeName = reference.originTypeName
-                            , name = reference.name
-                            , values = rustValues.patterns
+                            )
+                            { patterns = []
+                            , guardConditions = []
+                            , bindingsToDerefClone = []
                             }
-                    , guardConditions = rustValues.guardConditions
-                    , bindingsToDerefClone = rustValues.bindingsToDerefClone
+            in
+            { pattern =
+                RustPatternVariant
+                    { originTypeName = reference.originTypeName
+                    , name = reference.name
+                    , values = rustValues.patterns
                     }
+            , guardConditions = rustValues.guardConditions
+            , bindingsToDerefClone = rustValues.bindingsToDerefClone
+            }
 
         ElmSyntaxTypeInfer.PatternAs patternAs ->
             let
@@ -3006,84 +2978,59 @@ referencedPattern context patternInferred =
 
         ElmSyntaxTypeInfer.PatternVariant variant ->
             let
-                asBool : Maybe Bool
-                asBool =
-                    case variant.moduleOrigin of
-                        "Basics" ->
-                            case variant.name of
-                                "True" ->
-                                    Just True
-
-                                "False" ->
-                                    Just False
-
-                                _ ->
-                                    Nothing
-
-                        _ ->
-                            Nothing
-            in
-            case asBool of
-                Just bool ->
-                    { pattern = RustPatternBool bool
-                    , guardConditions = []
-                    }
-
-                Nothing ->
-                    let
-                        reference : { originTypeName : List String, name : String }
-                        reference =
-                            case
-                                { moduleOrigin = variant.moduleOrigin
-                                , name = variant.name
-                                , type_ = patternInferred.type_
-                                }
-                                    |> variantToCoreRust
-                            of
-                                Just rustReference ->
-                                    { originTypeName = rustReference.originTypeName
-                                    , name = rustReference.name
-                                    }
-
-                                Nothing ->
-                                    let
-                                        originTypeRustName : String
-                                        originTypeRustName =
-                                            { moduleOrigin = variant.moduleOrigin
-                                            , name = variant.choiceTypeName
-                                            }
-                                                |> elmReferenceToPascalCaseRustName
-                                    in
-                                    { originTypeName = [ originTypeRustName ]
-                                    , name = variant.name |> toPascalCaseRustName
-                                    }
-
-                        rustValues : { patterns : List RustPattern, guardConditions : List RustExpression }
-                        rustValues =
-                            variant.values
-                                |> List.foldr
-                                    (\variantValue soFar ->
-                                        let
-                                            rustValue : { pattern : RustPattern, guardConditions : List RustExpression }
-                                            rustValue =
-                                                variantValue |> referencedPattern context
-                                        in
-                                        { patterns = rustValue.pattern :: soFar.patterns
-                                        , guardConditions =
-                                            rustValue.guardConditions
-                                                ++ soFar.guardConditions
-                                        }
-                                    )
-                                    { patterns = [], guardConditions = [] }
-                    in
-                    { pattern =
-                        RustPatternVariant
-                            { originTypeName = reference.originTypeName
-                            , name = reference.name
-                            , values = rustValues.patterns
+                reference : { originTypeName : List String, name : String }
+                reference =
+                    case
+                        { moduleOrigin = variant.moduleOrigin
+                        , name = variant.name
+                        , type_ = patternInferred.type_
+                        }
+                            |> variantToCoreRust
+                    of
+                        Just rustReference ->
+                            { originTypeName = rustReference.originTypeName
+                            , name = rustReference.name
                             }
-                    , guardConditions = rustValues.guardConditions
+
+                        Nothing ->
+                            let
+                                originTypeRustName : String
+                                originTypeRustName =
+                                    { moduleOrigin = variant.moduleOrigin
+                                    , name = variant.choiceTypeName
+                                    }
+                                        |> elmReferenceToPascalCaseRustName
+                            in
+                            { originTypeName = [ originTypeRustName ]
+                            , name = variant.name |> toPascalCaseRustName
+                            }
+
+                rustValues : { patterns : List RustPattern, guardConditions : List RustExpression }
+                rustValues =
+                    variant.values
+                        |> List.foldr
+                            (\variantValue soFar ->
+                                let
+                                    rustValue : { pattern : RustPattern, guardConditions : List RustExpression }
+                                    rustValue =
+                                        variantValue |> referencedPattern context
+                                in
+                                { patterns = rustValue.pattern :: soFar.patterns
+                                , guardConditions =
+                                    rustValue.guardConditions
+                                        ++ soFar.guardConditions
+                                }
+                            )
+                            { patterns = [], guardConditions = [] }
+            in
+            { pattern =
+                RustPatternVariant
+                    { originTypeName = reference.originTypeName
+                    , name = reference.name
+                    , values = rustValues.patterns
                     }
+            , guardConditions = rustValues.guardConditions
+            }
 
         ElmSyntaxTypeInfer.PatternAs patternAs ->
             let
@@ -3215,9 +3162,6 @@ rustPatternMapBindings bindingChange rustPattern =
             RustPatternIgnore
 
         RustPatternChar _ ->
-            rustPattern
-
-        RustPatternBool _ ->
             rustPattern
 
         RustPatternInteger _ ->
@@ -6147,13 +6091,6 @@ printRustPattern rustPattern =
         RustPatternIgnore ->
             printExactlyUnderscore
 
-        RustPatternBool bool ->
-            if bool then
-                printRustPatternTrue
-
-            else
-                printRustPatternFalse
-
         RustPatternInteger int64 ->
             -- NUMBER currently represented as f64
             Print.exactly (f64Literal (int64 |> Basics.toFloat))
@@ -6239,16 +6176,6 @@ printRustPattern rustPattern =
                             printExactlyCommaSpace
                     )
                 |> Print.followedBy printExactlyParenClosing
-
-
-printRustPatternTrue : Print
-printRustPatternTrue =
-    Print.exactly "true"
-
-
-printRustPatternFalse : Print
-printRustPatternFalse =
-    Print.exactly "false"
 
 
 printRustPatternStructNotExhaustive :
@@ -8895,9 +8822,6 @@ rustPatternIntroducedBindings rustPattern =
         RustPatternIgnore ->
             []
 
-        RustPatternBool _ ->
-            []
-
         RustPatternInteger _ ->
             []
 
@@ -9086,7 +9010,7 @@ expression context expressionTypedNode =
                     expressionTypedNode.type_ |> inferredTypeExpandToFunction
             in
             case inferredTypeAsFunction.inputs of
-                leftInferredType :: rightInferredType :: inputsAfterRight ->
+                leftInferredType :: rightInferredType :: _ ->
                     let
                         typeAliasesInModule : String -> Maybe (FastDict.Dict String { parameters : List String, recordFieldOrder : Maybe (List String), type_ : ElmSyntaxTypeInfer.Type })
                         typeAliasesInModule moduleNameToAccess =
@@ -9097,16 +9021,6 @@ expression context expressionTypedNode =
                     Result.map
                         (\reference ->
                             let
-                                resultRustType : RustType
-                                resultRustType =
-                                    inferredTypeFunctionCreate
-                                        inputsAfterRight
-                                        inferredTypeAsFunction.output
-                                        |> type_
-                                            { typeAliasesInModule = typeAliasesInModule
-                                            , rustEnumTypes = context.rustEnumTypes
-                                            }
-
                                 leftRustType : RustType
                                 leftRustType =
                                     leftInferredType
