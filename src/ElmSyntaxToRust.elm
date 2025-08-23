@@ -8793,32 +8793,17 @@ type alias ExpressionToRustContext =
 
 rustExpressionClosureReference :
     { parameters : List { pattern : RustPattern, type_ : Maybe RustType }
-    , resultType : Maybe RustType
     , result : RustExpression
     }
     -> RustExpression
 rustExpressionClosureReference closure =
-    RustExpressionAs
-        { expression =
-            rustExpressionAlloc
-                (RustExpressionClosure closure)
-        , type_ =
-            RustTypeBorrow
-                { lifetimeVariable = Nothing
-                , type_ =
-                    RustTypeFunction
-                        { input =
-                            closure.parameters
-                                |> List.map
-                                    (\parameter ->
-                                        parameter.type_
-                                            |> Maybe.withDefault RustTypeInfer
-                                    )
-                        , output =
-                            closure.resultType |> Maybe.withDefault RustTypeInfer
-                        }
-                }
-        }
+    rustExpressionAlloc
+        (RustExpressionClosure
+            { parameters = closure.parameters
+            , result = closure.result
+            , resultType = Nothing
+            }
+        )
 
 
 {-| Attention: Use `expressionWrappingInLetIfOrMatchResult`
@@ -8884,14 +8869,6 @@ expression context expressionTypedNode =
                                             |> Just
                                   }
                                 ]
-                            , resultType =
-                                Just
-                                    (typeFunction.output
-                                        |> type_
-                                            { typeAliasesInModule = typeAliasesInModule
-                                            , rustEnumTypes = context.rustEnumTypes
-                                            }
-                                    )
                             , result =
                                 RustExpressionStructAccess
                                     { struct =
@@ -8965,13 +8942,6 @@ expression context expressionTypedNode =
                                       , type_ = leftRustType |> Just
                                       }
                                     ]
-                                , resultType =
-                                    Just
-                                        (rustTypeBorrowDynFn
-                                            { input = [ rightRustType ]
-                                            , output = resultRustType
-                                            }
-                                        )
                                 , result =
                                     rustExpressionClosureReference
                                         { parameters =
@@ -8984,7 +8954,6 @@ expression context expressionTypedNode =
                                               , type_ = rightRustType |> Just
                                               }
                                             ]
-                                        , resultType = Just resultRustType
                                         , result =
                                             RustExpressionCall
                                                 { called =
@@ -9374,7 +9343,6 @@ expression context expressionTypedNode =
                                                   , type_ = parameter.type_ |> Just
                                                   }
                                                 ]
-                                            , resultType = Just resultSoFar.type_
                                             , result = resultSoFar.expression
                                             }
                                     , type_ =
@@ -9503,7 +9471,6 @@ expression context expressionTypedNode =
                                                   , type_ = parameterType |> Just
                                                   }
                                                 ]
-                                            , resultType = Just resultSoFar.type_
                                             , result = resultSoFar.expression
                                             }
                                     , type_ =
@@ -9616,7 +9583,6 @@ expression context expressionTypedNode =
                                                               , type_ = Just parameter.type_
                                                               }
                                                             ]
-                                                        , resultType = Just resultSoFar.type_
                                                         , result = resultSoFar.expression
                                                         }
                                                 , type_ =
@@ -9690,7 +9656,6 @@ expression context expressionTypedNode =
                                           , type_ = rustTypeJsonValue |> Just
                                           }
                                         ]
-                                    , resultType = Nothing
                                     , result =
                                         RustExpressionArrayLiteral
                                             [ RustExpressionCall
@@ -9745,7 +9710,6 @@ expression context expressionTypedNode =
                                           , type_ = onValueType
                                           }
                                         ]
-                                    , resultType = Nothing
                                     , result =
                                         RustExpressionArrayLiteral
                                             [ RustExpressionCall
@@ -10243,7 +10207,6 @@ expression context expressionTypedNode =
                                               , type_ = Just parameter.type_
                                               }
                                             ]
-                                        , resultType = Just resultSoFar.type_
                                         , result =
                                             resultSoFar.expression
                                                 |> rustExpressionPrependStatements
@@ -10627,7 +10590,6 @@ rustExpressionReferenceDeclaredFnAppliedLazilyOrCurriedIfNecessary context rustR
                               , type_ = Just parameterType
                               }
                             ]
-                        , resultType = Just resultSoFar.type_
                         , result = resultSoFar.expression
                         }
                 , type_ =
