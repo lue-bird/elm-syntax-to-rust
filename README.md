@@ -107,7 +107,7 @@ In the transpiled code, you will find these types:
 Most transpiled functions require a reference to an allocator to be passed as the first argument.
 When the called function or an indirectly called function then creates a new `List` for example, it will use the given allocator.
 [`bumpalo`](https://docs.rs/bumpalo/latest/bumpalo/index.html) specifically is required because rusts allocator APIs are not stabilized, yet.
-Also note that since standard rust functions do not take allocators, yet, regular lifetime end + `Drop` stuff will still occur sometimes.
+Also note that regular lifetime end + `Drop` stuff will still occur sometimes.
 
 So overall, if you intend to let the transpiled code handle a memory-hungry long-running computation, it might run out of memory.
 Use it for classic arena-friendly loop steps like state → interface, request → response etc.
