@@ -376,16 +376,16 @@ pub fn list_concat_map<'a, A: Clone, B: Clone>(
 ) -> ListList<'a, B> {
     iterator_to_list(allocator, list.into_iter().flat_map(element_to_list))
 }
-pub fn list_foldl<A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) -> State>(
-    reduce: Reduce,
+pub fn list_foldl<A: Clone, State>(
+    reduce: impl Fn(A, State) -> State,
     initial_state: State,
     list: ListList<A>,
 ) -> State {
     list.into_iter()
-        .fold(initial_state, |state, element| reduce(element)(state))
+        .fold(initial_state, |state, element| reduce(element, state))
 }
-pub fn list_foldr<A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) -> State>(
-    reduce: Reduce,
+pub fn list_foldr<A: Clone, State>(
+    reduce: impl Fn(A, State) -> State,
     initial_state: State,
     list: ListList<A>,
 ) -> State {
@@ -393,7 +393,7 @@ pub fn list_foldr<A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) 
         .collect::<Vec<A>>()
         .into_iter()
         .rev()
-        .fold(initial_state, |state, element| reduce(element)(state))
+        .fold(initial_state, |state, element| reduce(element, state))
 }
 
 pub fn list_reverse<'a, A: Clone>(allocator: &'a Bump, list: ListList<A>) -> ListList<'a, A> {
@@ -421,22 +421,16 @@ pub fn list_map<'a, A: Clone, B: Clone>(
 ) -> ListList<'a, B> {
     iterator_to_list(allocator, list.into_iter().map(element_change))
 }
-pub fn list_indexed_map<
-    'a,
-    A: Clone,
-    B: Clone,
-    IndexedElementToNew: Fn(f64) -> IndexedElementToNew1,
-    IndexedElementToNew1: Fn(A) -> B,
->(
+pub fn list_indexed_map<'a, A: Clone, B: Clone>(
     allocator: &'a Bump,
-    indexed_element_to_new: IndexedElementToNew,
+    indexed_element_to_new: impl Fn(f64, A) -> B,
     list: ListList<A>,
 ) -> ListList<'a, B> {
     iterator_to_list(
         allocator,
         list.into_iter()
             .enumerate()
-            .map(|(index, element)| indexed_element_to_new(index as f64)(element)),
+            .map(|(index, element)| indexed_element_to_new(index as f64, element)),
     )
 }
 pub fn list_filter_map<'a, A: Clone, B: Clone>(
@@ -468,18 +462,13 @@ pub fn list_sort_by<'a, A: Clone, Comparable: PartialOrd>(
     });
     double_ended_iterator_to_list(allocator, list_copy_as_vec.into_iter())
 }
-pub fn list_sort_with<
-    'a,
-    A: Clone,
-    ElementCompare: Fn(A) -> ElementCompare1,
-    ElementCompare1: Fn(A) -> std::cmp::Ordering,
->(
+pub fn list_sort_with<'a, A: Clone>(
     allocator: &'a Bump,
-    element_compare: ElementCompare,
+    element_compare: impl Fn(A, A) -> std::cmp::Ordering,
     list: ListList<'a, A>,
 ) -> ListList<'a, A> {
     let mut list_copy_as_vec: Vec<A> = list.into_iter().collect();
-    list_copy_as_vec.sort_by(|a, b| element_compare(a.clone())(b.clone()));
+    list_copy_as_vec.sort_by(|a, b| element_compare(a.clone(), b.clone()));
     double_ended_iterator_to_list(allocator, list_copy_as_vec.into_iter())
 }
 pub fn list_append<'a, A: Clone>(
@@ -528,36 +517,20 @@ pub fn list_zip<'a, A: Clone, B: Clone>(
         std::iter::zip(a_list.into_iter(), b_list.into_iter()),
     )
 }
-pub fn list_map2<
-    'a,
-    A: Clone,
-    B: Clone,
-    Combined: Clone,
-    Combine: Fn(A) -> Combine1,
-    Combine1: Fn(B) -> Combined,
->(
+pub fn list_map2<'a, A: Clone, B: Clone, Combined: Clone>(
     allocator: &'a Bump,
-    combine: Combine,
+    combine: impl Fn(A, B) -> Combined,
     a_list: ListList<A>,
     b_list: ListList<B>,
 ) -> ListList<'a, Combined> {
     iterator_to_list(
         allocator,
-        std::iter::zip(a_list.into_iter(), b_list.into_iter()).map(|(a, b)| combine(a)(b)),
+        std::iter::zip(a_list.into_iter(), b_list.into_iter()).map(|(a, b)| combine(a, b)),
     )
 }
-pub fn list_map3<
-    'a,
-    A: Clone,
-    B: Clone,
-    C: Clone,
-    Combined: Clone,
-    Combine: Fn(A) -> Combine1,
-    Combine1: Fn(B) -> Combine2,
-    Combine2: Fn(C) -> Combined,
->(
+pub fn list_map3<'a, A: Clone, B: Clone, C: Clone, Combined: Clone>(
     allocator: &'a Bump,
-    combine: Combine,
+    combine: impl Fn(A, B, C) -> Combined,
     a_list: ListList<A>,
     b_list: ListList<B>,
     c_list: ListList<C>,
@@ -568,23 +541,12 @@ pub fn list_map3<
             .into_iter()
             .zip(b_list.into_iter())
             .zip(c_list.into_iter())
-            .map(|((a, b), c)| combine(a)(b)(c)),
+            .map(|((a, b), c)| combine(a, b, c)),
     )
 }
-pub fn list_map4<
-    'a,
-    A: Clone,
-    B: Clone,
-    C: Clone,
-    D: Clone,
-    Combined: Clone,
-    Combine: Fn(A) -> Combine1,
-    Combine1: Fn(B) -> Combine2,
-    Combine2: Fn(C) -> Combine3,
-    Combine3: Fn(D) -> Combined,
->(
+pub fn list_map4<'a, A: Clone, B: Clone, C: Clone, D: Clone, Combined: Clone>(
     allocator: &'a Bump,
-    combine: Combine,
+    combine: impl Fn(A, B, C, D) -> Combined,
     a_list: ListList<A>,
     b_list: ListList<B>,
     c_list: ListList<C>,
@@ -597,25 +559,12 @@ pub fn list_map4<
             .zip(b_list.into_iter())
             .zip(c_list.into_iter())
             .zip(d_list.into_iter())
-            .map(|(((a, b), c), d)| combine(a)(b)(c)(d)),
+            .map(|(((a, b), c), d)| combine(a, b, c, d)),
     )
 }
-pub fn list_map5<
-    'a,
-    A: Clone,
-    B: Clone,
-    C: Clone,
-    D: Clone,
-    E: Clone,
-    Combined: Clone,
-    Combine: Fn(A) -> Combine1,
-    Combine1: Fn(B) -> Combine2,
-    Combine2: Fn(C) -> Combine3,
-    Combine3: Fn(D) -> Combine4,
-    Combine4: Fn(E) -> Combined,
->(
+pub fn list_map5<'a, A: Clone, B: Clone, C: Clone, D: Clone, E: Clone, Combined: Clone>(
     allocator: &'a Bump,
-    combine: Combine,
+    combine: impl Fn(A, B, C, D, E) -> Combined,
     a_list: ListList<A>,
     b_list: ListList<B>,
     c_list: ListList<C>,
@@ -630,7 +579,7 @@ pub fn list_map5<
             .zip(c_list.into_iter())
             .zip(d_list.into_iter())
             .zip(e_list.into_iter())
-            .map(|((((a, b), c), d), e)| combine(a)(b)(c)(d)(e)),
+            .map(|((((a, b), c), d), e)| combine(a, b, c, d, e)),
     )
 }
 
@@ -757,21 +706,15 @@ pub fn array_map<'a, A: Clone, B: Clone>(
             .collect::<Vec<B>>(),
     )
 }
-pub fn array_indexed_map<
-    'a,
-    A: Clone,
-    B: Clone,
-    IndexedElementToNew: Fn(f64) -> IndexedElementToNew1,
-    IndexedElementToNew1: Fn(A) -> B,
->(
-    element_change: IndexedElementToNew,
+pub fn array_indexed_map<'a, A: Clone, B: Clone>(
+    element_change: impl Fn(f64, A) -> B,
     array: ArrayArray<'a, A>,
 ) -> ArrayArray<'a, B> {
     std::borrow::Cow::Owned(
         array
             .into_iter()
             .enumerate()
-            .map(|(index, element)| element_change(index as f64)(element.clone()))
+            .map(|(index, element)| element_change(index as f64, element.clone()))
             .collect::<Vec<B>>(),
     )
 }
@@ -794,17 +737,17 @@ pub fn array_to_indexed_list<'a, A: Clone>(
             .map(|(index, element)| (index as f64, element.clone())),
     )
 }
-pub fn array_foldl<'a, A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) -> State>(
-    reduce: Reduce,
+pub fn array_foldl<'a, A: Clone, State>(
+    reduce: impl Fn(A, State) -> State,
     initial_state: State,
     array: ArrayArray<'a, A>,
 ) -> State {
     array.into_iter().fold(initial_state, |state, element| {
-        reduce(element.clone())(state)
+        reduce(element.clone(), state)
     })
 }
-pub fn array_foldr<'a, A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(State) -> State>(
-    reduce: Reduce,
+pub fn array_foldr<'a, A: Clone, State>(
+    reduce: impl Fn(A, State) -> State,
     initial_state: State,
     array: ArrayArray<'a, A>,
 ) -> State {
@@ -812,7 +755,7 @@ pub fn array_foldr<'a, A: Clone, State, Reduce: Fn(A) -> Reduce1, Reduce1: Fn(St
         .into_iter()
         .rev()
         .fold(initial_state, |state, element| {
-            reduce(element.clone())(state)
+            reduce(element.clone(), state)
         })
 }
 
@@ -914,24 +857,24 @@ pub fn string_map<'a>(
 ) -> StringString<'a> {
     std::borrow::Cow::Owned(string.chars().map(element_change).collect::<String>())
 }
-pub fn string_foldl<State, Reduce: Fn(char) -> Reduce1, Reduce1: Fn(State) -> State>(
-    reduce: Reduce,
+pub fn string_foldl<State>(
+    reduce: impl Fn(char, State) -> State,
     initial_state: State,
     string: StringString,
 ) -> State {
     string
         .chars()
-        .fold(initial_state, |state, element| reduce(element)(state))
+        .fold(initial_state, |state, element| reduce(element, state))
 }
-pub fn string_foldr<State, Reduce: Fn(char) -> Reduce1, Reduce1: Fn(State) -> State>(
-    reduce: Reduce,
+pub fn string_foldr<State>(
+    reduce: impl Fn(char, State) -> State,
     initial_state: State,
     string: StringString,
 ) -> State {
     string
         .chars()
         .rev()
-        .fold(initial_state, |state, element| reduce(element)(state))
+        .fold(initial_state, |state, element| reduce(element, state))
 }
 pub fn string_to_list<'a>(allocator: &'a Bump, string: StringString) -> ListList<'a, char> {
     double_ended_iterator_to_list(allocator, string.chars())
@@ -1281,23 +1224,15 @@ pub fn maybe_and_then<A, B>(
 pub fn maybe_map<A, B>(value_change: impl Fn(A) -> B, maybe: Option<A>) -> Option<B> {
     maybe.map(value_change)
 }
-pub fn maybe_map2<A, B, Combined, Combine: Fn(A) -> Combine1, Combine1: Fn(B) -> Combined>(
-    combine: Combine,
+pub fn maybe_map2<A, B, Combined>(
+    combine: impl Fn(A, B) -> Combined,
     a_maybe: Option<A>,
     b_maybe: Option<B>,
 ) -> Option<Combined> {
-    a_maybe.zip(b_maybe).map(|(a, b)| combine(a)(b))
+    a_maybe.zip(b_maybe).map(|(a, b)| combine(a, b))
 }
-pub fn maybe_map3<
-    A,
-    B,
-    C,
-    Combined,
-    Combine: Fn(A) -> Combine1,
-    Combine1: Fn(B) -> Combine2,
-    Combine2: Fn(C) -> Combined,
->(
-    combine: Combine,
+pub fn maybe_map3<A, B, C, Combined>(
+    combine: impl Fn(A, B, C) -> Combined,
     a_maybe: Option<A>,
     b_maybe: Option<B>,
     c_maybe: Option<C>,
@@ -1305,20 +1240,10 @@ pub fn maybe_map3<
     a_maybe
         .zip(b_maybe)
         .zip(c_maybe)
-        .map(|((a, b), c)| combine(a)(b)(c))
+        .map(|((a, b), c)| combine(a, b, c))
 }
-pub fn maybe_map4<
-    A,
-    B,
-    C,
-    D,
-    Combined,
-    Combine: Fn(A) -> Combine1,
-    Combine1: Fn(B) -> Combine2,
-    Combine2: Fn(C) -> Combine3,
-    Combine3: Fn(D) -> Combined,
->(
-    combine: Combine,
+pub fn maybe_map4<A, B, C, D, Combined>(
+    combine: impl Fn(A, B, C, D) -> Combined,
     a_maybe: Option<A>,
     b_maybe: Option<B>,
     c_maybe: Option<C>,
@@ -1328,22 +1253,10 @@ pub fn maybe_map4<
         .zip(b_maybe)
         .zip(c_maybe)
         .zip(d_maybe)
-        .map(|(((a, b), c), d)| combine(a)(b)(c)(d))
+        .map(|(((a, b), c), d)| combine(a, b, c, d))
 }
-pub fn maybe_map5<
-    A,
-    B,
-    C,
-    D,
-    E,
-    Combined,
-    Combine: Fn(A) -> Combine1,
-    Combine1: Fn(B) -> Combine2,
-    Combine2: Fn(C) -> Combine3,
-    Combine3: Fn(D) -> Combine4,
-    Combine4: Fn(E) -> Combined,
->(
-    combine: Combine,
+pub fn maybe_map5<A, B, C, D, E, Combined>(
+    combine: impl Fn(A, B, C, D, E) -> Combined,
     a_maybe: Option<A>,
     b_maybe: Option<B>,
     c_maybe: Option<C>,
@@ -1355,7 +1268,7 @@ pub fn maybe_map5<
         .zip(c_maybe)
         .zip(d_maybe)
         .zip(e_maybe)
-        .map(|((((a, b), c), d), e)| combine(a)(b)(c)(d)(e))
+        .map(|((((a, b), c), d), e)| combine(a, b, c, d, e))
 }
 
 pub fn result_with_default<A, X>(value_on_err: A, result: ResultResult<X, A>) -> A {
@@ -1382,73 +1295,40 @@ pub fn result_map<A, B, X>(
 ) -> ResultResult<X, B> {
     result.map(value_change)
 }
-pub fn result_map2<A, B, Combined, X, Combine: Fn(A) -> Combine1, Combine1: Fn(B) -> Combined>(
-    combine: Combine,
+pub fn result_map2<A, B, Combined, X>(
+    combine: impl Fn(A, B) -> Combined,
     a_result: ResultResult<X, A>,
     b_result: ResultResult<X, B>,
 ) -> ResultResult<X, Combined> {
-    Result::Ok(combine(a_result?)(b_result?))
+    Result::Ok(combine(a_result?, b_result?))
 }
-pub fn result_map3<
-    A,
-    B,
-    C,
-    Combined,
-    X,
-    Combine: Fn(A) -> Combine1,
-    Combine1: Fn(B) -> Combine2,
-    Combine2: Fn(C) -> Combined,
->(
-    combine: Combine,
+pub fn result_map3<A, B, C, Combined, X>(
+    combine: impl Fn(A, B, C) -> Combined,
     a_result: ResultResult<X, A>,
     b_result: ResultResult<X, B>,
     c_result: ResultResult<X, C>,
 ) -> ResultResult<X, Combined> {
-    Result::Ok(combine(a_result?)(b_result?)(c_result?))
+    Result::Ok(combine(a_result?, b_result?, c_result?))
 }
-pub fn result_map4<
-    A,
-    B,
-    C,
-    D,
-    Combined,
-    X,
-    Combine: Fn(A) -> Combine1,
-    Combine1: Fn(B) -> Combine2,
-    Combine2: Fn(C) -> Combine3,
-    Combine3: Fn(D) -> Combined,
->(
-    combine: Combine,
+pub fn result_map4<A, B, C, D, Combined, X>(
+    combine: impl Fn(A, B, C, D) -> Combined,
     a_result: ResultResult<X, A>,
     b_result: ResultResult<X, B>,
     c_result: ResultResult<X, C>,
     d_result: ResultResult<X, D>,
 ) -> ResultResult<X, Combined> {
-    Result::Ok(combine(a_result?)(b_result?)(c_result?)(d_result?))
+    Result::Ok(combine(a_result?, b_result?, c_result?, d_result?))
 }
-pub fn result_map5<
-    A,
-    B,
-    C,
-    D,
-    E,
-    Combined,
-    X,
-    Combine: Fn(A) -> Combine1,
-    Combine1: Fn(B) -> Combine2,
-    Combine2: Fn(C) -> Combine3,
-    Combine3: Fn(D) -> Combine4,
-    Combine4: Fn(E) -> Combined,
->(
-    combine: Combine,
+pub fn result_map5<A, B, C, D, E, Combined, X>(
+    combine: impl Fn(A, B, C, D, E) -> Combined,
     a_result: ResultResult<X, A>,
     b_result: ResultResult<X, B>,
     c_result: ResultResult<X, C>,
     d_result: ResultResult<X, D>,
     e_result: ResultResult<X, E>,
 ) -> ResultResult<X, Combined> {
-    Result::Ok(combine(a_result?)(b_result?)(c_result?)(d_result?)(
-        e_result?,
+    Result::Ok(combine(
+        a_result?, b_result?, c_result?, d_result?, e_result?,
     ))
 }
 
@@ -1827,65 +1707,41 @@ pub fn json_decode_map<'a, A, B>(
             .alloc(move |json| (decoder.decode)(json).map(|decoded| decoded_change(decoded))),
     }
 }
-pub fn json_decode_map2<
-    'a,
-    A,
-    B,
-    Combined,
-    Combine: Fn(A) -> Combine1 + 'a,
-    Combine1: Fn(B) -> Combined,
->(
+pub fn json_decode_map2<'a, A, B, Combined>(
     allocator: &'a Bump,
-    combine: Combine,
+    combine: impl Fn(A, B) -> Combined + 'a,
     a_decoder: JsonDecodeDecoder<'a, A>,
     b_decoder: JsonDecodeDecoder<'a, B>,
 ) -> JsonDecodeDecoder<'a, Combined> {
     JsonDecodeDecoder {
         decode: allocator.alloc(move |json| {
-            Result::Ok(combine((a_decoder.decode)(json)?)((b_decoder.decode)(
-                json,
-            )?))
+            Result::Ok(combine(
+                (a_decoder.decode)(json)?,
+                (b_decoder.decode)(json)?,
+            ))
         }),
     }
 }
-pub fn json_decode_map3<
-    'a,
-    A,
-    B,
-    C,
-    Combined,
-    Combine: Fn(A) -> Combine1 + 'a,
-    Combine1: Fn(B) -> Combine2,
-    Combine2: Fn(C) -> Combined,
->(
+pub fn json_decode_map3<'a, A, B, C, Combined>(
     allocator: &'a Bump,
-    combine: Combine,
+    combine: impl Fn(A, B, C) -> Combined + 'a,
     a_decoder: JsonDecodeDecoder<'a, A>,
     b_decoder: JsonDecodeDecoder<'a, B>,
     c_decoder: JsonDecodeDecoder<'a, C>,
 ) -> JsonDecodeDecoder<'a, Combined> {
     JsonDecodeDecoder {
         decode: allocator.alloc(move |json| {
-            Result::Ok(combine((a_decoder.decode)(json)?)((b_decoder.decode)(
-                json,
-            )?)((c_decoder.decode)(json)?))
+            Result::Ok(combine(
+                (a_decoder.decode)(json)?,
+                (b_decoder.decode)(json)?,
+                (c_decoder.decode)(json)?,
+            ))
         }),
     }
 }
-pub fn json_decode_map4<
-    'a,
-    A,
-    B,
-    C,
-    D,
-    Combined,
-    Combine: Fn(A) -> Combine1 + 'a,
-    Combine1: Fn(B) -> Combine2,
-    Combine2: Fn(C) -> Combine3,
-    Combine3: Fn(D) -> Combined,
->(
+pub fn json_decode_map4<'a, A, B, C, D, Combined>(
     allocator: &'a Bump,
-    combine: Combine,
+    combine: impl Fn(A, B, C, D) -> Combined + 'a,
     a_decoder: JsonDecodeDecoder<'a, A>,
     b_decoder: JsonDecodeDecoder<'a, B>,
     c_decoder: JsonDecodeDecoder<'a, C>,
@@ -1893,31 +1749,18 @@ pub fn json_decode_map4<
 ) -> JsonDecodeDecoder<'a, Combined> {
     JsonDecodeDecoder {
         decode: allocator.alloc(move |json| {
-            Result::Ok(combine((a_decoder.decode)(json)?)((b_decoder.decode)(
-                json,
-            )?)((c_decoder.decode)(json)?)((d_decoder
-                .decode)(
-                json
-            )?))
+            Result::Ok(combine(
+                (a_decoder.decode)(json)?,
+                (b_decoder.decode)(json)?,
+                (c_decoder.decode)(json)?,
+                (d_decoder.decode)(json)?,
+            ))
         }),
     }
 }
-pub fn json_decode_map5<
-    'a,
-    A,
-    B,
-    C,
-    D,
-    E,
-    Combined,
-    Combine: Fn(A) -> Combine1 + 'a,
-    Combine1: Fn(B) -> Combine2,
-    Combine2: Fn(C) -> Combine3,
-    Combine3: Fn(D) -> Combine4,
-    Combine4: Fn(E) -> Combined,
->(
+pub fn json_decode_map5<'a, A, B, C, D, E, Combined>(
     allocator: &'a Bump,
-    combine: Combine,
+    combine: impl Fn(A, B, C, D, E) -> Combined + 'a,
     a_decoder: JsonDecodeDecoder<'a, A>,
     b_decoder: JsonDecodeDecoder<'a, B>,
     c_decoder: JsonDecodeDecoder<'a, C>,
@@ -1926,33 +1769,19 @@ pub fn json_decode_map5<
 ) -> JsonDecodeDecoder<'a, Combined> {
     JsonDecodeDecoder {
         decode: allocator.alloc(move |json| {
-            Result::Ok(combine((a_decoder.decode)(json)?)((b_decoder.decode)(
-                json,
-            )?)((c_decoder.decode)(json)?)((d_decoder
-                .decode)(
-                json
-            )?)((e_decoder.decode)(json)?))
+            Result::Ok(combine(
+                (a_decoder.decode)(json)?,
+                (b_decoder.decode)(json)?,
+                (c_decoder.decode)(json)?,
+                (d_decoder.decode)(json)?,
+                (e_decoder.decode)(json)?,
+            ))
         }),
     }
 }
-pub fn json_decode_map6<
-    'a,
-    A,
-    B,
-    C,
-    D,
-    E,
-    F,
-    Combined,
-    Combine: Fn(A) -> Combine1 + 'a,
-    Combine1: Fn(B) -> Combine2,
-    Combine2: Fn(C) -> Combine3,
-    Combine3: Fn(D) -> Combine4,
-    Combine4: Fn(E) -> Combine5,
-    Combine5: Fn(F) -> Combined,
->(
+pub fn json_decode_map6<'a, A, B, C, D, E, F, Combined>(
     allocator: &'a Bump,
-    combine: Combine,
+    combine: impl Fn(A, B, C, D, E, F) -> Combined + 'a,
     a_decoder: JsonDecodeDecoder<'a, A>,
     b_decoder: JsonDecodeDecoder<'a, B>,
     c_decoder: JsonDecodeDecoder<'a, C>,
@@ -1962,38 +1791,20 @@ pub fn json_decode_map6<
 ) -> JsonDecodeDecoder<'a, Combined> {
     JsonDecodeDecoder {
         decode: allocator.alloc(move |json| {
-            Result::Ok(combine((a_decoder.decode)(json)?)((b_decoder.decode)(
-                json,
-            )?)((c_decoder.decode)(json)?)((d_decoder
-                .decode)(
-                json
-            )?)((e_decoder.decode)(json)?)((f_decoder
-                .decode)(
-                json
-            )?))
+            Result::Ok(combine(
+                (a_decoder.decode)(json)?,
+                (b_decoder.decode)(json)?,
+                (c_decoder.decode)(json)?,
+                (d_decoder.decode)(json)?,
+                (e_decoder.decode)(json)?,
+                (f_decoder.decode)(json)?,
+            ))
         }),
     }
 }
-pub fn json_decode_map7<
-    'a,
-    A,
-    B,
-    C,
-    D,
-    E,
-    F,
-    G,
-    Combined,
-    Combine: Fn(A) -> Combine1 + 'a,
-    Combine1: Fn(B) -> Combine2,
-    Combine2: Fn(C) -> Combine3,
-    Combine3: Fn(D) -> Combine4,
-    Combine4: Fn(E) -> Combine5,
-    Combine5: Fn(F) -> Combine6,
-    Combine6: Fn(G) -> Combined,
->(
+pub fn json_decode_map7<'a, A, B, C, D, E, F, G, Combined>(
     allocator: &'a Bump,
-    combine: Combine,
+    combine: impl Fn(A, B, C, D, E, F, G) -> Combined + 'a,
     a_decoder: JsonDecodeDecoder<'a, A>,
     b_decoder: JsonDecodeDecoder<'a, B>,
     c_decoder: JsonDecodeDecoder<'a, C>,
@@ -2004,40 +1815,21 @@ pub fn json_decode_map7<
 ) -> JsonDecodeDecoder<'a, Combined> {
     JsonDecodeDecoder {
         decode: allocator.alloc(move |json| {
-            Result::Ok(combine((a_decoder.decode)(json)?)((b_decoder.decode)(
-                json,
-            )?)((c_decoder.decode)(json)?)((d_decoder
-                .decode)(
-                json
-            )?)((e_decoder.decode)(json)?)((f_decoder
-                .decode)(
-                json
-            )?)((g_decoder.decode)(json)?))
+            Result::Ok(combine(
+                (a_decoder.decode)(json)?,
+                (b_decoder.decode)(json)?,
+                (c_decoder.decode)(json)?,
+                (d_decoder.decode)(json)?,
+                (e_decoder.decode)(json)?,
+                (f_decoder.decode)(json)?,
+                (g_decoder.decode)(json)?,
+            ))
         }),
     }
 }
-pub fn json_decode_map8<
-    'a,
-    A,
-    B,
-    C,
-    D,
-    E,
-    F,
-    G,
-    H,
-    Combined,
-    Combine: Fn(A) -> Combine1 + 'a,
-    Combine1: Fn(B) -> Combine2,
-    Combine2: Fn(C) -> Combine3,
-    Combine3: Fn(D) -> Combine4,
-    Combine4: Fn(E) -> Combine5,
-    Combine5: Fn(F) -> Combine6,
-    Combine6: Fn(G) -> Combine7,
-    Combine7: Fn(H) -> Combined,
->(
+pub fn json_decode_map8<'a, A, B, C, D, E, F, G, H, Combined>(
     allocator: &'a Bump,
-    combine: Combine,
+    combine: impl Fn(A, B, C, D, E, F, G, H) -> Combined + 'a,
     a_decoder: JsonDecodeDecoder<'a, A>,
     b_decoder: JsonDecodeDecoder<'a, B>,
     c_decoder: JsonDecodeDecoder<'a, C>,
@@ -2049,18 +1841,16 @@ pub fn json_decode_map8<
 ) -> JsonDecodeDecoder<'a, Combined> {
     JsonDecodeDecoder {
         decode: allocator.alloc(move |json| {
-            Result::Ok(combine((a_decoder.decode)(json)?)((b_decoder.decode)(
-                json,
-            )?)((c_decoder.decode)(json)?)((d_decoder
-                .decode)(
-                json
-            )?)((e_decoder.decode)(json)?)((f_decoder
-                .decode)(
-                json
-            )?)((g_decoder.decode)(json)?)((h_decoder
-                .decode)(
-                json
-            )?))
+            Result::Ok(combine(
+                (a_decoder.decode)(json)?,
+                (b_decoder.decode)(json)?,
+                (c_decoder.decode)(json)?,
+                (d_decoder.decode)(json)?,
+                (e_decoder.decode)(json)?,
+                (f_decoder.decode)(json)?,
+                (g_decoder.decode)(json)?,
+                (h_decoder.decode)(json)?,
+            ))
         }),
     }
 }
@@ -2265,15 +2055,9 @@ pub fn json_decode_list<'a, A>(
         }),
     }
 }
-pub fn json_decode_one_or_more<
-    'a,
-    A: Clone,
-    Combined,
-    CombineHeadTail: Fn(A) -> CombineHeadTail1 + 'a,
-    CombineHeadTail1: Fn(ListList<'a, A>) -> Combined,
->(
+pub fn json_decode_one_or_more<'a, A: Clone, Combined>(
     allocator: &'a Bump,
-    combine_head_tail: CombineHeadTail,
+    combine_head_tail: impl Fn(A, ListList<'a, A>) -> Combined + 'a,
     element_decoder: JsonDecodeDecoder<'a, A>,
 ) -> JsonDecodeDecoder<'a, Combined> {
     JsonDecodeDecoder {
@@ -2299,7 +2083,7 @@ pub fn json_decode_one_or_more<
                         json,
                     )),
                     ListList::Cons(decoded_head, decoded_tail) => {
-                        Result::Ok(combine_head_tail(decoded_head)(decoded_tail.clone()))
+                        Result::Ok(combine_head_tail(decoded_head, decoded_tail.clone()))
                     }
                 }
             }

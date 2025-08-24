@@ -114,6 +114,4 @@ Use it for classic arena-friendly loop steps like state â†’ interface, request â
 
 ### improvement ideas
 - support `Dict` (as `Cow<BTreeMap>`) and `Set` (as `Cow<BTreeSet>`)
-- for fns: switch to introducing type parameters with Fn constraints instead of taking `&dyn Fn` (at least for direct parameters), then possibly also avoid `alloc` for lambdas in direct call (not easy generally because the lambda could be additionally nested, so either walk the original type (meh) or just be satisfied removing only the outermost layer).
-  Alternative: take lambdas as parameters e.g. `Fn(First, Second, Third) -> Out`, then look up for each called reference use what the exact number is and "un-nest" accordingly.
 - if lambda is called with a function, always inline that function
