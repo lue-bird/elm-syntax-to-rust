@@ -90,8 +90,13 @@ please [report an issue](https://github.com/lue-bird/elm-syntax-to-rust/issues/n
 
 
 In the transpiled code, you will find these types:
-  - elm `Bool` (`True` or `False`) → rust `bool` (`true` or `false`), `Char` (`'a'`) → `char` (`'a'`), `String` (`"a"`) → `&str` (`"a"`), `( Bool, Char )` → `( bool, char )`, `Array Char` (`Array.fromList [ 'a' ]`) → `&[char]` (alias `&ArrayArray<char>`) (`&['a']`)
-  - elm `Float`s, `Int`s and `number-` variable typed values will be of type `f64`. Create and match by appending `_f64` to any number literal or using `as f64`.
+  - elm `Bool` (`True` or `False`) → rust `bool` (`true` or `false`), `Char` (`'a'`) → `char` (`'a'`), `( Bool, Char )` → `( bool, char )`
+  - elm `Float`s, `Int`s and `number-` variable typed values will be of type `f64`. Create and match by appending `_f64` to any number literal or using `as f64`
+  - elm `String`s (like `"a"`) will be of type `Cow<str>` (alias `StringString`).
+    Create from literals or other string slices with (`std::borrow::Cow::Borrowed("a")`)
+    or if you can and want to transfer ownership with (`std::borrow::Cow::Owned(your_string)`). Match with `your_string if your_string == "some string"`
+  - elm `Array<a>`s (like `Array.fromList [ 'a' ]`) will (similar to strings) be of type `Cow<[A]>` (alias `ArrayArray<A>`).
+    Create new values with (`std::borrow::Cow::Owned(vec!['a'])`) or pass a slice with `::Borrowed`. Too match, use e.g. `match array.as_ref() { [] => ..., [_, ..] => ... etc }`
   - elm records like `{ y : Float, x : Float }` will be of type `elm::GeneratedXY<f64, f64>` with the fields sorted and can be constructed and matched with `elm::GeneratedXY { x: _, y: _ }`. `record.x` access also works
   - a transpiled elm app does not run itself.
     An elm main `Platform.worker` program type will literally just consist of fields `init`, `update` and `subscriptions` where
