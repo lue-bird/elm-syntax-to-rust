@@ -114,4 +114,5 @@ Use it for classic arena-friendly loop steps like state â†’ interface, request â
 
 ### improvement ideas
 - support `Dict` (as `Cow<BTreeMap>`) and `Set` (as `Cow<BTreeSet>`)
+- reduce closures (e.g. `|x, y| f(x, y)`) but keep the alloc when it exists
 - if lambda is called with a function, always inline that function
