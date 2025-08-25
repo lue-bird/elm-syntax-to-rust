@@ -33068,40 +33068,26 @@ impl<'a, A> Iterator for ListListRefIterator<'a, A> {
     }
 }
 
-/// prefer ListListRefIterator when Clone is decently expensive
-pub struct ListListIterator<'a, A> {
-    remaining_list: ListList<'a, A>,
-}
-
-// TODO remove in favor of ref_iter().cloned() or similar
-// as with the necessary double-cloning this has no point
-impl<'a, A: Clone> Iterator for ListListIterator<'a, A> {
-    type Item = A;
-    fn next(&mut self) -> Option<Self::Item> {
-        match self.remaining_list.clone() {
-            ListList::Empty => Option::None,
-            ListList::Cons(head, tail) => {
-                self.remaining_list = tail.clone();
-                Option::Some(head)
-            }
-        }
-    }
-}
-
 impl<'a, A> ListList<'a, A> {
-    fn ref_iter(self: &'a Self) -> ListListRefIterator<'a, A> {
+    fn ref_iter(&'a self) -> ListListRefIterator<'a, A> {
         ListListRefIterator {
             remaining_list: self,
         }
     }
 }
-impl<'a, A: Clone> IntoIterator for ListList<'a, A> {
-    type Item = A;
-    type IntoIter = ListListIterator<'a, A>;
-    fn into_iter(self) -> Self::IntoIter {
-        ListListIterator {
-            remaining_list: self,
-        }
+impl<'a, A: Clone> ListList<'a, A> {
+    /// can be nice instead of .ref_iter() because it avoids cloning the head
+    /// and actually consumes the (first cons of the) list
+    fn into_iter(self) -> impl Iterator<Item = A> {
+        // bit convoluted
+        (match self {
+            ListList::Empty => Option::None,
+            ListList::Cons(head, tail) => {
+                Option::Some(std::iter::once(head).chain(tail.ref_iter().cloned()))
+            }
+        })
+        .into_iter()
+        .flatten()
     }
 }
 impl<'a, A: std::fmt::Debug> std::fmt::Debug for ListList<'a, A> {
@@ -33354,10 +33340,10 @@ pub fn list_member<A: PartialEq>(needle: A, list: ListList<A>) -> bool {
     list.ref_iter().any(|el| el == &needle)
 }
 pub fn list_minimum<A: Clone + PartialOrd>(list: ListList<A>) -> Option<A> {
-    list.ref_iter().min_by(|l, r| basics_compare(l, r)).cloned()
+    list.into_iter().min_by(|l, r| basics_compare(l, r))
 }
 pub fn list_maximum<A: Clone + PartialOrd>(list: ListList<A>) -> Option<A> {
-    list.ref_iter().max_by(|l, r| basics_compare(l, r)).cloned()
+    list.into_iter().max_by(|l, r| basics_compare(l, r))
 }
 pub fn list_take<'a, A: Clone>(
     allocator: &'a Bump,
@@ -33374,14 +33360,23 @@ pub fn iterator_to_list<'a, A: Clone>(
     double_ended_iterator_to_list(allocator, iterator.collect::<Vec<A>>().into_iter())
 }
 pub fn list_drop<'a, A: Clone>(skip_count: f64, list: ListList<'a, A>) -> ListList<'a, A> {
-    let mut iterator: ListListIterator<'a, A> = list.into_iter();
-    for _ in 1..=(skip_count as usize) {
-        match iterator.next() {
-            None => return ListList::Empty,
-            Some(_) => {}
+    if skip_count <= 0_f64 {
+        ListList::Empty
+    } else {
+        match list {
+            ListList::Empty => ListList::Empty,
+            ListList::Cons(_, tail) => {
+                let mut iterator = tail.ref_iter();
+                for _ in 1..=((skip_count - 1_f64) as usize) {
+                    match iterator.next() {
+                        None => return ListList::Empty,
+                        Some(_) => {}
+                    }
+                }
+                iterator.remaining_list.clone()
+            }
         }
     }
-    iterator.remaining_list
 }
 pub fn list_intersperse<'a, A: Clone>(
     allocator: &'a Bump,
@@ -33407,14 +33402,21 @@ pub fn list_concat<'a, A: Clone>(
     allocator: &'a Bump,
     list: ListList<'a, ListList<A>>,
 ) -> ListList<'a, A> {
-    iterator_to_list(allocator, list.into_iter().flatten())
+    iterator_to_list(
+        allocator,
+        list.into_iter().flat_map(|inner| inner.into_iter()),
+    )
 }
 pub fn list_concat_map<'a, A: Clone, B: Clone>(
     allocator: &'a Bump,
     element_to_list: impl Fn(A) -> ListList<'a, B>,
     list: ListList<A>,
 ) -> ListList<'a, B> {
-    iterator_to_list(allocator, list.into_iter().flat_map(element_to_list))
+    iterator_to_list(
+        allocator,
+        list.into_iter()
+            .flat_map(|el| element_to_list(el).into_iter()),
+    )
 }
 pub fn list_foldl<A: Clone, State>(
     reduce: impl Fn(A, State) -> State,
@@ -33438,7 +33440,7 @@ pub fn list_foldr<A: Clone, State>(
 
 pub fn list_reverse<'a, A: Clone>(allocator: &'a Bump, list: ListList<A>) -> ListList<'a, A> {
     let mut reverse_list: ListList<A> = ListList::Empty;
-    for new_head in list {
+    for new_head in list.into_iter() {
         reverse_list = list_cons(allocator, new_head, reverse_list)
     }
     reverse_list
@@ -33446,9 +33448,8 @@ pub fn list_reverse<'a, A: Clone>(allocator: &'a Bump, list: ListList<A>) -> Lis
 pub fn list_filter<'a, A: Clone>(
     allocator: &'a Bump,
     keep: impl Fn(A) -> bool,
-    list: ListList<A>,
+    list: ListList<'a, A>,
 ) -> ListList<'a, A> {
-    // can be optimized by just returning list when all elements were kept
     iterator_to_list(
         allocator,
         list.into_iter().filter(|element| keep(element.clone())),
@@ -33848,6 +33849,12 @@ pub fn char_from_code(code: f64) -> char {
     char::from_u32(code as u32).unwrap_or('\\0')
 }
 
+/// This can lead to quadratic runtime
+/// if the recursive string argument is used last in
+/// string_append
+/// nice solutions would be
+///   - using a vec-like structure that pre-allocates a capacity on both sides
+///   - using a rope
 pub type StringString<'a> = std::borrow::Cow<'a, str>;
 
 pub fn string_is_empty(string: StringString) -> bool {
