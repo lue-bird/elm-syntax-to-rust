@@ -9114,12 +9114,110 @@ rustExpressionClosureReference :
     -> RustExpression
 rustExpressionClosureReference closure =
     rustExpressionAlloc
-        (RustExpressionClosure
+        (rustExpressionClosureReduced
             { parameters = closure.parameters
             , result = closure.result
-            , resultType = Nothing
             }
         )
+
+
+rustExpressionClosureReduced :
+    { parameters : List { pattern : RustPattern, type_ : Maybe RustType }
+    , result : RustExpression
+    }
+    -> RustExpression
+rustExpressionClosureReduced closure =
+    let
+        closureParametersMaybeAsBindings : Maybe (List String)
+        closureParametersMaybeAsBindings =
+            closure.parameters
+                |> listMapAndCombineJust
+                    (\parameter ->
+                        case parameter.pattern of
+                            RustPatternVariable variable ->
+                                Just variable.name
+
+                            _ ->
+                                Nothing
+                    )
+    in
+    case closureParametersMaybeAsBindings of
+        Nothing ->
+            RustExpressionClosure
+                { parameters = closure.parameters
+                , result = closure.result
+                , resultType = Nothing
+                }
+
+        Just closureParametersAsBindings ->
+            case closure.result of
+                RustExpressionCall closureResultCall ->
+                    if
+                        listAll2
+                            closureParametersAsBindings
+                            closureResultCall.arguments
+                            (\parameterBindingName closureResultCallArgument ->
+                                case closureResultCallArgument of
+                                    RustExpressionReference reference ->
+                                        (reference.qualification |> List.isEmpty)
+                                            && (reference.name == parameterBindingName)
+
+                                    _ ->
+                                        False
+                            )
+                            && ((closureParametersAsBindings |> List.length)
+                                    == (closureResultCall.arguments |> List.length)
+                               )
+                            && Basics.not
+                                (let
+                                    calledLocalBindings : FastSet.Set String
+                                    calledLocalBindings =
+                                        closureResultCall.called
+                                            |> rustExpressionUsedLocalBindings
+                                 in
+                                 List.any
+                                    (\parameterBinding ->
+                                        calledLocalBindings
+                                            |> FastSet.member parameterBinding
+                                    )
+                                    closureParametersAsBindings
+                                )
+                    then
+                        closureResultCall.called
+
+                    else
+                        RustExpressionClosure
+                            { parameters = closure.parameters
+                            , result = closure.result
+                            , resultType = Nothing
+                            }
+
+                _ ->
+                    RustExpressionClosure
+                        { parameters = closure.parameters
+                        , result = closure.result
+                        , resultType = Nothing
+                        }
+
+
+listAll2 : List a -> List b -> (a -> b -> Bool) -> Bool
+listAll2 aList bList abIsExpected =
+    case aList of
+        [] ->
+            True
+
+        aHead :: aTail ->
+            case bList of
+                [] ->
+                    True
+
+                bHead :: bTail ->
+                    -- not && to trigger TCO
+                    if abIsExpected aHead bHead then
+                        listAll2 aTail bTail abIsExpected
+
+                    else
+                        False
 
 
 {-| Attention: Use `expressionWrappingInLetIfOrMatchResult`
@@ -9460,10 +9558,9 @@ expression context expressionTypedNode =
                                                 rustExpressionCallCondense
                                                     { called = condensedSoFar
                                                     , argument =
-                                                        RustExpressionClosure
+                                                        rustExpressionClosureReduced
                                                             { parameters =
                                                                 unnested.parametersReverse |> List.reverse
-                                                            , resultType = Nothing
                                                             , result = unnested.rustArgumentCondensed
                                                             }
                                                     }
@@ -19566,6 +19663,28 @@ fastDictMapAndToList keyValueToElement fastDict =
                     :: soFar
             )
             []
+
+
+listMapAndCombineJust : (a -> Maybe ok) -> List a -> Maybe (List ok)
+listMapAndCombineJust elementToResult list =
+    listMapAndCombineJustFrom [] elementToResult list
+
+
+listMapAndCombineJustFrom : List ok -> (a -> Maybe ok) -> List a -> Maybe (List ok)
+listMapAndCombineJustFrom soFarReverse elementToResult list =
+    case list of
+        [] ->
+            Just (soFarReverse |> List.reverse)
+
+        head :: tail ->
+            case head |> elementToResult of
+                Nothing ->
+                    Nothing
+
+                Just headOk ->
+                    listMapAndCombineJustFrom (headOk :: soFarReverse)
+                        elementToResult
+                        tail
 
 
 listMapAndCombineOk : (a -> Result err ok) -> List a -> Result err (List ok)
