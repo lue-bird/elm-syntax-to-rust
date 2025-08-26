@@ -3,3 +3,6 @@ name = "example-elm-formatter"
 edition = "2024"
 [dependencies]
 bumpalo = "3.19.0"
+[profile.release]
+opt-level = 3
+codegen-units = 1
