@@ -92,10 +92,9 @@ please [report an issue](https://github.com/lue-bird/elm-syntax-to-rust/issues/n
 In the transpiled code, you will find these types:
   - elm `Bool` (`True` or `False`) → rust `bool` (`true` or `false`), `Char` (`'a'`) → `char` (`'a'`), `( Bool, Char )` → `( bool, char )`
   - elm `Float`s, `Int`s and `number-` variable typed values will be of type `f64`. Create and match by appending `_f64` to any number literal or using `as f64`
-  - elm `String`s (like `"a"`) will be of type `Cow<str>` (alias `StringString`).
-    Create from literals or other string slices with (`std::borrow::Cow::Borrowed("a")`)
-    or if you can and want to transfer ownership with (`std::borrow::Cow::Owned(your_string)`). Match with `your_string if your_string == "some string"`
-  - elm `Array<a>`s (like `Array.fromList [ 'a' ]`) will (similar to strings) be of type `Cow<[A]>` (alias `ArrayArray<A>`).
+  - elm `String`s (like `"a"`) will be of type `elm::StringString`.
+    Create from literals or other string slices with (`elm::StringString::One("a")`). Match with `your_string if elm::string_equals_str(&your_string, "some string")`
+  - elm `Array<a>`s (like `Array.fromList [ 'a' ]`) will be of type `Cow<[A]>` (alias `elm::ArrayArray<A>`).
     Create new values with (`std::borrow::Cow::Owned(vec!['a'])`) or pass a slice with `::Borrowed`. Too match, use e.g. `match array.as_ref() { [] => ..., [_, ..] => ... etc }`
   - elm records like `{ y : Float, x : Float }` will be of type `elm::GeneratedXY<f64, f64>` with the fields sorted and can be constructed and matched with `elm::GeneratedXY { x: _, y: _ }`. `record.x` access also works
   - a transpiled elm app does not run itself.
@@ -115,3 +114,4 @@ Use it for classic arena-friendly loop steps like state → interface, request �
 ### improvement ideas
 - support `Dict` (as `Cow<BTreeMap>`) and `Set` (as `Cow<BTreeSet>`)
 - if lambda is called with a function, always inline that function
+- improve performance of elm_kernel_parer functions (and string_slice etc) to work with utf8 offsets instead of chars

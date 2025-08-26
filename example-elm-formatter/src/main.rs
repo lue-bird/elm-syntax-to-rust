@@ -12,13 +12,13 @@ pub fn main() {
         }
         Result::Ok(_) => match elm::format_single_elm_module_string(
             &allocator,
-            std::borrow::Cow::Borrowed(&module_source),
+            elm::StringString::One(&module_source),
         ) {
             Result::Err(error) => {
-                println!("failed to format: {error}");
+                println!("failed to format: {}", error.to_string());
             }
             Result::Ok(formatted) => {
-                println!("{formatted}",);
+                println!("{}", formatted.to_string());
             }
         },
     }

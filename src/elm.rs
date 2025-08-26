@@ -266,20 +266,6 @@ pub fn double_ended_iterator_to_list<'a, A, AIterator: DoubleEndedIterator<Item 
     }
     list_so_far
 }
-pub fn double_ended_ref_iterator_to_list<
-    'a,
-    A: Clone,
-    AIterator: DoubleEndedIterator<Item = &'a A>,
->(
-    allocator: &'a Bump,
-    iterator: AIterator,
-) -> ListList<'a, A> {
-    let mut list_so_far: ListList<A> = ListList::Empty;
-    for element in iterator.rev() {
-        list_so_far = list_cons(allocator, element.clone(), list_so_far)
-    }
-    list_so_far
-}
 
 pub fn list_length<A>(list: ListList<A>) -> f64 {
     list.ref_iter().count() as f64
@@ -724,7 +710,10 @@ pub fn array_to_list<'a, A: Clone>(
     allocator: &'a Bump,
     array: ArrayArray<'a, A>,
 ) -> ListList<'a, A> {
-    double_ended_ref_iterator_to_list(allocator, slice_cow_alloc(allocator, array).into_iter())
+    double_ended_iterator_to_list(
+        allocator,
+        slice_cow_alloc(allocator, array).into_iter().cloned(),
+    )
 }
 pub fn array_to_indexed_list<'a, A: Clone>(
     allocator: &'a Bump,
@@ -809,67 +798,288 @@ pub fn char_from_code(code: f64) -> char {
     char::from_u32(code as u32).unwrap_or('\0')
 }
 
-/// This can lead to quadratic runtime
-/// if the recursive string argument is used last in
-/// string_append
-/// nice solutions would be
-///   - using a vec-like structure that pre-allocates a capacity on both sides
-///   - using a rope
-pub type StringString<'a> = std::borrow::Cow<'a, str>;
-
-pub fn string_is_empty(string: StringString) -> bool {
-    string.is_empty()
+/// a rope
+#[derive(
+    /*, PartialEq, Ord, PartialOrd, Hash, Display (includes ToString), Debug are implemented below */
+    Copy,
+    Clone,
+    Eq,
+)]
+/// a rope of string slices (basically a tree that delays append operations).
+///
+/// There would be various alternatives to represent a string, each with up- and downsides:
+/// - `&str`
+///     - intuitive, convenient, versatile, implements Copy, trivial to implement
+///     - allocates a new String for operations like String.pad
+///     - very slow when doing lots of appends because it allocates a new String every ++
+/// - `Cow<str>`
+///     - somewhat intuitive, trivial to implement
+///     - may not need to allocate for operations like String.pad
+///     - cannot implement Copy and is therefore "infectious" in requiring clone.
+///       Most structs and enums tend to contains strings so this quite bad
+///     - can be either fast like a rope or slow like &str when appending
+///       depending on if the more appended part is left or right
+/// - rope (effectively a "delayed Cow<str>")
+///     - implements Copy
+///     - not very ergonomic, usually more verbose than even `Cow<str>`
+///     - always fast, no matter from which side you append to most
+///     - since no "inner flattening" occurs after stringifying a rope,
+///       calling e.g. `(expensivelyBuilt |> slice, expensivelyBuilt |> slice)`
+///       will dupicate expensive building work.
+///       This can get dramatic if you e.g. build up a formatted string
+///       and then reparse it (these cases are kind of obscure I think).
+///       One workaraound is e.g. adding `let useThis = String.slice 0 (expensivelyBuilt |> String.length) expensivelyBuilt`
+///       before prettifying `useThis` which will return a flattened `expensivelyBuilt`.
+///
+/// Testing with elm-syntax-format, `Cow<str>` performed similarly but worse than rope
+/// which lead to me to favor the rope approach for now
+pub enum StringString<'a> {
+    One(&'a str),
+    Append(&'a StringString<'a>, &'a StringString<'a>),
 }
-pub fn string_length(string: StringString) -> f64 {
-    string.chars().count() as f64
-}
-pub fn string_from_int<'a>(int: f64) -> StringString<'a> {
-    std::borrow::Cow::Owned((int as i64).to_string())
-}
-pub fn string_from_float<'a>(float: f64) -> StringString<'a> {
-    std::borrow::Cow::Owned(float.to_string())
-}
-pub fn string_from_char<'a>(char: char) -> StringString<'a> {
-    std::borrow::Cow::Owned(char.to_string())
-}
-pub fn string_repeat<'a>(length: f64, segment: StringString) -> StringString<'a> {
-    if length <= 0_f64 {
-        std::borrow::Cow::Borrowed("")
-    } else {
-        std::borrow::Cow::Owned(segment.repeat(length as usize))
+impl<'a> std::fmt::Debug for StringString<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            StringString::One(str) => std::fmt::Debug::fmt(str, f),
+            StringString::Append(early, late) => {
+                std::fmt::Debug::fmt(&string_rope_append_to_string(early, late), f)
+            }
+        }
     }
 }
-pub fn string_cons<'a>(new_first_char: char, tail_string: StringString) -> StringString<'a> {
-    let mut combined_string: String = tail_string.into_owned();
-    combined_string.insert(0, new_first_char);
-    std::borrow::Cow::Owned(combined_string)
+impl<'a> std::fmt::Display for StringString<'a> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StringString::One(str) => formatter.write_str(str),
+            StringString::Append(early, late) => {
+                formatter.write_str(&string_rope_append_to_string(early, late))
+            }
+        }
+    }
+}
+impl<'a> std::hash::Hash for StringString<'a> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            StringString::One(str) => str.hash(state),
+            StringString::Append(l, r) => string_rope_append_to_string(l, r).hash(state),
+        }
+    }
+}
+impl<'a> Ord for StringString<'a> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (self, other) {
+            (StringString::One(self_str), StringString::One(other_str)) => self_str.cmp(other_str),
+            (StringString::One(self_str), StringString::Append(other_l, other_r)) => {
+                (*self_str).cmp(string_rope_append_to_string(other_l, other_r).as_str())
+            }
+            (StringString::Append(self_l, self_r), StringString::One(other_str)) => {
+                string_rope_append_to_string(self_l, self_r)
+                    .as_str()
+                    .cmp(other_str)
+            }
+            (StringString::Append(self_l, self_r), StringString::Append(other_l, other_r)) => {
+                string_rope_append_to_string(self_l, self_r)
+                    .cmp(&string_rope_append_to_string(other_l, other_r))
+            }
+        }
+    }
+}
+impl<'a> PartialOrd for StringString<'a> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Option::Some(self.cmp(other))
+    }
+}
+impl<'a> PartialEq for StringString<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (StringString::One(self_str), StringString::One(other_str)) => self_str == other_str,
+            (StringString::One(self_str), StringString::Append(other_l, other_r)) => {
+                self_str == &string_rope_append_to_string(other_l, other_r)
+            }
+            (StringString::Append(self_l, self_r), StringString::One(other_str)) => {
+                &string_rope_append_to_string(self_l, self_r) == other_str
+            }
+            (StringString::Append(self_l, self_r), StringString::Append(other_l, other_r)) => {
+                string_rope_append_to_string(self_l, self_r)
+                    == string_rope_append_to_string(other_l, other_r)
+            }
+        }
+    }
+}
+pub fn string_equals_str(string: StringString, other_str: &str) -> bool {
+    match string {
+        StringString::One(self_str) => self_str == other_str,
+        StringString::Append(self_l, self_r) => {
+            &string_rope_append_to_string(self_l, self_r) == other_str
+        }
+    }
+}
+pub fn string_rope_append_to_string(
+    full_earlier: &StringString,
+    full_later: &StringString,
+) -> String {
+    let mut builder: String = String::new();
+    // String::with_capacity(string_ref_length(full_earlier) + string_ref_length(full_later));
+    let mut next_early_sub_rope: &StringString = full_earlier;
+    let mut remaining_later_sub_ropes: Vec<&StringString> = vec![full_later];
+    'the_loop: loop {
+        match next_early_sub_rope {
+            StringString::One(str) => {
+                builder.push_str(str);
+                match remaining_later_sub_ropes.pop() {
+                    Option::None => break 'the_loop,
+                    Option::Some(popped) => {
+                        next_early_sub_rope = popped;
+                    }
+                }
+            }
+            StringString::Append(earlier, later) => {
+                remaining_later_sub_ropes.push(later);
+                next_early_sub_rope = earlier;
+            }
+        }
+    }
+    builder
+}
+
+pub const string_rope_empty: StringString<'static> = StringString::One("");
+pub fn str_to_rope<'a>(string: &'a str) -> StringString<'a> {
+    StringString::One(string)
+}
+pub fn rope_to_cow_str(string: StringString) -> std::borrow::Cow<str> {
+    match string {
+        StringString::One(only_segment) => std::borrow::Cow::Borrowed(only_segment),
+        StringString::Append(l, r) => std::borrow::Cow::Owned(string_rope_append_to_string(l, r)),
+    }
+}
+/// you may not need this. Typically `rope_to_cow_str` does the job
+pub fn rope_to_str<'a>(allocator: &'a Bump, string: StringString<'a>) -> &'a str {
+    match string {
+        StringString::One(str) => str,
+        StringString::Append(l, r) => allocator.alloc(string_rope_append_to_string(l, r)),
+    }
+}
+pub fn string_rope_flatten<'a>(allocator: &'a Bump, string: StringString<'a>) -> StringString<'a> {
+    match string {
+        StringString::One(_) => string,
+        StringString::Append(l, r) => string_to_rope(allocator, string_rope_append_to_string(l, r)),
+    }
+}
+pub fn string_to_rope<'a>(allocator: &'a Bump, string: String) -> StringString<'a> {
+    StringString::One(allocator.alloc(string))
+}
+
+pub fn string_is_empty(string: StringString) -> bool {
+    string_ref_is_empty(&string)
+}
+pub fn string_ref_is_empty(string: &StringString) -> bool {
+    match string {
+        StringString::One(only_segment) => only_segment.is_empty(),
+        StringString::Append(earlier, later) => {
+            string_ref_is_empty(earlier) || string_ref_is_empty(later)
+        }
+    }
+}
+pub fn string_length(string: StringString) -> f64 {
+    string_ref_length(&string) as f64
+}
+pub fn string_ref_length(string: &StringString) -> usize {
+    match string {
+        StringString::One(only_segment) => only_segment.len(),
+        StringString::Append(full_earlier, full_later) => {
+            let mut so_far: usize = 0;
+            let mut next_early_sub_rope: &StringString = full_earlier;
+            let mut remaining_later_sub_ropes: Vec<&StringString> = vec![full_later];
+            'the_loop: loop {
+                match next_early_sub_rope {
+                    StringString::One(str) => {
+                        so_far += str.len();
+                        match remaining_later_sub_ropes.pop() {
+                            Option::None => break 'the_loop,
+                            Option::Some(popped) => {
+                                next_early_sub_rope = popped;
+                            }
+                        }
+                    }
+                    StringString::Append(earlier, later) => {
+                        remaining_later_sub_ropes.push(later);
+                        next_early_sub_rope = earlier;
+                    }
+                }
+            }
+            so_far
+        }
+    }
+}
+pub fn string_from_int<'a>(allocator: &'a Bump, int: f64) -> StringString<'a> {
+    string_to_rope(allocator, (int as i64).to_string())
+}
+pub fn string_from_float<'a>(allocator: &'a Bump, float: f64) -> StringString<'a> {
+    string_to_rope(allocator, float.to_string())
+}
+pub fn string_from_char<'a>(allocator: &'a Bump, char: char) -> StringString<'a> {
+    // allocating here feels wrong because we know the final string size 1..4
+    string_to_rope(allocator, char.to_string())
+}
+pub fn string_repeat<'a>(
+    allocator: &'a Bump,
+    length: f64,
+    segment: StringString,
+) -> StringString<'a> {
+    if length <= 0_f64 {
+        string_rope_empty
+    } else {
+        string_to_rope(allocator, rope_to_cow_str(segment).repeat(length as usize))
+    }
+}
+pub fn string_cons<'a>(
+    allocator: &'a Bump,
+    new_first_char: char,
+    tail_string: StringString<'a>,
+) -> StringString<'a> {
+    StringString::Append(
+        allocator.alloc(string_from_char(allocator, new_first_char)),
+        allocator.alloc(tail_string),
+    )
 }
 pub fn string_all(is_expected: impl Fn(char) -> bool, string: StringString) -> bool {
-    string.chars().all(is_expected)
+    rope_to_cow_str(string).chars().all(is_expected)
 }
 pub fn string_any(is_needle: impl Fn(char) -> bool, string: StringString) -> bool {
-    string.chars().any(is_needle)
+    rope_to_cow_str(string).chars().any(is_needle)
 }
-pub fn string_filter<'a>(keep: impl Fn(char) -> bool, string: StringString) -> StringString<'a> {
-    std::borrow::Cow::Owned(
-        string
+pub fn string_filter<'a>(
+    allocator: &'a Bump,
+    keep: impl Fn(char) -> bool,
+    string: StringString,
+) -> StringString<'a> {
+    string_to_rope(
+        allocator,
+        rope_to_cow_str(string)
             .chars()
             .filter(|&element| keep(element))
             .collect::<String>(),
     )
 }
 pub fn string_map<'a>(
+    allocator: &'a Bump,
     element_change: impl Fn(char) -> char,
     string: StringString,
 ) -> StringString<'a> {
-    std::borrow::Cow::Owned(string.chars().map(element_change).collect::<String>())
+    string_to_rope(
+        allocator,
+        rope_to_cow_str(string)
+            .chars()
+            .map(element_change)
+            .collect::<String>(),
+    )
 }
 pub fn string_foldl<State>(
     reduce: impl Fn(char, State) -> State,
     initial_state: State,
     string: StringString,
 ) -> State {
-    string
+    rope_to_cow_str(string)
         .chars()
         .fold(initial_state, |state, element| reduce(element, state))
 }
@@ -878,38 +1088,33 @@ pub fn string_foldr<State>(
     initial_state: State,
     string: StringString,
 ) -> State {
-    string
+    rope_to_cow_str(string)
         .chars()
         .rev()
         .fold(initial_state, |state, element| reduce(element, state))
 }
 pub fn string_to_list<'a>(allocator: &'a Bump, string: StringString) -> ListList<'a, char> {
-    double_ended_iterator_to_list(allocator, string.chars())
+    double_ended_iterator_to_list(allocator, rope_to_cow_str(string).chars())
 }
-pub fn string_from_list<'a>(list: ListList<char>) -> StringString<'a> {
-    std::borrow::Cow::Owned(list.ref_iter().collect::<String>())
+pub fn string_from_list<'a>(allocator: &'a Bump, list: ListList<char>) -> StringString<'a> {
+    string_to_rope(allocator, list.ref_iter().collect::<String>())
 }
-pub fn string_reverse<'a>(string: StringString) -> StringString<'a> {
-    std::borrow::Cow::Owned(string.chars().rev().collect::<String>())
+pub fn string_reverse<'a>(allocator: &'a Bump, string: StringString) -> StringString<'a> {
+    string_to_rope(
+        allocator,
+        rope_to_cow_str(string).chars().rev().collect::<String>(),
+    )
 }
 pub fn string_uncons<'a>(
     allocator: &'a Bump,
     string: StringString<'a>,
 ) -> Option<(char, StringString<'a>)> {
-    match string.chars().next() {
+    let str: &str = rope_to_str(allocator, string);
+    match str.chars().next() {
         Option::None => Option::None,
-        Option::Some(head_char) => Option::Some((
-            head_char,
-            std::borrow::Cow::Borrowed(
-                &str_cow_alloc(allocator, string)[char::len_utf8(head_char)..],
-            ),
-        )),
-    }
-}
-fn str_cow_alloc<'a>(allocator: &'a Bump, cow: std::borrow::Cow<'a, str>) -> &'a str {
-    match cow {
-        std::borrow::Cow::Owned(owned) => allocator.alloc(owned),
-        std::borrow::Cow::Borrowed(borrowed) => borrowed,
+        Option::Some(head_char) => {
+            Option::Some((head_char, str_to_rope(&str[char::len_utf8(head_char)..])))
+        }
     }
 }
 
@@ -919,13 +1124,12 @@ pub fn string_left<'a>(
     string: StringString<'a>,
 ) -> StringString<'a> {
     if taken_count <= 0_f64 {
-        std::borrow::Cow::Borrowed("")
+        string_rope_empty
     } else {
-        match string.char_indices().nth(taken_count as usize) {
+        let str: &str = rope_to_str(allocator, string);
+        match str.char_indices().nth(taken_count as usize) {
             Option::None => string,
-            Option::Some((end_exclusive, _)) => {
-                std::borrow::Cow::Borrowed(&str_cow_alloc(allocator, string)[..end_exclusive])
-            }
+            Option::Some((end_exclusive, _)) => StringString::One(&str[..end_exclusive]),
         }
     }
 }
@@ -937,11 +1141,10 @@ pub fn string_drop_left<'a>(
     if skipped_count <= 0_f64 {
         string
     } else {
-        match string.char_indices().nth(skipped_count as usize) {
-            Option::None => std::borrow::Cow::Borrowed(""),
-            Option::Some((start, _)) => {
-                std::borrow::Cow::Borrowed(&str_cow_alloc(allocator, string)[start..])
-            }
+        let str: &str = rope_to_str(allocator, string);
+        match str.char_indices().nth(skipped_count as usize) {
+            Option::None => string_rope_empty,
+            Option::Some((start, _)) => StringString::One(&str[start..]),
         }
     }
 }
@@ -951,16 +1154,12 @@ pub fn string_right<'a>(
     string: StringString<'a>,
 ) -> StringString<'a> {
     if taken_count <= 0_f64 {
-        std::borrow::Cow::Borrowed("")
+        string_rope_empty
     } else {
-        match string
-            .char_indices()
-            .nth_back((taken_count - 1_f64) as usize)
-        {
+        let str: &str = rope_to_str(allocator, string);
+        match str.char_indices().nth_back((taken_count - 1_f64) as usize) {
             Option::None => string,
-            Option::Some((start, _)) => {
-                std::borrow::Cow::Borrowed(&str_cow_alloc(allocator, string)[start..])
-            }
+            Option::Some((start, _)) => StringString::One(&str[start..]),
         }
     }
 }
@@ -972,14 +1171,13 @@ pub fn string_drop_right<'a>(
     if skipped_count <= 0_f64 {
         string
     } else {
-        match string
+        let str: &str = rope_to_str(allocator, string);
+        match str
             .char_indices()
             .nth_back((skipped_count - 1_f64) as usize)
         {
-            Option::None => std::borrow::Cow::Borrowed(""),
-            Option::Some((end_exclusive, _)) => {
-                std::borrow::Cow::Borrowed(&str_cow_alloc(allocator, string)[..end_exclusive])
-            }
+            Option::None => string_rope_empty,
+            Option::Some((end_exclusive, _)) => StringString::One(&str[..end_exclusive]),
         }
     }
 }
@@ -989,30 +1187,24 @@ pub fn string_slice<'a>(
     end_exclusive_possibly_negative: f64,
     string: StringString<'a>,
 ) -> StringString<'a> {
+    let str: &str = rope_to_str(allocator, string);
     let start_inclusive_or_none_if_too_big: Option<usize> =
-        normalize_string_slice_index_from_end_if_negative(
-            start_inclusive_possibly_negative,
-            &string,
-        );
+        normalize_string_slice_index_from_end_if_negative(start_inclusive_possibly_negative, &str);
     match start_inclusive_or_none_if_too_big {
-        Option::None => std::borrow::Cow::Borrowed(""),
+        Option::None => string_rope_empty,
         Option::Some(start_inclusive) => {
             let end_exclusive_or_none_if_too_big: Option<usize> =
                 normalize_string_slice_index_from_end_if_negative(
                     end_exclusive_possibly_negative,
-                    &string,
+                    str,
                 );
             match end_exclusive_or_none_if_too_big {
-                Option::None => {
-                    std::borrow::Cow::Borrowed(&str_cow_alloc(allocator, string)[start_inclusive..])
-                }
+                Option::None => StringString::One(&str[start_inclusive..]),
                 Option::Some(end_exclusive) => {
                     if end_exclusive <= start_inclusive {
-                        std::borrow::Cow::Borrowed("")
+                        string_rope_empty
                     } else {
-                        std::borrow::Cow::Borrowed(
-                            &str_cow_alloc(allocator, string)[start_inclusive..end_exclusive],
-                        )
+                        StringString::One(&str[start_inclusive..end_exclusive])
                     }
                 }
             }
@@ -1040,35 +1232,57 @@ fn normalize_string_slice_index_from_end_if_negative(
     }
 }
 pub fn string_replace<'a>(
+    allocator: &'a Bump,
     from: StringString,
     to: StringString,
     string: StringString<'a>,
 ) -> StringString<'a> {
-    std::borrow::Cow::Owned(string.replace(from.as_ref(), &to))
+    let from_str: &str = match from {
+        StringString::One(str) => str,
+        StringString::Append(l, r) => &string_rope_append_to_string(l, r),
+    };
+    let to_str: &str = match to {
+        StringString::One(str) => str,
+        StringString::Append(l, r) => &string_rope_append_to_string(l, r),
+    };
+    string_to_rope(allocator, rope_to_cow_str(string).replace(from_str, to_str))
 }
-pub fn string_append<'a>(left: StringString, right: StringString) -> StringString<'a> {
-    std::borrow::Cow::Owned(left.into_owned() + &right)
+pub fn string_append<'a>(
+    allocator: &'a Bump,
+    left: StringString<'a>,
+    right: StringString<'a>,
+) -> StringString<'a> {
+    StringString::Append(allocator.alloc(left), allocator.alloc(right))
 }
-pub fn string_concat<'a>(segments: ListList<StringString>) -> StringString<'a> {
-    let mut concatenated: String = String::new();
-    for segment in segments.ref_iter() {
-        concatenated.push_str(segment);
+pub fn string_concat<'a>(
+    allocator: &'a Bump,
+    segments: ListList<StringString<'a>>,
+) -> StringString<'a> {
+    let mut concatenated: StringString<'a> = string_rope_empty;
+    for segment in segments.into_iter() {
+        concatenated = string_append(allocator, concatenated, segment);
     }
-    std::borrow::Cow::Owned(concatenated)
+    concatenated
 }
 pub fn string_join<'a>(
-    in_between: StringString,
-    segments: ListList<StringString>,
+    allocator: &'a Bump,
+    in_between: StringString<'a>,
+    segments: ListList<'a, StringString<'a>>,
 ) -> StringString<'a> {
     match segments {
-        ListList::Empty => std::borrow::Cow::Borrowed(""),
+        ListList::Empty => string_rope_empty,
         ListList::Cons(head_segment, tail_segments) => {
-            let mut joined: String = head_segment.to_string();
+            let mut joined: StringString = head_segment;
+            let in_between_borrowed: &StringString =
+                allocator.alloc(string_rope_flatten(allocator, in_between));
             for segment in tail_segments.ref_iter() {
-                joined.push_str(&in_between);
-                joined.push_str(segment);
+                joined = string_append(
+                    allocator,
+                    joined,
+                    StringString::Append(in_between_borrowed, segment),
+                );
             }
-            std::borrow::Cow::Owned(joined)
+            joined
         }
     }
 }
@@ -1077,11 +1291,15 @@ pub fn string_split<'a>(
     separator: StringString,
     string: StringString<'a>,
 ) -> ListList<'a, StringString<'a>> {
+    let separator_str: &str = match separator {
+        StringString::One(str) => str,
+        StringString::Append(early, late) => &string_rope_append_to_string(early, late),
+    };
     iterator_to_list(
         allocator,
-        str_cow_alloc(allocator, string)
-            .split(separator.as_ref())
-            .map(std::borrow::Cow::Borrowed),
+        rope_to_str(allocator, string)
+            .split(separator_str)
+            .map(StringString::One),
     )
 }
 pub fn string_words<'a>(
@@ -1090,9 +1308,9 @@ pub fn string_words<'a>(
 ) -> ListList<'a, StringString<'a>> {
     iterator_to_list(
         allocator,
-        str_cow_alloc(allocator, string)
+        rope_to_str(allocator, string)
             .split_whitespace()
-            .map(std::borrow::Cow::Borrowed),
+            .map(StringString::One),
     )
 }
 pub fn string_lines<'a>(
@@ -1101,27 +1319,35 @@ pub fn string_lines<'a>(
 ) -> ListList<'a, StringString<'a>> {
     iterator_to_list(
         allocator,
-        str_cow_alloc(allocator, string)
+        rope_to_str(allocator, string)
             .lines()
-            .map(std::borrow::Cow::Borrowed),
+            .map(StringString::One),
     )
 }
 pub fn string_contains(needle: StringString, string: StringString) -> bool {
-    string.contains(needle.as_ref())
+    rope_to_cow_str(string).contains(rope_to_cow_str(needle).as_ref())
 }
 pub fn string_indexes<'a>(
     allocator: &'a Bump,
     needle: StringString,
     string: StringString<'a>,
 ) -> ListList<'a, f64> {
+    let as_str: &str = match string {
+        StringString::One(str) => str,
+        StringString::Append(early, late) => &string_rope_append_to_string(early, late),
+    };
+    let needle_str: &str = match needle {
+        StringString::One(str) => str,
+        StringString::Append(early, late) => &string_rope_append_to_string(early, late),
+    };
     // this is a fairly expensive operation, O(chars * matches). Anyone know something faster?
     iterator_to_list(
         allocator,
-        string
-            .match_indices(needle.as_ref())
+        as_str
+            .match_indices(needle_str)
             .filter_map(|(instance_byte_index, _)| {
                 // translate byte index to char position
-                string
+                as_str
                     .char_indices()
                     .map(|(char_index, _)| char_index)
                     .find(|&char_index| instance_byte_index >= char_index)
@@ -1138,85 +1364,100 @@ pub fn string_indices<'a>(
     string_indexes(allocator, needle, string)
 }
 pub fn string_starts_with(prefix_to_check_for: StringString, string: StringString) -> bool {
-    string.starts_with(prefix_to_check_for.as_ref())
+    rope_to_cow_str(string).starts_with(rope_to_cow_str(prefix_to_check_for).as_ref())
 }
 pub fn string_ends_with(suffix_to_check_for: StringString, string: StringString) -> bool {
-    string.ends_with(suffix_to_check_for.as_ref())
+    rope_to_cow_str(string).ends_with(rope_to_cow_str(suffix_to_check_for).as_ref())
 }
 pub fn string_to_float(string: StringString) -> Option<f64> {
-    match string.parse::<f64>() {
+    match rope_to_cow_str(string).parse::<f64>() {
         Result::Err(_) => Option::None,
         Result::Ok(float) => Option::Some(float),
     }
 }
 pub fn string_to_int(string: StringString) -> Option<f64> {
-    match string.parse::<i64>() {
+    match rope_to_cow_str(string).parse::<i64>() {
         Result::Err(_) => Option::None,
         Result::Ok(int) => Option::Some(int as f64),
     }
 }
-pub fn string_to_upper<'a>(string: StringString) -> StringString<'a> {
-    std::borrow::Cow::Owned(string.to_uppercase())
+pub fn string_to_upper<'a>(allocator: &'a Bump, string: StringString) -> StringString<'a> {
+    string_to_rope(allocator, rope_to_cow_str(string).to_uppercase())
 }
-pub fn string_to_lower<'a>(string: StringString) -> StringString<'a> {
-    std::borrow::Cow::Owned(string.to_lowercase())
+pub fn string_to_lower<'a>(allocator: &'a Bump, string: StringString) -> StringString<'a> {
+    string_to_rope(allocator, rope_to_cow_str(string).to_lowercase())
 }
 pub fn string_pad<'a>(
+    allocator: &'a Bump,
     minimum_full_char_count: f64,
     padding: char,
-    string: StringString,
+    string: StringString<'a>,
 ) -> StringString<'a> {
-    let half_to_pad: f64 = (minimum_full_char_count - string.chars().count() as f64) / 2_f64;
-    let padding_string: String = padding.to_string();
-    let mut padded: String = padding_string.repeat(half_to_pad.ceil() as usize);
-    padded.push_str(&string);
-    padded.push_str(&padding_string.repeat(half_to_pad.floor() as usize));
-    std::borrow::Cow::Owned(padded)
+    let half_to_pad: f64 = (minimum_full_char_count - string_length(string)) / 2_f64;
+    let padding_str: &str = &padding.to_string();
+    string_append(
+        allocator,
+        string_to_rope(allocator, padding_str.repeat(half_to_pad.ceil() as usize)),
+        string_append(
+            allocator,
+            string,
+            string_to_rope(allocator, padding_str.repeat(half_to_pad.floor() as usize)),
+        ),
+    )
 }
 pub fn string_pad_left<'a>(
+    allocator: &'a Bump,
     minimum_length: f64,
     padding: char,
-    string: StringString,
+    string: StringString<'a>,
 ) -> StringString<'a> {
-    let mut padded: String = padding
-        .to_string()
-        .repeat((minimum_length - string.chars().count() as f64) as usize);
-    padded.push_str(&string);
-    std::borrow::Cow::Owned(padded)
+    string_append(
+        allocator,
+        string_to_rope(
+            allocator,
+            padding
+                .to_string()
+                .repeat((minimum_length - string_length(string)) as usize),
+        ),
+        string,
+    )
 }
 pub fn string_pad_right<'a>(
+    allocator: &'a Bump,
     minimum_length: f64,
     padding: char,
-    string: StringString,
+    string: StringString<'a>,
 ) -> StringString<'a> {
-    let string_char_count: usize = string.chars().count();
-    let mut padded: String = string.into_owned();
-    padded.push_str(
-        &padding
-            .to_string()
-            .repeat((minimum_length - string_char_count as f64) as usize),
-    );
-    std::borrow::Cow::Owned(padded)
+    string_append(
+        allocator,
+        string,
+        string_to_rope(
+            allocator,
+            padding
+                .to_string()
+                .repeat((minimum_length - string_length(string)) as usize),
+        ),
+    )
 }
 pub fn string_trim<'a>(allocator: &'a Bump, string: StringString<'a>) -> StringString<'a> {
-    std::borrow::Cow::Borrowed(str_cow_alloc(allocator, string).trim())
+    StringString::One(rope_to_str(allocator, string).trim())
 }
 pub fn string_trim_left<'a>(allocator: &'a Bump, string: StringString<'a>) -> StringString<'a> {
-    std::borrow::Cow::Borrowed(str_cow_alloc(allocator, string).trim_start())
+    StringString::One(rope_to_str(allocator, string).trim_start())
 }
 pub fn string_trim_right<'a>(allocator: &'a Bump, string: StringString<'a>) -> StringString<'a> {
-    std::borrow::Cow::Borrowed(str_cow_alloc(allocator, string).trim_end())
+    StringString::One(rope_to_str(allocator, string).trim_end())
 }
 
-pub fn debug_to_string<'a, A: std::fmt::Debug>(data: A) -> StringString<'a> {
-    std::borrow::Cow::Owned(format!("{:?}", data))
+pub fn debug_to_string<'a, A: std::fmt::Debug>(allocator: &'a Bump, data: A) -> StringString<'a> {
+    string_to_rope(allocator, format!("{:?}", data))
 }
 pub fn debug_log<'a, A: std::fmt::Debug>(data: A) -> A {
     println!("{:?}", data);
     data
 }
-pub fn debug_todo<Any>(message: StringString) -> Any {
-    todo!("{}", message)
+pub fn debug_todo<A>(message: StringString) -> A {
+    todo!("{message}")
 }
 pub fn maybe_with_default<A>(on_nothing: A, maybe: Option<A>) -> A {
     maybe.unwrap_or(on_nothing)
@@ -1348,13 +1589,15 @@ pub enum JsonValue<'a> {
     Array(&'a [JsonValue<'a>]),
     Object(&'a std::collections::BTreeMap<&'a str, JsonValue<'a>>),
 }
-pub fn json_encode_encode<'a>(indent_size: f64, json: JsonValue<'a>) -> StringString<'a> {
-    std::borrow::Cow::Owned(json_encode_encode_from(
-        indent_size as usize,
-        0,
-        String::new(),
-        json,
-    ))
+pub fn json_encode_encode<'a>(
+    allocator: &'a Bump,
+    indent_size: f64,
+    json: JsonValue<'a>,
+) -> StringString<'a> {
+    string_to_rope(
+        allocator,
+        json_encode_encode_from(indent_size as usize, 0, String::new(), json),
+    )
 }
 
 pub fn json_encode_encode_from<'a>(
@@ -1415,7 +1658,7 @@ pub fn json_encode_encode_from<'a>(
                         indent_size,
                         current_indent + 1,
                         so_far,
-                        first_json_element.clone(),
+                        *first_json_element,
                     );
                     for json_element in json_elements_iterator {
                         so_far.push(',');
@@ -1424,7 +1667,7 @@ pub fn json_encode_encode_from<'a>(
                             indent_size,
                             current_indent + 1,
                             so_far,
-                            json_element.clone(),
+                            *json_element,
                         );
                     }
                     so_far.push_str(linebreak_indented);
@@ -1487,7 +1730,7 @@ pub fn json_encode_bool<'a>(bool: bool) -> JsonValue<'a> {
     JsonValue::Bool(bool)
 }
 pub fn json_encode_string<'a>(allocator: &'a Bump, string: StringString<'a>) -> JsonValue<'a> {
-    JsonValue::String(str_cow_alloc(allocator, string))
+    JsonValue::String(rope_to_str(allocator, string))
 }
 pub fn json_encode_int<'a>(int: f64) -> JsonValue<'a> {
     JsonValue::Number(int)
@@ -1531,13 +1774,13 @@ pub fn json_encode_object<'a>(
             entries
                 .into_iter()
                 .map(|(field_name, field_value)| {
-                    (str_cow_alloc(allocator, field_name), field_value.clone())
+                    (rope_to_str(allocator, field_name), field_value.clone())
                 })
                 .collect::<std::collections::BTreeMap<&str, JsonValue>>(),
         ),
     )
 }
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum JsonDecodeError<'a> {
     Field(StringString<'a>, &'a JsonDecodeError<'a>),
     Index(f64, &'a JsonDecodeError<'a>),
@@ -1554,7 +1797,7 @@ pub fn json_decode_error_to_string<'a>(
 ) -> StringString<'a> {
     let mut builder = String::new();
     json_decode_error_to_string_help(allocator, &error, String::new(), &mut builder, 0);
-    std::borrow::Cow::Owned(builder)
+    string_to_rope(allocator, builder)
 }
 pub fn json_decode_error_to_string_help<'a>(
     allocator: &'a Bump,
@@ -1567,13 +1810,13 @@ pub fn json_decode_error_to_string_help<'a>(
     'the_loop: loop {
         match current_error {
             JsonDecodeError::Field(field_name, field_value_error) => {
+                let field_name: std::borrow::Cow<str> = rope_to_cow_str(*field_name);
                 let field_description: String = match field_name.chars().next() {
                     Option::Some(field_name_first_char)
                         if field_name_first_char.is_alphanumeric() =>
                     {
-                        ".".to_string() + field_name.as_ref()
+                        format!(".{field_name}")
                     }
-
                     _ => format!("[{field_name}]"),
                 };
                 context.push_str(&field_description);
@@ -1599,7 +1842,7 @@ pub fn json_decode_error_to_string_help<'a>(
                     current_error = only_option_error;
                 }
                 _ => {
-                    let linebreak_indented: String = "\n".to_string() + &" ".repeat(indent);
+                    let linebreak_indented: &str = &("\n".to_string() + &" ".repeat(indent));
                     if context.is_empty() {
                         so_far.push_str("Json.Decode.oneOf");
                     } else {
@@ -1609,13 +1852,13 @@ pub fn json_decode_error_to_string_help<'a>(
                     so_far.push_str(" failed in the following ");
                     so_far.push_str(&errors.ref_iter().count().to_string());
                     so_far.push_str(" ways=>");
-                    so_far.push_str(&linebreak_indented);
-                    so_far.push_str(&linebreak_indented);
+                    so_far.push_str(linebreak_indented);
+                    so_far.push_str(linebreak_indented);
                     for (i, error) in errors.ref_iter().enumerate() {
-                        so_far.push_str(&linebreak_indented);
-                        so_far.push_str(&linebreak_indented);
-                        so_far.push_str(&linebreak_indented);
-                        so_far.push_str(&linebreak_indented);
+                        so_far.push_str(linebreak_indented);
+                        so_far.push_str(linebreak_indented);
+                        so_far.push_str(linebreak_indented);
+                        so_far.push_str(linebreak_indented);
                         so_far.push_str(&(i as usize + 1).to_string());
                         so_far.push(' ');
                         json_decode_error_to_string_help(
@@ -1630,33 +1873,33 @@ pub fn json_decode_error_to_string_help<'a>(
                 }
             },
             JsonDecodeError::Failure(message, json) => {
-                let linebreak_indented: String = "\n".to_string() + &" ".repeat(indent);
+                let linebreak_indented: &str = &("\n".to_string() + &" ".repeat(indent));
                 if context.is_empty() {
                     so_far.push_str("Problem with the given value=>");
-                    so_far.push_str(&linebreak_indented);
-                    so_far.push_str(&linebreak_indented);
+                    so_far.push_str(linebreak_indented);
+                    so_far.push_str(linebreak_indented);
                 } else {
                     so_far.push_str("Problem with the value at json");
                     so_far.push_str(&context);
                     so_far.push_str("=>");
-                    so_far.push_str(&linebreak_indented);
-                    so_far.push_str(&linebreak_indented);
+                    so_far.push_str(linebreak_indented);
+                    so_far.push_str(linebreak_indented);
                     so_far.push_str("    ");
                 };
                 so_far.push_str(&indent_by(
                     indent + 4,
-                    json_encode_encode(4_f64, json.clone()),
+                    json_encode_encode(allocator, 4_f64, json.clone()),
                 ));
-                so_far.push_str(&linebreak_indented);
-                so_far.push_str(&linebreak_indented);
-                so_far.push_str(&message);
+                so_far.push_str(linebreak_indented);
+                so_far.push_str(linebreak_indented);
+                so_far.push_str(&rope_to_cow_str(*message));
                 break 'the_loop;
             }
         }
     }
 }
 fn indent_by(indent: usize, string: StringString) -> String {
-    string
+    rope_to_cow_str(string)
         .split("\n")
         .collect::<Vec<&str>>()
         .join(&("\n".to_string() + &" ".repeat(indent)))
@@ -1905,7 +2148,7 @@ pub fn json_decode_null<'a, A: Clone>(allocator: &'a Bump, value: A) -> JsonDeco
         decode: allocator.alloc(move |json| match json {
             JsonValue::Null => Result::Ok(value.clone()),
             json_not_null => Result::Err(JsonDecodeError::Failure(
-                std::borrow::Cow::Borrowed("Expecting NULL"),
+                StringString::One("Expecting NULL"),
                 json_not_null,
             )),
         }),
@@ -1916,7 +2159,7 @@ pub fn json_decode_bool<'a>() -> JsonDecodeDecoder<'a, bool> {
         decode: &|json| match json {
             JsonValue::Bool(decoded) => Result::Ok(decoded),
             json_not_bool => Result::Err(JsonDecodeError::Failure(
-                std::borrow::Cow::Borrowed("Expecting a BOOL"),
+                StringString::One("Expecting a BOOL"),
                 json_not_bool,
             )),
         },
@@ -1927,7 +2170,7 @@ pub fn json_decode_int<'a>() -> JsonDecodeDecoder<'a, f64> {
         decode: &|json| match json {
             JsonValue::Number(decoded) if decoded.trunc() == decoded => Result::Ok(decoded),
             json_not_int => Result::Err(JsonDecodeError::Failure(
-                std::borrow::Cow::Borrowed("Expecting an INT"),
+                StringString::One("Expecting an INT"),
                 json_not_int,
             )),
         },
@@ -1938,7 +2181,7 @@ pub fn json_decode_float<'a>() -> JsonDecodeDecoder<'a, f64> {
         decode: &|json| match json {
             JsonValue::Number(decoded) => Result::Ok(decoded),
             json_not_number => Result::Err(JsonDecodeError::Failure(
-                std::borrow::Cow::Borrowed("Expecting a NUMBER"),
+                StringString::One("Expecting a NUMBER"),
                 json_not_number,
             )),
         },
@@ -1947,9 +2190,9 @@ pub fn json_decode_float<'a>() -> JsonDecodeDecoder<'a, f64> {
 pub fn json_decode_string<'a>() -> JsonDecodeDecoder<'a, StringString<'a>> {
     JsonDecodeDecoder {
         decode: &|json| match json {
-            JsonValue::String(decoded) => Result::Ok(std::borrow::Cow::Borrowed(decoded)),
+            JsonValue::String(decoded) => Result::Ok(StringString::One(decoded)),
             json_not_string => Result::Err(JsonDecodeError::Failure(
-                std::borrow::Cow::Borrowed("Expecting a STRING"),
+                StringString::One("Expecting a STRING"),
                 json_not_string,
             )),
         },
@@ -1970,7 +2213,7 @@ pub fn json_decode_nullable<'a, A>(
                         allocator,
                         [
                             JsonDecodeError::Failure(
-                                std::borrow::Cow::Borrowed("Expecting NULL"),
+                                StringString::One("Expecting NULL"),
                                 json_not_null,
                             ),
                             on_not_null_error,
@@ -1991,14 +2234,12 @@ pub fn json_decode_index<'a, A>(
             JsonValue::Array(decoded_array) => match decoded_array.get(index as usize) {
                 Option::Some(&decoded_element) => (element_decoder.decode)(decoded_element),
                 Option::None => Result::Err(JsonDecodeError::Failure(
-                    std::borrow::Cow::Borrowed(
-                        "Expecting an ARRAY with an element at index {index}",
-                    ),
+                    StringString::One("Expecting an ARRAY with an element at index {index}"),
                     json,
                 )),
             },
             json_not_array => Result::Err(JsonDecodeError::Failure(
-                std::borrow::Cow::Borrowed("Expecting an ARRAY"),
+                StringString::One("Expecting an ARRAY"),
                 json_not_array,
             )),
         }),
@@ -2026,7 +2267,7 @@ pub fn json_decode_array<'a, A: Clone>(
                 Result::Ok(std::borrow::Cow::Owned(decoded_array))
             }
             json_not_array => Result::Err(JsonDecodeError::Failure(
-                std::borrow::Cow::Borrowed("Expecting an ARRAY"),
+                StringString::One("Expecting an ARRAY"),
                 json_not_array,
             )),
         }),
@@ -2056,7 +2297,7 @@ pub fn json_decode_list<'a, A>(
                 Result::Ok(decoded_list)
             }
             json_not_array => Result::Err(JsonDecodeError::Failure(
-                std::borrow::Cow::Borrowed("Expecting an ARRAY"),
+                StringString::One("Expecting an ARRAY"),
                 json_not_array,
             )),
         }),
@@ -2086,7 +2327,7 @@ pub fn json_decode_one_or_more<'a, A: Clone, Combined>(
                 }
                 match decoded_list {
                     ListList::Empty => Result::Err(JsonDecodeError::Failure(
-                        std::borrow::Cow::Borrowed("Expecting an ARRAY with at least ONE element"),
+                        StringString::One("Expecting an ARRAY with at least ONE element"),
                         json,
                     )),
                     ListList::Cons(decoded_head, decoded_tail) => {
@@ -2095,7 +2336,7 @@ pub fn json_decode_one_or_more<'a, A: Clone, Combined>(
                 }
             }
             json_not_array => Result::Err(JsonDecodeError::Failure(
-                std::borrow::Cow::Borrowed("Expecting an ARRAY"),
+                StringString::One("Expecting an ARRAY"),
                 json_not_array,
             )),
         }),
@@ -2122,15 +2363,16 @@ pub fn json_decode_field_value<'a>(
                         _ => &format!("[{field_name}]"),
                     };
                     Result::Err(JsonDecodeError::Failure(
-                        std::borrow::Cow::Owned(format!(
-                            "Expecting an OBJECT with a field {field_description}"
-                        )),
+                        string_to_rope(
+                            allocator,
+                            format!("Expecting an OBJECT with a field {field_description}"),
+                        ),
                         json,
                     ))
                 }
             },
             json_not_object => Result::Err(JsonDecodeError::Failure(
-                std::borrow::Cow::Borrowed("Expecting an OBJECT"),
+                StringString::One("Expecting an OBJECT"),
                 json_not_object,
             )),
         }),
@@ -2141,14 +2383,17 @@ pub fn json_decode_field<'a, A>(
     field_name: StringString<'a>,
     field_value_decoder: JsonDecodeDecoder<'a, A>,
 ) -> JsonDecodeDecoder<'a, A> {
+    let field_name: &str = rope_to_str(allocator, field_name);
     JsonDecodeDecoder {
         decode: alloc_shared(allocator, move |json| match json {
-            JsonValue::Object(decoded_object) => match decoded_object.get(field_name.as_ref()) {
+            JsonValue::Object(decoded_object) => match decoded_object.get(field_name) {
                 Option::Some(&decoded_field_value) => {
                     ((|json| (field_value_decoder.decode)(json))(decoded_field_value)).map_err({
-                        let field_name = field_name.clone();
                         move |error| {
-                            JsonDecodeError::Field(field_name.clone(), allocator.alloc(error))
+                            JsonDecodeError::Field(
+                                StringString::One(field_name),
+                                allocator.alloc(error),
+                            )
                         }
                     })
                 }
@@ -2165,15 +2410,16 @@ pub fn json_decode_field<'a, A>(
                         _ => &format!("[{field_name}]"),
                     };
                     Result::Err(JsonDecodeError::Failure(
-                        std::borrow::Cow::Owned(format!(
-                            "Expecting an OBJECT with a field {field_description}"
-                        )),
+                        string_to_rope(
+                            allocator,
+                            format!("Expecting an OBJECT with a field {field_description}"),
+                        ),
                         json,
                     ))
                 }
             },
             json_not_object => Result::Err(JsonDecodeError::Failure(
-                std::borrow::Cow::Borrowed("Expecting an OBJECT"),
+                StringString::One("Expecting an OBJECT"),
                 json_not_object,
             )),
         }),
@@ -2181,7 +2427,7 @@ pub fn json_decode_field<'a, A>(
 }
 pub fn at<'a, A>(
     allocator: &'a Bump,
-    path: ListList<'a, StringString<'a>>,
+    path: ListList<'a, StringString>,
     inner_decoder: JsonDecodeDecoder<'a, A>,
 ) -> JsonDecodeDecoder<'a, A> {
     JsonDecodeDecoder {
@@ -2190,10 +2436,7 @@ pub fn at<'a, A>(
             move |json: JsonValue<'a>| -> Result<A, JsonDecodeError<'a>> {
                 let mut successfully_decoded_field_names: Vec<&str> = Vec::new();
                 let mut remaining_json: JsonValue = json;
-                for next_field_name in path
-                    .ref_iter()
-                    .map(|cow| str_cow_alloc(allocator, cow.clone()))
-                {
+                for next_field_name in path.ref_iter().map(|field| rope_to_str(allocator, *field)) {
                     match (json_decode_field_value(allocator, next_field_name).decode)(
                         remaining_json,
                     ) {
@@ -2206,7 +2449,7 @@ pub fn at<'a, A>(
                                 inner_error,
                                 |so_far: JsonDecodeError<'a>, field_name: &str| {
                                     JsonDecodeError::Field(
-                                        std::borrow::Cow::Borrowed(field_name),
+                                        StringString::One(field_name),
                                         alloc_shared(allocator, so_far),
                                     )
                                 },
@@ -2221,7 +2464,7 @@ pub fn at<'a, A>(
                             inner_error,
                             move |so_far, field_name| {
                                 JsonDecodeError::Field(
-                                    std::borrow::Cow::Borrowed(field_name),
+                                    StringString::One(field_name),
                                     alloc_shared(allocator, so_far),
                                 )
                             },
@@ -2244,14 +2487,14 @@ pub fn json_decode_key_value_pairs<'a, A>(
                     match (value_decoder.decode)(value_json) {
                         Result::Err(value_error) => {
                             return Result::Err(JsonDecodeError::Field(
-                                std::borrow::Cow::Borrowed(key),
+                                StringString::One(key),
                                 allocator.alloc(value_error),
                             ));
                         }
                         Result::Ok(decoded_value) => {
                             decoded_entries = list_cons(
                                 allocator,
-                                (std::borrow::Cow::Borrowed(key), decoded_value),
+                                (StringString::One(key), decoded_value),
                                 decoded_entries,
                             )
                         }
@@ -2260,7 +2503,7 @@ pub fn json_decode_key_value_pairs<'a, A>(
                 Result::Ok(decoded_entries)
             }
             json_not_array => Result::Err(JsonDecodeError::Failure(
-                std::borrow::Cow::Borrowed("Expecting an OBJECT"),
+                StringString::One("Expecting an OBJECT"),
                 json_not_array,
             )),
         }),
@@ -2467,23 +2710,25 @@ pub fn elm_kernel_parser_is_sub_string(
 ) -> (f64, f64, f64) {
     let mut row: usize = row_original as usize;
     let mut col: usize = col_original as usize;
-    let mut small_string_iterator = small_string.chars();
-    for code in big_string.chars().skip(offset_original as usize) {
-        if small_string_iterator.next() != Option::Some(code) {
+    let mut offset: usize = offset_original as usize;
+    let small_string_cow_str: std::borrow::Cow<str> = rope_to_cow_str(small_string);
+    let mut small_string_iterator: std::str::Chars = small_string_cow_str.chars();
+    for ref code in rope_to_cow_str(big_string)
+        .chars()
+        .skip(offset_original as usize)
+    {
+        if small_string_iterator.next() != Option::Some(*code) {
             return (-1_f64, row as f64, col as f64);
         }
-        if code == '\n' {
+        offset = offset + 1;
+        if *code == '\n' {
             row = row + 1;
             col = 1
         } else {
             col = col + 1;
         }
     }
-    (
-        offset_original + small_string.chars().count() as f64,
-        row as f64,
-        col as f64,
-    )
+    (offset as f64, row as f64, col as f64)
 }
 
 pub fn elm_kernel_parser_is_sub_char(
@@ -2491,7 +2736,10 @@ pub fn elm_kernel_parser_is_sub_char(
     offset_original: f64,
     string: StringString,
 ) -> f64 {
-    match string.chars().nth(offset_original as usize) {
+    match rope_to_cow_str(string)
+        .chars()
+        .nth(offset_original as usize)
+    {
         Option::None => -1_f64,
         Option::Some(char_at_offset) => {
             if predicate(char_at_offset) {
@@ -2508,7 +2756,7 @@ pub fn elm_kernel_parser_is_sub_char(
 }
 
 pub fn elm_kernel_parser_is_ascii_code(code: f64, offset: f64, string: StringString) -> bool {
-    match string.chars().nth(offset as usize) {
+    match rope_to_cow_str(string).chars().nth(offset as usize) {
         Option::None => false,
         Option::Some(char_at_offset) => char_at_offset as usize == code as usize,
     }
@@ -2516,7 +2764,8 @@ pub fn elm_kernel_parser_is_ascii_code(code: f64, offset: f64, string: StringStr
 
 pub fn elm_kernel_parser_chomp_base10(offset_original: f64, string: StringString) -> f64 {
     let mut offset: usize = offset_original as usize;
-    let mut string_iterator_from_offset = string.chars().skip(offset);
+    let cow_str: std::borrow::Cow<str> = rope_to_cow_str(string);
+    let mut string_iterator_from_offset = cow_str.chars().skip(offset);
     'the_loop: loop {
         match string_iterator_from_offset.next() {
             Option::None => break 'the_loop,
@@ -2539,7 +2788,8 @@ pub fn elm_kernel_parser_consume_base(
 ) -> (f64, f64) {
     let base: i64 = base_f64 as i64;
     let mut offset: usize = offset_original as usize;
-    let mut string_iterator_from_offset = string.chars().skip(offset);
+    let cow_str: std::borrow::Cow<str> = rope_to_cow_str(string);
+    let mut string_iterator_from_offset = cow_str.chars().skip(offset);
     let mut total: i64 = 0;
     'the_loop: loop {
         match string_iterator_from_offset.next() {
@@ -2560,7 +2810,8 @@ pub fn elm_kernel_parser_consume_base(
 
 pub fn elm_kernel_parser_consume_base16(offset_original: f64, string: StringString) -> (f64, f64) {
     let mut offset: usize = offset_original as usize;
-    let mut string_iterator_from_offset = string.chars().skip(offset);
+    let cow_str: std::borrow::Cow<str> = rope_to_cow_str(string);
+    let mut string_iterator_from_offset = cow_str.chars().skip(offset);
     let mut total: usize = 0;
     'the_loop: loop {
         match string_iterator_from_offset.next() {
@@ -2592,16 +2843,18 @@ pub fn elm_kernel_parser_find_sub_string(
     big_string: StringString,
 ) -> (f64, f64, f64) {
     let offset_original: usize = offset_original_f64 as usize;
-    match big_string.char_indices().nth(offset_original) {
+    let big_string_cow: std::borrow::Cow<str> = rope_to_cow_str(big_string);
+    match big_string_cow.char_indices().nth(offset_original) {
         Option::None => (-1_f64, row_original, col_original),
         Option::Some((offset_original_as_char_index, _)) => {
-            match big_string[offset_original_as_char_index..].find(small_string.as_ref()) {
+            let small_string_cow: std::borrow::Cow<str> = rope_to_cow_str(small_string);
+            match big_string_cow[offset_original_as_char_index..].find(small_string_cow.as_ref()) {
                 Option::None => (-1_f64, row_original, col_original),
                 Option::Some(found_start_offset_from_offset) => {
-                    let small_string_char_count = small_string.chars().count();
+                    let small_string_char_count = small_string_cow.chars().count();
                     let mut row: usize = row_original as usize;
                     let mut col: usize = col_original as usize;
-                    for char_at_offset in big_string[offset_original_as_char_index..]
+                    for char_at_offset in big_string_cow[offset_original_as_char_index..]
                         .chars()
                         .take(small_string_char_count)
                     {
