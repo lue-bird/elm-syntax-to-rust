@@ -74,10 +74,10 @@ pub const fn basics_identity<A>(a: A) -> A {
 pub fn basics_always<Kept, Ignored>(kept: Kept, _: Ignored) -> Kept {
     kept
 }
-pub fn basics_apr<A, B>(food: A, eat: impl Fn(A) -> B) -> B {
+pub fn basics_apr<A, B>(food: A, eat: impl FnOnce(A) -> B) -> B {
     eat(food)
 }
-pub fn basics_apl<A, B>(eat: impl Fn(A) -> B, food: A) -> B {
+pub fn basics_apl<A, B>(eat: impl FnOnce(A) -> B, food: A) -> B {
     eat(food)
 }
 pub fn basics_composer<'a, A, B, C>(
@@ -1463,24 +1463,24 @@ pub fn maybe_with_default<A>(on_nothing: A, maybe: Option<A>) -> A {
     maybe.unwrap_or(on_nothing)
 }
 pub fn maybe_and_then<A, B>(
-    value_to_maybe: impl Fn(A) -> Option<B>,
+    value_to_maybe: impl FnOnce(A) -> Option<B>,
     maybe: Option<A>,
 ) -> Option<B> {
     maybe.and_then(value_to_maybe)
 }
 
-pub fn maybe_map<A, B>(value_change: impl Fn(A) -> B, maybe: Option<A>) -> Option<B> {
+pub fn maybe_map<A, B>(value_change: impl FnOnce(A) -> B, maybe: Option<A>) -> Option<B> {
     maybe.map(value_change)
 }
 pub fn maybe_map2<A, B, Combined>(
-    combine: impl Fn(A, B) -> Combined,
+    combine: impl FnOnce(A, B) -> Combined,
     a_maybe: Option<A>,
     b_maybe: Option<B>,
 ) -> Option<Combined> {
     a_maybe.zip(b_maybe).map(|(a, b)| combine(a, b))
 }
 pub fn maybe_map3<A, B, C, Combined>(
-    combine: impl Fn(A, B, C) -> Combined,
+    combine: impl FnOnce(A, B, C) -> Combined,
     a_maybe: Option<A>,
     b_maybe: Option<B>,
     c_maybe: Option<C>,
@@ -1491,7 +1491,7 @@ pub fn maybe_map3<A, B, C, Combined>(
         .map(|((a, b), c)| combine(a, b, c))
 }
 pub fn maybe_map4<A, B, C, D, Combined>(
-    combine: impl Fn(A, B, C, D) -> Combined,
+    combine: impl FnOnce(A, B, C, D) -> Combined,
     a_maybe: Option<A>,
     b_maybe: Option<B>,
     c_maybe: Option<C>,
@@ -1504,7 +1504,7 @@ pub fn maybe_map4<A, B, C, D, Combined>(
         .map(|(((a, b), c), d)| combine(a, b, c, d))
 }
 pub fn maybe_map5<A, B, C, D, E, Combined>(
-    combine: impl Fn(A, B, C, D, E) -> Combined,
+    combine: impl FnOnce(A, B, C, D, E) -> Combined,
     a_maybe: Option<A>,
     b_maybe: Option<B>,
     c_maybe: Option<C>,
@@ -1526,32 +1526,32 @@ pub fn result_from_maybe<A, X>(error_on_nothing: X, maybe: Option<A>) -> ResultR
     maybe.ok_or(error_on_nothing)
 }
 pub fn result_map_error<A, X, Y>(
-    error_change: impl Fn(X) -> Y,
+    error_change: impl FnOnce(X) -> Y,
     result: ResultResult<X, A>,
 ) -> ResultResult<Y, A> {
     result.map_err(error_change)
 }
 pub fn result_and_then<A, B, X>(
-    value_to_result: impl Fn(A) -> ResultResult<X, B>,
+    value_to_result: impl FnOnce(A) -> ResultResult<X, B>,
     result: ResultResult<X, A>,
 ) -> ResultResult<X, B> {
     result.and_then(value_to_result)
 }
 pub fn result_map<A, B, X>(
-    value_change: impl Fn(A) -> B,
+    value_change: impl FnOnce(A) -> B,
     result: ResultResult<X, A>,
 ) -> ResultResult<X, B> {
     result.map(value_change)
 }
 pub fn result_map2<A, B, Combined, X>(
-    combine: impl Fn(A, B) -> Combined,
+    combine: impl FnOnce(A, B) -> Combined,
     a_result: ResultResult<X, A>,
     b_result: ResultResult<X, B>,
 ) -> ResultResult<X, Combined> {
     Result::Ok(combine(a_result?, b_result?))
 }
 pub fn result_map3<A, B, C, Combined, X>(
-    combine: impl Fn(A, B, C) -> Combined,
+    combine: impl FnOnce(A, B, C) -> Combined,
     a_result: ResultResult<X, A>,
     b_result: ResultResult<X, B>,
     c_result: ResultResult<X, C>,
@@ -1559,7 +1559,7 @@ pub fn result_map3<A, B, C, Combined, X>(
     Result::Ok(combine(a_result?, b_result?, c_result?))
 }
 pub fn result_map4<A, B, C, D, Combined, X>(
-    combine: impl Fn(A, B, C, D) -> Combined,
+    combine: impl FnOnce(A, B, C, D) -> Combined,
     a_result: ResultResult<X, A>,
     b_result: ResultResult<X, B>,
     c_result: ResultResult<X, C>,
@@ -1568,7 +1568,7 @@ pub fn result_map4<A, B, C, D, Combined, X>(
     Result::Ok(combine(a_result?, b_result?, c_result?, d_result?))
 }
 pub fn result_map5<A, B, C, D, E, Combined, X>(
-    combine: impl Fn(A, B, C, D, E) -> Combined,
+    combine: impl FnOnce(A, B, C, D, E) -> Combined,
     a_result: ResultResult<X, A>,
     b_result: ResultResult<X, B>,
     c_result: ResultResult<X, C>,
@@ -1578,6 +1578,288 @@ pub fn result_map5<A, B, C, D, E, Combined, X>(
     Result::Ok(combine(
         a_result?, b_result?, c_result?, d_result?, e_result?,
     ))
+}
+
+#[derive(Copy, Clone, PartialEq, PartialOrd)]
+#[repr(transparent)]
+/// because types like elm Float can be used as dictionary keys
+/// while rust `f64` being `PartialOrd` for exampled can not
+pub struct PretendNotPartial<A>(A);
+impl<A: PartialEq> Eq for PretendNotPartial<A> {}
+impl<A: PartialEq + PartialOrd> Ord for PretendNotPartial<A> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0
+            .partial_cmp(&other.0)
+            .unwrap_or(std::cmp::Ordering::Greater)
+    }
+}
+impl<A: std::fmt::Display> std::fmt::Display for PretendNotPartial<A> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+impl<A: std::fmt::Debug> std::fmt::Debug for PretendNotPartial<A> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+/// move out the reference counted value if there is only one strong reference,
+/// otherwise return an owned clone
+fn rc_into_owned<A: Clone>(rc: std::rc::Rc<A>) -> A {
+    std::rc::Rc::try_unwrap(rc)
+        .unwrap_or_else(|same_rc| std::borrow::Borrow::<A>::borrow(&same_rc).clone())
+}
+
+type DictDict<K, V> = std::rc::Rc<std::collections::BTreeMap<PretendNotPartial<K>, V>>;
+
+pub fn dict_empty<K: Clone, V: Clone>() -> DictDict<K, V> {
+    std::rc::Rc::new(std::collections::BTreeMap::new())
+}
+pub fn dict_singleton<K: PartialOrd + Clone, V: Clone>(
+    only_key: K,
+    only_value: V,
+) -> DictDict<K, V> {
+    let mut dict: std::collections::BTreeMap<PretendNotPartial<K>, V> =
+        std::collections::BTreeMap::new();
+    dict.insert(PretendNotPartial(only_key), only_value);
+    std::rc::Rc::new(dict)
+}
+pub fn dict_insert<K: PartialOrd + Clone, V: Clone>(
+    key: K,
+    value: V,
+    dict: DictDict<K, V>,
+) -> DictDict<K, V> {
+    let mut dict_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> = rc_into_owned(dict);
+    dict_owned.insert(PretendNotPartial(key), value);
+    std::rc::Rc::new(dict_owned)
+}
+pub fn dict_update<K: PartialOrd + Clone, V: Clone>(
+    key: K,
+    value_change: impl Fn(Option<V>) -> Option<V>,
+    dict: DictDict<K, V>,
+) -> DictDict<K, V> {
+    let key_pretend_not_partial: PretendNotPartial<K> = PretendNotPartial(key);
+    match dict.get(&key_pretend_not_partial) {
+        Option::Some(value) => match value_change(Option::Some(value.clone())) {
+            Option::None => {
+                let mut dict_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> =
+                    rc_into_owned(dict);
+                dict_owned.remove(&key_pretend_not_partial);
+                std::rc::Rc::new(dict_owned)
+            }
+            Option::Some(changed_value) => {
+                let mut dict_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> =
+                    rc_into_owned(dict);
+                dict_owned.insert(key_pretend_not_partial, changed_value);
+                std::rc::Rc::new(dict_owned)
+            }
+        },
+        Option::None => match value_change(Option::None) {
+            Option::None => dict,
+            Option::Some(changed_value) => {
+                let mut dict_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> =
+                    rc_into_owned(dict);
+                dict_owned.insert(key_pretend_not_partial, changed_value);
+                std::rc::Rc::new(dict_owned)
+            }
+        },
+    }
+}
+pub fn dict_remove<K: PartialOrd + Clone, V: Clone>(
+    key: K,
+    dict: DictDict<K, V>,
+) -> DictDict<K, V> {
+    let mut dict_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> = rc_into_owned(dict);
+    dict_owned.remove(&PretendNotPartial(key));
+    std::rc::Rc::new(dict_owned)
+}
+
+pub fn dict_is_empty<K: Clone, V: Clone>(dict: DictDict<K, V>) -> bool {
+    dict.is_empty()
+}
+pub fn dict_size<K: Clone, V: Clone>(dict: DictDict<K, V>) -> f64 {
+    dict.len() as f64
+}
+pub fn dict_member<K: PartialOrd + Clone, V: Clone>(key: K, dict: DictDict<K, V>) -> bool {
+    dict.contains_key(&PretendNotPartial(key))
+}
+pub fn dict_get<K: PartialOrd + Clone, V: Clone>(key: K, dict: DictDict<K, V>) -> Option<V> {
+    dict.get(&PretendNotPartial(key)).cloned()
+}
+
+pub fn dict_keys<'a, K: Clone, V: Clone>(
+    allocator: &'a Bump,
+    dict: DictDict<K, V>,
+) -> ListList<'a, K> {
+    match std::rc::Rc::try_unwrap(dict) {
+        Result::Ok(dict_owned) => {
+            double_ended_iterator_to_list(allocator, dict_owned.into_keys().map(|k| k.0))
+        }
+        Result::Err(dict_shared) => {
+            double_ended_iterator_to_list(allocator, dict_shared.keys().map(|k| k.0.clone()))
+        }
+    }
+}
+pub fn dict_values<'a, K: Clone, V: Clone>(
+    allocator: &'a Bump,
+    dict: DictDict<K, V>,
+) -> ListList<'a, V> {
+    match std::rc::Rc::try_unwrap(dict) {
+        Result::Ok(dict_owned) => {
+            double_ended_iterator_to_list(allocator, dict_owned.into_values())
+        }
+        Result::Err(dict_shared) => {
+            double_ended_iterator_to_list(allocator, dict_shared.values().cloned())
+        }
+    }
+}
+pub fn dict_to_list<'a, K: Clone, V: Clone>(
+    allocator: &'a Bump,
+    dict: DictDict<K, V>,
+) -> ListList<'a, (K, V)> {
+    match std::rc::Rc::try_unwrap(dict) {
+        Result::Ok(dict_owned) => {
+            double_ended_iterator_to_list(allocator, dict_owned.into_iter().map(|(k, v)| (k.0, v)))
+        }
+        Result::Err(dict_shared) => double_ended_iterator_to_list(
+            allocator,
+            dict_shared.iter().map(|(k, v)| (k.0.clone(), v.clone())),
+        ),
+    }
+}
+pub fn dict_from_list<K: PartialOrd + Clone, V: Clone>(
+    entries: ListList<(K, V)>,
+) -> DictDict<K, V> {
+    std::rc::Rc::new(
+        entries
+            .into_iter()
+            .map(|(k, v)| (PretendNotPartial(k), v))
+            .collect::<std::collections::BTreeMap<PretendNotPartial<K>, V>>(),
+    )
+}
+
+pub fn dict_map<K: PartialOrd + Clone, V: Clone, NewV: Clone>(
+    key_value_to_new_value: impl Fn(K, V) -> NewV,
+    dict: DictDict<K, V>,
+) -> DictDict<K, NewV> {
+    std::rc::Rc::new(match std::rc::Rc::try_unwrap(dict) {
+        Result::Ok(dict_owned) => dict_owned
+            .into_iter()
+            .map(|(k, v)| (k.clone(), key_value_to_new_value(k.0, v)))
+            .collect::<std::collections::BTreeMap<PretendNotPartial<K>, NewV>>(),
+        Result::Err(dict_shared) => dict_shared
+            .iter()
+            .map(|(k, v)| (k.clone(), key_value_to_new_value(k.0.clone(), v.clone())))
+            .collect::<std::collections::BTreeMap<PretendNotPartial<K>, NewV>>(),
+    })
+}
+pub fn dict_filter<K: PartialOrd + Clone, V: Clone>(
+    keep_key_value: impl Fn(K, V) -> bool,
+    dict: DictDict<K, V>,
+) -> DictDict<K, V> {
+    let mut dict_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> = rc_into_owned(dict);
+    dict_owned.retain(|k, v| keep_key_value(k.0.clone(), v.clone()));
+    std::rc::Rc::new(dict_owned)
+}
+pub fn dict_partition<K: PartialOrd + Clone, V: Clone>(
+    key_value_is_left: impl Fn(K, V) -> bool,
+    dict: DictDict<K, V>,
+) -> (DictDict<K, V>, DictDict<K, V>) {
+    let mut lefts: std::collections::BTreeMap<PretendNotPartial<K>, V> = (*dict).clone();
+    let mut rights: std::collections::BTreeMap<PretendNotPartial<K>, V> = rc_into_owned(dict);
+    lefts.retain(|k, v| key_value_is_left(k.0.clone(), v.clone()));
+    rights.retain(|k, v| !key_value_is_left(k.0.clone(), v.clone()));
+    (std::rc::Rc::new(lefts), std::rc::Rc::new(rights))
+}
+pub fn dict_foldl<K: Clone, V: Clone, State>(
+    reduce: impl Fn(K, V, State) -> State,
+    initial_state: State,
+    dict: DictDict<K, V>,
+) -> State {
+    match std::rc::Rc::try_unwrap(dict) {
+        Result::Ok(dict_owned) => dict_owned
+            .into_iter()
+            .fold(initial_state, |so_far, (k, v)| reduce(k.0, v, so_far)),
+        Result::Err(dict_shared) => dict_shared.iter().fold(initial_state, |so_far, (k, v)| {
+            reduce(k.0.clone(), v.clone(), so_far)
+        }),
+    }
+}
+pub fn dict_foldr<K: Clone, V: Clone, State>(
+    reduce: impl Fn(K, V, State) -> State,
+    initial_state: State,
+    dict: DictDict<K, V>,
+) -> State {
+    match std::rc::Rc::try_unwrap(dict) {
+        Result::Ok(dict_owned) => dict_owned
+            .into_iter()
+            .rev()
+            .fold(initial_state, |so_far, (k, v)| reduce(k.0, v, so_far)),
+        Result::Err(dict_shared) => dict_shared
+            .iter()
+            .rev()
+            .fold(initial_state, |so_far, (k, v)| {
+                reduce(k.0.clone(), v.clone(), so_far)
+            }),
+    }
+}
+
+pub fn dict_union<K: PartialOrd + Clone, V: Clone>(
+    base: DictDict<K, V>,
+    additional: DictDict<K, V>,
+) -> DictDict<K, V> {
+    let mut combined = rc_into_owned(additional);
+    // is this optimal for shared?
+    combined.append(&mut rc_into_owned(base));
+    std::rc::Rc::new(combined)
+}
+pub fn dict_intersect<K: PartialOrd + Clone, V: Clone>(
+    base: DictDict<K, V>,
+    keys_to_retain: DictDict<K, V>,
+) -> DictDict<K, V> {
+    let mut base_owned = rc_into_owned(base);
+    base_owned.retain(|k, _v| keys_to_retain.contains_key(k));
+    std::rc::Rc::new(base_owned)
+}
+pub fn dict_diff<K: PartialOrd + Clone, V: Clone>(
+    base: DictDict<K, V>,
+    keys_to_remove: DictDict<K, V>,
+) -> DictDict<K, V> {
+    let mut base_owned = rc_into_owned(base);
+    base_owned.retain(|k, _v| !keys_to_remove.contains_key(k));
+    std::rc::Rc::new(base_owned)
+}
+pub fn dict_merge<K: PartialOrd + Clone, LeftV: Clone, RightV: Clone, State>(
+    reduce_only_left: impl Fn(K, LeftV, State) -> State,
+    reduce_both: impl Fn(K, LeftV, RightV, State) -> State,
+    reduce_only_right: impl Fn(K, RightV, State) -> State,
+    left_dict: DictDict<K, LeftV>,
+    right_dict: DictDict<K, RightV>,
+    initial_state: State,
+) -> State {
+    let mut all_keys = left_dict
+        .keys()
+        .chain(right_dict.keys())
+        .cloned()
+        .collect::<Vec<PretendNotPartial<K>>>();
+    all_keys.sort();
+    all_keys.dedup();
+    all_keys.into_iter().fold(initial_state, |so_far, key| {
+        match (left_dict.get(&key), right_dict.get(&key)) {
+            (None, None) => so_far,
+            (None, Some(right_value)) => {
+                reduce_only_right(key.0.clone(), right_value.clone(), so_far)
+            }
+            (Some(left_value), None) => reduce_only_left(key.0.clone(), left_value.clone(), so_far),
+            (Some(left_value), Some(right_value)) => reduce_both(
+                key.0.clone(),
+                left_value.clone(),
+                right_value.clone(),
+                so_far,
+            ),
+        }
+    })
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -2732,7 +3014,7 @@ pub fn elm_kernel_parser_is_sub_string(
 }
 
 pub fn elm_kernel_parser_is_sub_char(
-    predicate: impl Fn(char) -> bool,
+    predicate: impl FnOnce(char) -> bool,
     offset_original: f64,
     string: StringString,
 ) -> f64 {

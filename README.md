@@ -112,6 +112,7 @@ So overall, if you intend to let the transpiled code handle a memory-hungry long
 Use it for classic arena-friendly loop steps like state → interface, request → response etc.
 
 ### improvement ideas
-- support `Dict` (as `Cow<BTreeMap>`) and `Set` (as `Cow<BTreeSet>`)
+- switch from `Cow` to `Rc`. Creating clones for viewing only should be free (tho I wish there was something more lightweight)!
+- support `Set` (as `Rc<BTreeSet>`)
 - if lambda is called with a function, always inline that function
 - improve performance of elm_kernel_parer functions (and string_slice etc) to work with utf8 offsets instead of chars
