@@ -5520,13 +5520,13 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "json_encode_array", requiresAllocator = True }
 
                 "set" ->
-                    Just { qualification = [], name = "json_encode_set", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_encode_set", requiresAllocator = True }
 
                 "object" ->
                     Just { qualification = [], name = "json_encode_object", requiresAllocator = True }
 
                 "dict" ->
-                    Just { qualification = [], name = "json_encode_dict", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_encode_dict", requiresAllocator = True }
 
                 _ ->
                     Nothing
@@ -5555,7 +5555,7 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "json_decode_array", requiresAllocator = True }
 
                 "dict" ->
-                    Just { qualification = [], name = "json_decode_dict", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "json_decode_dict", requiresAllocator = True }
 
                 "keyValuePairs" ->
                     Just { qualification = [], name = "json_decode_key_value_pairs", requiresAllocator = True }
@@ -35569,6 +35569,24 @@ pub fn json_encode_array<'a, A: Clone>(
 ) -> JsonValue<'a> {
     JsonValue::Array(allocator.alloc(array_map(element_to_json, array)))
 }
+pub fn json_encode_set<'a, A: Clone>(
+    allocator: &'a Bump,
+    element_to_json: impl Fn(A) -> JsonValue<'a>,
+    set: SetSet<A>,
+) -> JsonValue<'a> {
+    JsonValue::Array(
+        allocator.alloc(match std::rc::Rc::try_unwrap(set) {
+            Result::Ok(set_owned) => set_owned
+                .into_iter()
+                .map(|PretendNotPartial(k)| element_to_json(k))
+                .collect::<Vec<JsonValue>>(),
+            Result::Err(set_shared) => set_shared
+                .iter()
+                .map(|PretendNotPartial(k)| element_to_json(k.clone()))
+                .collect::<Vec<JsonValue>>(),
+        }),
+    )
+}
 pub fn json_encode_object<'a>(
     allocator: &'a Bump,
     entries: ListList<'a, (StringString, JsonValue)>,
@@ -35582,6 +35600,35 @@ pub fn json_encode_object<'a>(
                 })
                 .collect::<std::collections::BTreeMap<&str, JsonValue>>(),
         ),
+    )
+}
+pub fn json_encode_dict<'a, K: Clone, V: Clone>(
+    allocator: &'a Bump,
+    key_to_string: impl Fn(K) -> StringString<'a>,
+    value_to_json: impl Fn(V) -> JsonValue<'a>,
+    dict: DictDict<K, V>,
+) -> JsonValue<'a> {
+    JsonValue::Object(
+        allocator.alloc(match std::rc::Rc::try_unwrap(dict) {
+            Result::Ok(dict_owned) => dict_owned
+                .iter()
+                .map(|(PretendNotPartial(field_name), field_value)| {
+                    (
+                        rope_to_str(allocator, key_to_string(field_name.clone())),
+                        value_to_json(field_value.clone()),
+                    )
+                })
+                .collect::<std::collections::BTreeMap<&str, JsonValue>>(),
+            Result::Err(dict_shared) => dict_shared
+                .iter()
+                .map(|(PretendNotPartial(field_name), field_value)| {
+                    (
+                        rope_to_str(allocator, key_to_string(field_name.clone())),
+                        value_to_json(field_value.clone()),
+                    )
+                })
+                .collect::<std::collections::BTreeMap<&str, JsonValue>>(),
+        }),
     )
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -36306,9 +36353,43 @@ pub fn json_decode_key_value_pairs<'a, A>(
                 }
                 Result::Ok(decoded_entries)
             }
-            json_not_array => Result::Err(JsonDecodeError::Failure(
+            json_not_object => Result::Err(JsonDecodeError::Failure(
                 StringString::One("Expecting an OBJECT"),
-                json_not_array,
+                json_not_object,
+            )),
+        }),
+    }
+}
+pub fn json_decode_dict<'a, A>(
+    allocator: &'a Bump,
+    value_decoder: JsonDecodeDecoder<'a, A>,
+) -> JsonDecodeDecoder<'a, DictDict<StringString<'a>, A>> {
+    JsonDecodeDecoder {
+        decode: allocator.alloc(move |json| match json {
+            JsonValue::Object(key_value_map) => {
+                let mut decoded_entries: std::collections::BTreeMap<
+                    PretendNotPartial<StringString>,
+                    A,
+                > = std::collections::BTreeMap::new();
+                for (&key, &value_json) in key_value_map.iter() {
+                    match (value_decoder.decode)(value_json) {
+                        Result::Err(value_error) => {
+                            return Result::Err(JsonDecodeError::Field(
+                                StringString::One(key),
+                                allocator.alloc(value_error),
+                            ));
+                        }
+                        Result::Ok(decoded_value) => {
+                            decoded_entries
+                                .insert(PretendNotPartial(StringString::One(key)), decoded_value);
+                        }
+                    }
+                }
+                Result::Ok(std::rc::Rc::new(decoded_entries))
+            }
+            json_not_object => Result::Err(JsonDecodeError::Failure(
+                StringString::One("Expecting an OBJECT"),
+                json_not_object,
             )),
         }),
     }

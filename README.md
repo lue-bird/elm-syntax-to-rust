@@ -1,4 +1,4 @@
-> !early stage; likely has some bugs etc.
+> early stage; likely has some bugs etc.
 > I'm also just learning rust so any tips (e.g. in issues) are appreciated
 
 Print [`elm-syntax`](https://dark.elm.dmy.fr/packages/stil4m/elm-syntax/latest/) declarations as [rust](https://www.rust-lang.org/) code.
@@ -36,7 +36,7 @@ pub fn sample_plus2<'a>(allocator: &'a Bump, n: f64) -> f64 {
 
 -   not supported are
     -   ports that use non-json values like `port sendMessage : String -> Cmd msg`, glsl, phantom types, `==` on a generic value
-    -   `elm/file`, `elm/http`, `elm/browser`, `elm-explorations/markdown`, `elm-explorations/webgl`, `elm-explorations/benchmark` (currently also `Json.Encode.set`, `Json.Encode.dict`, `Json.Decode.decodeString`, `Json.Decode.dict`, `elm/random`, `Bytes.Encode`, `Bytes.Decode`, `elm/regex`, `elm/virtual-dom`, `elm-explorations/linear-algebra` TODO)
+    -   `elm/file`, `elm/http`, `elm/browser`, `elm-explorations/markdown`, `elm-explorations/webgl`, `elm-explorations/benchmark` (currently also `Json.Decode.decodeString`, `elm/random`, `Bytes.Encode`, `Bytes.Decode`, `elm/regex`, `elm/virtual-dom`, `elm-explorations/linear-algebra` TODO)
     -   `Task`, `Process`, `Platform.Task`, `Platform.ProcessId`, `Platform.Router`, `Platform.sendToApp`, `Platform.sendToSelf`, `Random.generate`, `Time.now`, `Time.every`, `Time.here`, `Time.getZoneName`, `Bytes.getHostEndianness`
     -   extensible record types outside of module-level value/function declarations. For example, these declarations might not work:
         ```elm
