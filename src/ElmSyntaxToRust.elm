@@ -3386,6 +3386,17 @@ typeConstructReferenceToCoreRust reference =
                 , isPartialEq = True
                 }
 
+        "Set" ->
+            -- "Set" is the only possible reference.name
+            Just
+                { qualification = []
+                , name = "SetSet"
+                , lifetimeParameters = []
+                , isCopy = False
+                , isDebug = True
+                , isPartialEq = True
+                }
+
         "Maybe" ->
             -- "Maybe" is the only possible reference.name
             justRustReferenceOption
@@ -5412,63 +5423,62 @@ referenceToCoreRust reference =
                 _ ->
                     Nothing
 
-        {-
-           "Set" ->
-               case reference.name of
-                   "size" ->
-                       Just { qualification = [], name = "set_size", requiresAllocator = False }
-        
-                   "empty" ->
-                       Just { qualification = [], name = "set_empty", requiresAllocator = False }
-        
-                   "singleton" ->
-                       Just { qualification = [], name = "set_singleton", requiresAllocator = False }
-        
-                   "fromList" ->
-                       Just { qualification = [], name = "set_from_list", requiresAllocator = False }
-        
-                   "toList" ->
-                       Just { qualification = [], name = "set_to_list", requiresAllocator = True }
-        
-                   "isEmpty" ->
-                       Just { qualification = [], name = "set_is_empty", requiresAllocator = False }
-        
-                   "insert" ->
-                       Just { qualification = [], name = "set_insert", requiresAllocator = False }
-        
-                   "partition" ->
-                       Just { qualification = [], name = "set_partition", requiresAllocator = False }
-        
-                   "foldl" ->
-                       Just { qualification = [], name = "set_foldl", requiresAllocator = False }
-        
-                   "foldr" ->
-                       Just { qualification = [], name = "set_foldr", requiresAllocator = False }
-        
-                   "map" ->
-                       Just { qualification = [], name = "set_map", requiresAllocator = False }
-        
-                   "filter" ->
-                       Just { qualification = [], name = "set_filter", requiresAllocator = False }
-        
-                   "member" ->
-                       Just { qualification = [], name = "set_member", requiresAllocator = False }
-        
-                   "remove" ->
-                       Just { qualification = [], name = "set_remove", requiresAllocator = False }
-        
-                   "union" ->
-                       Just { qualification = [], name = "set_union", requiresAllocator = False }
-        
-                   "diff" ->
-                       Just { qualification = [], name = "set_diff", requiresAllocator = False }
-        
-                   "intersect" ->
-                       Just { qualification = [], name = "set_intersect", requiresAllocator = False }
-        
-                   _ ->
-                       Nothing
-        -}
+        "Set" ->
+            case reference.name of
+                "size" ->
+                    Just { qualification = [], name = "set_size", requiresAllocator = False }
+
+                "empty" ->
+                    Just { qualification = [], name = "set_empty", requiresAllocator = False }
+
+                "singleton" ->
+                    Just { qualification = [], name = "set_singleton", requiresAllocator = False }
+
+                "fromList" ->
+                    Just { qualification = [], name = "set_from_list", requiresAllocator = False }
+
+                "toList" ->
+                    Just { qualification = [], name = "set_to_list", requiresAllocator = True }
+
+                "isEmpty" ->
+                    Just { qualification = [], name = "set_is_empty", requiresAllocator = False }
+
+                "insert" ->
+                    Just { qualification = [], name = "set_insert", requiresAllocator = False }
+
+                "partition" ->
+                    Just { qualification = [], name = "set_partition", requiresAllocator = False }
+
+                "foldl" ->
+                    Just { qualification = [], name = "set_foldl", requiresAllocator = False }
+
+                "foldr" ->
+                    Just { qualification = [], name = "set_foldr", requiresAllocator = False }
+
+                "map" ->
+                    Just { qualification = [], name = "set_map", requiresAllocator = False }
+
+                "filter" ->
+                    Just { qualification = [], name = "set_filter", requiresAllocator = False }
+
+                "member" ->
+                    Just { qualification = [], name = "set_member", requiresAllocator = False }
+
+                "remove" ->
+                    Just { qualification = [], name = "set_remove", requiresAllocator = False }
+
+                "union" ->
+                    Just { qualification = [], name = "set_union", requiresAllocator = False }
+
+                "diff" ->
+                    Just { qualification = [], name = "set_diff", requiresAllocator = False }
+
+                "intersect" ->
+                    Just { qualification = [], name = "set_intersect", requiresAllocator = False }
+
+                _ ->
+                    Nothing
+
         "Debug" ->
             case reference.name of
                 "log" ->
@@ -6659,9 +6669,9 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                             "Dict" ->
                                 False
 
-                            -- TODO
-                            -- "Set" ->
-                            --     False
+                            "Set" ->
+                                False
+
                             "Platform" ->
                                 False
 
@@ -34177,14 +34187,14 @@ pub fn char_from_code(code: f64) -> char {
 ///     - intuitive, convenient, versatile, implements Copy, trivial to implement
 ///     - allocates a new String for operations like String.pad
 ///     - very slow when doing lots of appends because it allocates a new String every ++
-/// - `Cow<str>`
+/// - `Cow<str>` or some version of `Rc<String>`
 ///     - somewhat intuitive, trivial to implement
 ///     - may not need to allocate for operations like String.pad
 ///     - cannot implement Copy and is therefore "infectious" in requiring clone.
 ///       Most structs and enums tend to contains strings so this quite bad
 ///     - can be either fast like a rope or slow like &str when appending
 ///       depending on if the more appended part is left or right
-/// - rope (effectively a "delayed Cow<str>")
+/// - rope (effectively a "delayed String")
 ///     - implements Copy
 ///     - not very ergonomic, usually more verbose than even `Cow<str>`
 ///     - always fast, no matter from which side you append to most
@@ -34945,10 +34955,9 @@ pub fn result_map5<A, B, C, D, E, Combined, X>(
     ))
 }
 
-#[derive(Copy, Clone, PartialEq, PartialOrd)]
-#[repr(transparent)]
 /// because types like elm Float can be used as dictionary keys
 /// while rust `f64` being `PartialOrd` for exampled can not
+#[derive(Copy, Clone, PartialEq, PartialOrd)]
 pub struct PretendNotPartial<A>(A);
 impl<A: PartialEq> Eq for PretendNotPartial<A> {}
 impl<A: PartialEq + PartialOrd> Ord for PretendNotPartial<A> {
@@ -34971,13 +34980,10 @@ impl<A: std::fmt::Debug> std::fmt::Debug for PretendNotPartial<A> {
 
 type DictDict<K, V> = std::rc::Rc<std::collections::BTreeMap<PretendNotPartial<K>, V>>;
 
-pub fn dict_empty<K: Clone, V: Clone>() -> DictDict<K, V> {
+pub fn dict_empty<K, V>() -> DictDict<K, V> {
     std::rc::Rc::new(std::collections::BTreeMap::new())
 }
-pub fn dict_singleton<K: PartialOrd + Clone, V: Clone>(
-    only_key: K,
-    only_value: V,
-) -> DictDict<K, V> {
+pub fn dict_singleton<K: PartialOrd, V>(only_key: K, only_value: V) -> DictDict<K, V> {
     let mut dict: std::collections::BTreeMap<PretendNotPartial<K>, V> =
         std::collections::BTreeMap::new();
     dict.insert(PretendNotPartial(only_key), only_value);
@@ -35041,17 +35047,14 @@ pub fn dict_is_empty<K: Clone, V: Clone>(dict: DictDict<K, V>) -> bool {
 pub fn dict_size<K: Clone, V: Clone>(dict: DictDict<K, V>) -> f64 {
     dict.len() as f64
 }
-pub fn dict_member<K: PartialOrd + Clone, V: Clone>(key: K, dict: DictDict<K, V>) -> bool {
+pub fn dict_member<K: PartialOrd, V>(key: K, dict: DictDict<K, V>) -> bool {
     dict.contains_key(&PretendNotPartial(key))
 }
-pub fn dict_get<K: PartialOrd + Clone, V: Clone>(key: K, dict: DictDict<K, V>) -> Option<V> {
+pub fn dict_get<K: PartialOrd, V: Clone>(key: K, dict: DictDict<K, V>) -> Option<V> {
     dict.get(&PretendNotPartial(key)).cloned()
 }
 
-pub fn dict_keys<'a, K: Clone, V: Clone>(
-    allocator: &'a Bump,
-    dict: DictDict<K, V>,
-) -> ListList<'a, K> {
+pub fn dict_keys<'a, K: Clone, V>(allocator: &'a Bump, dict: DictDict<K, V>) -> ListList<'a, K> {
     match std::rc::Rc::try_unwrap(dict) {
         Result::Ok(dict_owned) => {
             double_ended_iterator_to_list(allocator, dict_owned.into_keys().map(|k| k.0))
@@ -35061,10 +35064,7 @@ pub fn dict_keys<'a, K: Clone, V: Clone>(
         }
     }
 }
-pub fn dict_values<'a, K: Clone, V: Clone>(
-    allocator: &'a Bump,
-    dict: DictDict<K, V>,
-) -> ListList<'a, V> {
+pub fn dict_values<'a, K, V: Clone>(allocator: &'a Bump, dict: DictDict<K, V>) -> ListList<'a, V> {
     match std::rc::Rc::try_unwrap(dict) {
         Result::Ok(dict_owned) => {
             double_ended_iterator_to_list(allocator, dict_owned.into_values())
@@ -35171,7 +35171,8 @@ pub fn dict_union<K: PartialOrd + Clone, V: Clone>(
     base: DictDict<K, V>,
     additional: DictDict<K, V>,
 ) -> DictDict<K, V> {
-    let mut combined = std::rc::Rc::unwrap_or_clone(additional);
+    let mut combined: std::collections::BTreeMap<PretendNotPartial<K>, V> =
+        std::rc::Rc::unwrap_or_clone(additional);
     // is this optimal for shared?
     combined.append(&mut std::rc::Rc::unwrap_or_clone(base));
     std::rc::Rc::new(combined)
@@ -35188,7 +35189,8 @@ pub fn dict_diff<K: PartialOrd + Clone, V: Clone>(
     base: DictDict<K, V>,
     keys_to_remove: DictDict<K, V>,
 ) -> DictDict<K, V> {
-    let mut base_owned = std::rc::Rc::unwrap_or_clone(base);
+    let mut base_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> =
+        std::rc::Rc::unwrap_or_clone(base);
     base_owned.retain(|k, _v| !keys_to_remove.contains_key(k));
     std::rc::Rc::new(base_owned)
 }
@@ -35200,7 +35202,7 @@ pub fn dict_merge<K: PartialOrd + Clone, LeftV: Clone, RightV: Clone, State>(
     right_dict: DictDict<K, RightV>,
     initial_state: State,
 ) -> State {
-    let mut all_keys = left_dict
+    let mut all_keys: Vec<PretendNotPartial<K>> = left_dict
         .keys()
         .chain(right_dict.keys())
         .cloned()
@@ -35224,7 +35226,172 @@ pub fn dict_merge<K: PartialOrd + Clone, LeftV: Clone, RightV: Clone, State>(
     })
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
+type SetSet<K> = std::rc::Rc<std::collections::BTreeSet<PretendNotPartial<K>>>;
+
+pub fn set_empty<K>() -> SetSet<K> {
+    std::rc::Rc::new(std::collections::BTreeSet::new())
+}
+pub fn set_singleton<K: PartialOrd>(only_key: K) -> SetSet<K> {
+    let mut set: std::collections::BTreeSet<PretendNotPartial<K>> =
+        std::collections::BTreeSet::new();
+    set.insert(PretendNotPartial(only_key));
+    std::rc::Rc::new(set)
+}
+pub fn set_insert<K: PartialOrd + Clone>(key: K, set: SetSet<K>) -> SetSet<K> {
+    let mut set_owned: std::collections::BTreeSet<PretendNotPartial<K>> =
+        std::rc::Rc::unwrap_or_clone(set);
+    set_owned.insert(PretendNotPartial(key));
+    std::rc::Rc::new(set_owned)
+}
+pub fn set_remove<K: PartialOrd + Clone>(key: K, set: SetSet<K>) -> SetSet<K> {
+    let mut set_owned: std::collections::BTreeSet<PretendNotPartial<K>> =
+        std::rc::Rc::unwrap_or_clone(set);
+    set_owned.remove(&PretendNotPartial(key));
+    std::rc::Rc::new(set_owned)
+}
+
+pub fn set_is_empty<K>(set: SetSet<K>) -> bool {
+    set.is_empty()
+}
+pub fn set_size<K>(set: SetSet<K>) -> f64 {
+    set.len() as f64
+}
+pub fn set_member<K: PartialOrd>(key: K, set: SetSet<K>) -> bool {
+    set.contains(&PretendNotPartial(key))
+}
+
+pub fn set_to_list<'a, K: Clone>(allocator: &'a Bump, set: SetSet<K>) -> ListList<'a, K> {
+    match std::rc::Rc::try_unwrap(set) {
+        Result::Ok(set_owned) => {
+            double_ended_iterator_to_list(allocator, set_owned.into_iter().map(|k| k.0))
+        }
+        Result::Err(set_shared) => {
+            double_ended_iterator_to_list(allocator, set_shared.iter().map(|k| k.0.clone()))
+        }
+    }
+}
+pub fn set_from_list<K: PartialOrd + Clone>(entries: ListList<K>) -> SetSet<K> {
+    std::rc::Rc::new(
+        entries
+            .into_iter()
+            .map(PretendNotPartial)
+            .collect::<std::collections::BTreeSet<PretendNotPartial<K>>>(),
+    )
+}
+
+pub fn set_map<K: Clone, NewK: PartialOrd + Clone>(
+    key_change: impl Fn(K) -> NewK,
+    set: SetSet<K>,
+) -> SetSet<NewK> {
+    std::rc::Rc::new(match std::rc::Rc::try_unwrap(set) {
+        Result::Ok(set_owned) => set_owned
+            .into_iter()
+            .map(|k| PretendNotPartial(key_change(k.0)))
+            .collect::<std::collections::BTreeSet<PretendNotPartial<NewK>>>(),
+        Result::Err(set_shared) => set_shared
+            .iter()
+            .map(|k| PretendNotPartial(key_change(k.0.clone())))
+            .collect::<std::collections::BTreeSet<PretendNotPartial<NewK>>>(),
+    })
+}
+pub fn set_filter<K: PartialOrd + Clone>(
+    keep_key_value: impl Fn(K) -> bool,
+    set: SetSet<K>,
+) -> SetSet<K> {
+    let mut set_owned: std::collections::BTreeSet<PretendNotPartial<K>> =
+        std::rc::Rc::unwrap_or_clone(set);
+    set_owned.retain(|k| keep_key_value(k.0.clone()));
+    std::rc::Rc::new(set_owned)
+}
+pub fn set_partition<K: PartialOrd + Clone>(
+    key_value_is_left: impl Fn(K) -> bool,
+    set: SetSet<K>,
+) -> (SetSet<K>, SetSet<K>) {
+    let mut lefts: std::collections::BTreeSet<PretendNotPartial<K>> = (*set).clone();
+    let mut rights: std::collections::BTreeSet<PretendNotPartial<K>> =
+        std::rc::Rc::unwrap_or_clone(set);
+    lefts.retain(|k| key_value_is_left(k.0.clone()));
+    rights.retain(|k| !key_value_is_left(k.0.clone()));
+    (std::rc::Rc::new(lefts), std::rc::Rc::new(rights))
+}
+pub fn set_foldl<K: Clone, State>(
+    reduce: impl Fn(K, State) -> State,
+    initial_state: State,
+    set: SetSet<K>,
+) -> State {
+    match std::rc::Rc::try_unwrap(set) {
+        Result::Ok(set_owned) => set_owned
+            .into_iter()
+            .fold(initial_state, |so_far, k| reduce(k.0, so_far)),
+        Result::Err(set_shared) => set_shared
+            .iter()
+            .fold(initial_state, |so_far, k| reduce(k.0.clone(), so_far)),
+    }
+}
+pub fn set_foldr<K: Clone, State>(
+    reduce: impl Fn(K, State) -> State,
+    initial_state: State,
+    set: SetSet<K>,
+) -> State {
+    match std::rc::Rc::try_unwrap(set) {
+        Result::Ok(set_owned) => set_owned
+            .into_iter()
+            .rev()
+            .fold(initial_state, |so_far, k| reduce(k.0, so_far)),
+        Result::Err(set_shared) => set_shared
+            .iter()
+            .rev()
+            .fold(initial_state, |so_far, k| reduce(k.0.clone(), so_far)),
+    }
+}
+
+pub fn set_union<K: PartialOrd + Clone>(a_set: SetSet<K>, b_set: SetSet<K>) -> SetSet<K> {
+    // is this .append for shared?
+    if b_set.len() > a_set.len() {
+        let mut combined: std::collections::BTreeSet<PretendNotPartial<K>> =
+            std::rc::Rc::unwrap_or_clone(b_set);
+        combined.append(&mut std::rc::Rc::unwrap_or_clone(a_set));
+        std::rc::Rc::new(combined)
+    } else
+    /* a_set.len() >= b_set.len() */
+    {
+        let mut combined: std::collections::BTreeSet<PretendNotPartial<K>> =
+            std::rc::Rc::unwrap_or_clone(a_set);
+        combined.append(&mut std::rc::Rc::unwrap_or_clone(b_set));
+        std::rc::Rc::new(combined)
+    }
+}
+pub fn set_intersect<K: PartialOrd + Clone>(a_set: SetSet<K>, b_set: SetSet<K>) -> SetSet<K> {
+    // possible optimization: use the smaller vec to reduce amount of removed elements
+    std::rc::Rc::new(match std::rc::Rc::try_unwrap(a_set) {
+        Result::Ok(mut a_set_owned) => {
+            a_set_owned.retain(|k| b_set.contains(k));
+            a_set_owned
+        }
+        Result::Err(a_set_shared) => {
+            let mut b_set_owned: std::collections::BTreeSet<PretendNotPartial<K>> =
+                std::rc::Rc::unwrap_or_clone(b_set);
+            b_set_owned.retain(|k| a_set_shared.contains(k));
+            b_set_owned
+        }
+    })
+}
+pub fn set_diff<K: PartialOrd + Clone>(a_set: SetSet<K>, b_set: SetSet<K>) -> SetSet<K> {
+    // possible optimization: use the smaller vec to reduce amount of removed elements
+    std::rc::Rc::new(match std::rc::Rc::try_unwrap(a_set) {
+        Result::Ok(mut a_set_owned) => {
+            a_set_owned.retain(|k| !b_set.contains(k));
+            a_set_owned
+        }
+        Result::Err(a_set_shared) => {
+            let mut b_set_owned = std::rc::Rc::unwrap_or_clone(b_set);
+            b_set_owned.retain(|k| !a_set_shared.contains(k));
+            b_set_owned
+        }
+    })
+}
+
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub enum JsonValue<'a> {
     Null,
     Bool(bool),
@@ -35417,7 +35584,7 @@ pub fn json_encode_object<'a>(
         ),
     )
 }
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum JsonDecodeError<'a> {
     Field(StringString<'a>, &'a JsonDecodeError<'a>),
     Index(f64, &'a JsonDecodeError<'a>),
@@ -36201,7 +36368,7 @@ pub enum TimeZone<'a> {
     Zone(i64, ListList<'a, TimeEra>),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TimeZoneName<'a> {
     Name(StringString<'a>),
     Offset(f64),
