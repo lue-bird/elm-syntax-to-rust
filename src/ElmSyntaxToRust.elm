@@ -3451,41 +3451,6 @@ typeConstructReferenceToCoreRust reference =
                 _ ->
                     Nothing
 
-        "Regex" ->
-            case reference.name of
-                "Regex" ->
-                    Just
-                        { qualification = []
-                        , name = "RegexRegex"
-                        , lifetimeParameters = [ generatedLifetimeVariableName ]
-                        , isCopy = True
-                        , isDebug = True
-                        , isPartialEq = True
-                        }
-
-                "Options" ->
-                    Just
-                        { qualification = []
-                        , name = "RegexOptions"
-                        , lifetimeParameters = []
-                        , isCopy = True
-                        , isDebug = True
-                        , isPartialEq = True
-                        }
-
-                "Match" ->
-                    Just
-                        { qualification = []
-                        , name = "RegexMatch"
-                        , lifetimeParameters = []
-                        , isCopy = True
-                        , isDebug = True
-                        , isPartialEq = True
-                        }
-
-                _ ->
-                    Nothing
-
         "Random" ->
             case reference.name of
                 "Seed" ->
@@ -5628,41 +5593,6 @@ referenceToCoreRust reference =
 
                 "andThen" ->
                     Just { qualification = [], name = "json_decode_and_then", requiresAllocator = True }
-
-                _ ->
-                    Nothing
-
-        "Regex" ->
-            case reference.name of
-                "fromString" ->
-                    Just { qualification = [], name = "regex_from_string", requiresAllocator = Debug.todo "" }
-
-                "fromStringWith" ->
-                    Just { qualification = [], name = "regex_from_string_with", requiresAllocator = Debug.todo "" }
-
-                "never" ->
-                    Just { qualification = [], name = "regex_never", requiresAllocator = Debug.todo "" }
-
-                "contains" ->
-                    Just { qualification = [], name = "regex_contains", requiresAllocator = Debug.todo "" }
-
-                "split" ->
-                    Just { qualification = [], name = "regex_split", requiresAllocator = Debug.todo "" }
-
-                "find" ->
-                    Just { qualification = [], name = "regex_find", requiresAllocator = Debug.todo "" }
-
-                "replace" ->
-                    Just { qualification = [], name = "regex_replace", requiresAllocator = Debug.todo "" }
-
-                "splitAtMost" ->
-                    Just { qualification = [], name = "regex_split_at_most", requiresAllocator = Debug.todo "" }
-
-                "findAtMost" ->
-                    Just { qualification = [], name = "regex_find_at_most", requiresAllocator = Debug.todo "" }
-
-                "replaceAtMost" ->
-                    Just { qualification = [], name = "regex_replace_at_most", requiresAllocator = Debug.todo "" }
 
                 _ ->
                     Nothing
@@ -8108,15 +8038,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                     [ "init", "subscriptions", "update" ] ->
                                         soFar
 
-                                    -- Regex.Options
-                                    [ "caseInsensitive", "multiline" ] ->
-                                        soFar
-
-                                    -- Regex.Match
-                                    [ "index", "match", "number", "submatches" ] ->
-                                        soFar
-
-                                    -- record used by Time.custom
+                                    -- record used by Time.customZone
                                     [ "offset", "start" ] ->
                                         soFar
 
