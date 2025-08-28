@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 #![allow(non_shorthand_field_patterns)]
 #![allow(non_upper_case_globals)]
-use bumpalo::Bump;
+use bumpalo::Bump; // TODO qualify
 
 pub type ResultResult<X, A> = Result<A, X>;
 
@@ -570,46 +570,42 @@ pub fn list_map5<'a, A: Clone, B: Clone, C: Clone, D: Clone, E: Clone, Combined:
     )
 }
 
-pub type ArrayArray<'a, A> = std::borrow::Cow<'a, [A]>;
+pub type ArrayArray<A> = std::rc::Rc<Vec<A>>;
 
-pub const fn array_empty<'a, A: Clone>() -> ArrayArray<'a, A> {
-    std::borrow::Cow::Borrowed(&[] as &[A])
+pub fn array_empty<'a, A: Clone>() -> ArrayArray<A> {
+    std::rc::Rc::new(Vec::new())
 }
-pub fn array_singleton<'a, A: Clone>(only_element: A) -> ArrayArray<'a, A> {
-    std::borrow::Cow::Owned(vec![only_element])
+pub fn array_singleton<'a, A: Clone>(only_element: A) -> ArrayArray<A> {
+    std::rc::Rc::new(vec![only_element])
 }
-pub fn array_repeat<'a, A: Clone>(length: f64, element: A) -> ArrayArray<'a, A> {
-    std::borrow::Cow::Owned(std::vec::from_elem(element, length as usize))
+pub fn array_repeat<'a, A: Clone>(length: f64, element: A) -> ArrayArray<A> {
+    std::rc::Rc::new(std::vec::from_elem(element, length as usize))
 }
 pub fn array_initialize<'a, A: Clone>(
     length: f64,
     index_to_element: impl Fn(f64) -> A,
-) -> ArrayArray<'a, A> {
-    std::borrow::Cow::Owned(
+) -> ArrayArray<A> {
+    std::rc::Rc::new(
         (0..(length as i64))
             .map(|i| index_to_element(i as f64))
             .collect::<Vec<A>>(),
     )
 }
-pub fn array_is_empty<A: Clone>(array: ArrayArray<A>) -> bool {
+pub fn array_is_empty<A>(array: ArrayArray<A>) -> bool {
     array.is_empty()
 }
-pub fn array_length<A: Clone>(array: ArrayArray<A>) -> f64 {
+pub fn array_length<A>(array: ArrayArray<A>) -> f64 {
     array.len() as f64
 }
 pub fn array_get<A: Clone>(index: f64, array: ArrayArray<A>) -> Option<A> {
     array.get(index as usize).cloned()
 }
-pub fn array_push<'a, A: Clone>(new_last_element: A, array: ArrayArray<A>) -> ArrayArray<'a, A> {
-    let mut array_as_vec: Vec<A> = array.into_owned();
+pub fn array_push<'a, A: Clone>(new_last_element: A, array: ArrayArray<A>) -> ArrayArray<A> {
+    let mut array_as_vec: Vec<A> = std::rc::Rc::unwrap_or_clone(array);
     array_as_vec.push(new_last_element);
-    std::borrow::Cow::Owned(array_as_vec)
+    std::rc::Rc::new(array_as_vec)
 }
-pub fn array_set<'a, A: Clone>(
-    index: f64,
-    new_element: A,
-    array: ArrayArray<'a, A>,
-) -> ArrayArray<'a, A> {
+pub fn array_set<'a, A: Clone>(index: f64, new_element: A, array: ArrayArray<A>) -> ArrayArray<A> {
     if index < 0_f64 {
         array
     } else {
@@ -617,29 +613,22 @@ pub fn array_set<'a, A: Clone>(
         if index_usize > array.len() {
             array
         } else {
-            let mut array_as_vec: Vec<A> = array.into_owned();
+            let mut array_as_vec: Vec<A> = std::rc::Rc::unwrap_or_clone(array);
             if index_usize == array_as_vec.len() {
                 array_as_vec.push(new_element)
             } else {
                 array_as_vec[index as usize] = new_element;
             }
-            std::borrow::Cow::Owned(array_as_vec)
+            std::rc::Rc::new(array_as_vec)
         }
     }
 }
 
-fn slice_cow_alloc<'a, A: Clone>(allocator: &'a Bump, cow: std::borrow::Cow<'a, [A]>) -> &'a [A] {
-    match cow {
-        std::borrow::Cow::Owned(owned) => allocator.alloc(owned),
-        std::borrow::Cow::Borrowed(borrowed) => borrowed,
-    }
-}
 pub fn array_slice<'a, A: Clone>(
-    allocator: &'a Bump,
     start_inclusive_possibly_negative: f64,
     end_exclusive_possibly_negative: f64,
-    array: ArrayArray<'a, A>,
-) -> ArrayArray<'a, A> {
+    array: ArrayArray<A>,
+) -> ArrayArray<A> {
     let start_inclusive: usize =
         index_from_end_if_negative(start_inclusive_possibly_negative, array.len());
     let end_exclusive: usize =
@@ -647,9 +636,7 @@ pub fn array_slice<'a, A: Clone>(
     if end_exclusive <= start_inclusive {
         array_empty()
     } else {
-        std::borrow::Cow::Borrowed(
-            &slice_cow_alloc(allocator, array)[start_inclusive..end_exclusive],
-        )
+        std::rc::Rc::new(array[start_inclusive..end_exclusive].to_owned())
     }
 }
 /// For an index where -1 meaning one before the last element, 1 meaning one after the first element,
@@ -661,98 +648,130 @@ fn index_from_end_if_negative(index_possibly_negative: f64, full_length: usize) 
         ((full_length as f64 + index_possibly_negative).max(0_f64) as usize).min(full_length)
     }
 }
-pub fn array_from_list<'a, A: Clone>(list: ListList<A>) -> ArrayArray<'a, A> {
-    std::borrow::Cow::Owned(list.into_iter().collect::<Vec<A>>())
+pub fn array_from_list<'a, A: Clone>(list: ListList<A>) -> ArrayArray<A> {
+    std::rc::Rc::new(list.into_iter().collect::<Vec<A>>())
 }
 
-pub fn array_reverse<'a, A: Clone>(array: ArrayArray<A>) -> ArrayArray<'a, A> {
-    let mut vec: Vec<A> = array.into_owned();
+pub fn array_reverse<'a, A: Clone>(array: ArrayArray<A>) -> ArrayArray<A> {
+    let mut vec: Vec<A> = std::rc::Rc::unwrap_or_clone(array);
     vec.reverse();
-    std::borrow::Cow::Owned(vec)
+    std::rc::Rc::new(vec)
 }
-pub fn array_filter<'a, A: Clone>(
-    keep: impl Fn(A) -> bool,
-    array: ArrayArray<'a, A>,
-) -> ArrayArray<'a, A> {
-    std::borrow::Cow::Owned(
-        array
-            .into_iter()
+pub fn array_filter<'a, A: Clone>(keep: impl Fn(A) -> bool, array: ArrayArray<A>) -> ArrayArray<A> {
+    std::rc::Rc::new(match std::rc::Rc::try_unwrap(array) {
+        Result::Ok(mut array_owned) => {
+            array_owned.retain(|element| keep(element.clone()));
+            array_owned
+        }
+        Result::Err(array_shared) => array_shared
+            .iter()
             .cloned()
             .filter(|element| keep(element.clone()))
             .collect::<Vec<A>>(),
-    )
+    })
 }
 pub fn array_map<'a, A: Clone, B: Clone>(
     element_change: impl Fn(A) -> B,
-    array: ArrayArray<'a, A>,
-) -> ArrayArray<'a, B> {
-    std::borrow::Cow::Owned(
-        array
+    array: ArrayArray<A>,
+) -> ArrayArray<B> {
+    std::rc::Rc::new(match std::rc::Rc::try_unwrap(array) {
+        Result::Ok(array_owned) => array_owned
             .into_iter()
-            .map(|element| element_change(element.clone()))
+            .map(|element| element_change(element))
             .collect::<Vec<B>>(),
-    )
+        Result::Err(array_shared) => array_shared
+            .iter()
+            .cloned()
+            .map(element_change)
+            .collect::<Vec<B>>(),
+    })
 }
 pub fn array_indexed_map<'a, A: Clone, B: Clone>(
     element_change: impl Fn(f64, A) -> B,
-    array: ArrayArray<'a, A>,
-) -> ArrayArray<'a, B> {
-    std::borrow::Cow::Owned(
-        array
+    array: ArrayArray<A>,
+) -> ArrayArray<B> {
+    std::rc::Rc::new(match std::rc::Rc::try_unwrap(array) {
+        Result::Ok(array_owned) => array_owned
             .into_iter()
+            .enumerate()
+            .map(|(index, element)| element_change(index as f64, element))
+            .collect::<Vec<B>>(),
+        Result::Err(array_shared) => array_shared
+            .iter()
             .enumerate()
             .map(|(index, element)| element_change(index as f64, element.clone()))
             .collect::<Vec<B>>(),
-    )
+    })
 }
 
-pub fn array_to_list<'a, A: Clone>(
-    allocator: &'a Bump,
-    array: ArrayArray<'a, A>,
-) -> ListList<'a, A> {
-    double_ended_iterator_to_list(
-        allocator,
-        slice_cow_alloc(allocator, array).into_iter().cloned(),
-    )
+pub fn array_to_list<'a, A: Clone>(allocator: &'a Bump, array: ArrayArray<A>) -> ListList<'a, A> {
+    match std::rc::Rc::try_unwrap(array) {
+        Result::Ok(array_owned) => {
+            double_ended_iterator_to_list(allocator, array_owned.into_iter())
+        }
+        Result::Err(array_shared) => {
+            double_ended_iterator_to_list(allocator, array_shared.iter().cloned())
+        }
+    }
 }
 pub fn array_to_indexed_list<'a, A: Clone>(
     allocator: &'a Bump,
     array: ArrayArray<A>,
 ) -> ListList<'a, (f64, A)> {
-    double_ended_iterator_to_list(
-        allocator,
-        array
-            .into_iter()
-            .enumerate()
-            .map(|(index, element)| (index as f64, element.clone())),
-    )
+    match std::rc::Rc::try_unwrap(array) {
+        Result::Ok(array_owned) => double_ended_iterator_to_list(
+            allocator,
+            array_owned
+                .into_iter()
+                .enumerate()
+                .map(|(index, element)| (index as f64, element)),
+        ),
+        Result::Err(array_shared) => double_ended_iterator_to_list(
+            allocator,
+            array_shared
+                .iter()
+                .enumerate()
+                .map(|(index, element)| (index as f64, element.clone())),
+        ),
+    }
 }
 pub fn array_foldl<'a, A: Clone, State>(
     reduce: impl Fn(A, State) -> State,
     initial_state: State,
-    array: ArrayArray<'a, A>,
+    array: ArrayArray<A>,
 ) -> State {
-    array.into_iter().fold(initial_state, |state, element| {
-        reduce(element.clone(), state)
-    })
+    match std::rc::Rc::try_unwrap(array) {
+        Result::Ok(array_owned) => array_owned
+            .into_iter()
+            .fold(initial_state, |state, element| reduce(element, state)),
+        Result::Err(array_shared) => array_shared.iter().fold(initial_state, |state, element| {
+            reduce(element.clone(), state)
+        }),
+    }
 }
 pub fn array_foldr<'a, A: Clone, State>(
     reduce: impl Fn(A, State) -> State,
     initial_state: State,
-    array: ArrayArray<'a, A>,
+    array: ArrayArray<A>,
 ) -> State {
-    array
-        .into_iter()
-        .rev()
-        .fold(initial_state, |state, element| {
-            reduce(element.clone(), state)
-        })
+    match std::rc::Rc::try_unwrap(array) {
+        Result::Ok(array_owned) => array_owned
+            .into_iter()
+            .rev()
+            .fold(initial_state, |state, element| reduce(element, state)),
+        Result::Err(array_shared) => array_shared
+            .iter()
+            .rev()
+            .fold(initial_state, |state, element| {
+                reduce(element.clone(), state)
+            }),
+    }
 }
 
-pub fn array_append<'a, A: Clone>(left: ArrayArray<A>, right: ArrayArray<A>) -> ArrayArray<'a, A> {
-    let mut left_as_vec: Vec<A> = left.into_owned();
+pub fn array_append<'a, A: Clone>(left: ArrayArray<A>, right: ArrayArray<A>) -> ArrayArray<A> {
+    let mut left_as_vec: Vec<A> = std::rc::Rc::unwrap_or_clone(left);
     left_as_vec.extend_from_slice(&right);
-    std::borrow::Cow::Owned(left_as_vec)
+    std::rc::Rc::new(left_as_vec)
 }
 
 pub const fn char_is_upper(char: char) -> bool {
@@ -1604,13 +1623,6 @@ impl<A: std::fmt::Debug> std::fmt::Debug for PretendNotPartial<A> {
     }
 }
 
-/// move out the reference counted value if there is only one strong reference,
-/// otherwise return an owned clone
-fn rc_into_owned<A: Clone>(rc: std::rc::Rc<A>) -> A {
-    std::rc::Rc::try_unwrap(rc)
-        .unwrap_or_else(|same_rc| std::borrow::Borrow::<A>::borrow(&same_rc).clone())
-}
-
 type DictDict<K, V> = std::rc::Rc<std::collections::BTreeMap<PretendNotPartial<K>, V>>;
 
 pub fn dict_empty<K: Clone, V: Clone>() -> DictDict<K, V> {
@@ -1630,7 +1642,8 @@ pub fn dict_insert<K: PartialOrd + Clone, V: Clone>(
     value: V,
     dict: DictDict<K, V>,
 ) -> DictDict<K, V> {
-    let mut dict_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> = rc_into_owned(dict);
+    let mut dict_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> =
+        std::rc::Rc::unwrap_or_clone(dict);
     dict_owned.insert(PretendNotPartial(key), value);
     std::rc::Rc::new(dict_owned)
 }
@@ -1644,13 +1657,13 @@ pub fn dict_update<K: PartialOrd + Clone, V: Clone>(
         Option::Some(value) => match value_change(Option::Some(value.clone())) {
             Option::None => {
                 let mut dict_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> =
-                    rc_into_owned(dict);
+                    std::rc::Rc::unwrap_or_clone(dict);
                 dict_owned.remove(&key_pretend_not_partial);
                 std::rc::Rc::new(dict_owned)
             }
             Option::Some(changed_value) => {
                 let mut dict_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> =
-                    rc_into_owned(dict);
+                    std::rc::Rc::unwrap_or_clone(dict);
                 dict_owned.insert(key_pretend_not_partial, changed_value);
                 std::rc::Rc::new(dict_owned)
             }
@@ -1659,7 +1672,7 @@ pub fn dict_update<K: PartialOrd + Clone, V: Clone>(
             Option::None => dict,
             Option::Some(changed_value) => {
                 let mut dict_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> =
-                    rc_into_owned(dict);
+                    std::rc::Rc::unwrap_or_clone(dict);
                 dict_owned.insert(key_pretend_not_partial, changed_value);
                 std::rc::Rc::new(dict_owned)
             }
@@ -1670,7 +1683,8 @@ pub fn dict_remove<K: PartialOrd + Clone, V: Clone>(
     key: K,
     dict: DictDict<K, V>,
 ) -> DictDict<K, V> {
-    let mut dict_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> = rc_into_owned(dict);
+    let mut dict_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> =
+        std::rc::Rc::unwrap_or_clone(dict);
     dict_owned.remove(&PretendNotPartial(key));
     std::rc::Rc::new(dict_owned)
 }
@@ -1758,7 +1772,8 @@ pub fn dict_filter<K: PartialOrd + Clone, V: Clone>(
     keep_key_value: impl Fn(K, V) -> bool,
     dict: DictDict<K, V>,
 ) -> DictDict<K, V> {
-    let mut dict_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> = rc_into_owned(dict);
+    let mut dict_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> =
+        std::rc::Rc::unwrap_or_clone(dict);
     dict_owned.retain(|k, v| keep_key_value(k.0.clone(), v.clone()));
     std::rc::Rc::new(dict_owned)
 }
@@ -1767,7 +1782,8 @@ pub fn dict_partition<K: PartialOrd + Clone, V: Clone>(
     dict: DictDict<K, V>,
 ) -> (DictDict<K, V>, DictDict<K, V>) {
     let mut lefts: std::collections::BTreeMap<PretendNotPartial<K>, V> = (*dict).clone();
-    let mut rights: std::collections::BTreeMap<PretendNotPartial<K>, V> = rc_into_owned(dict);
+    let mut rights: std::collections::BTreeMap<PretendNotPartial<K>, V> =
+        std::rc::Rc::unwrap_or_clone(dict);
     lefts.retain(|k, v| key_value_is_left(k.0.clone(), v.clone()));
     rights.retain(|k, v| !key_value_is_left(k.0.clone(), v.clone()));
     (std::rc::Rc::new(lefts), std::rc::Rc::new(rights))
@@ -1809,16 +1825,16 @@ pub fn dict_union<K: PartialOrd + Clone, V: Clone>(
     base: DictDict<K, V>,
     additional: DictDict<K, V>,
 ) -> DictDict<K, V> {
-    let mut combined = rc_into_owned(additional);
+    let mut combined = std::rc::Rc::unwrap_or_clone(additional);
     // is this optimal for shared?
-    combined.append(&mut rc_into_owned(base));
+    combined.append(&mut std::rc::Rc::unwrap_or_clone(base));
     std::rc::Rc::new(combined)
 }
 pub fn dict_intersect<K: PartialOrd + Clone, V: Clone>(
     base: DictDict<K, V>,
     keys_to_retain: DictDict<K, V>,
 ) -> DictDict<K, V> {
-    let mut base_owned = rc_into_owned(base);
+    let mut base_owned = std::rc::Rc::unwrap_or_clone(base);
     base_owned.retain(|k, _v| keys_to_retain.contains_key(k));
     std::rc::Rc::new(base_owned)
 }
@@ -1826,7 +1842,7 @@ pub fn dict_diff<K: PartialOrd + Clone, V: Clone>(
     base: DictDict<K, V>,
     keys_to_remove: DictDict<K, V>,
 ) -> DictDict<K, V> {
-    let mut base_owned = rc_into_owned(base);
+    let mut base_owned = std::rc::Rc::unwrap_or_clone(base);
     base_owned.retain(|k, _v| !keys_to_remove.contains_key(k));
     std::rc::Rc::new(base_owned)
 }
@@ -2036,16 +2052,9 @@ pub fn json_encode_list<'a, A: Clone>(
 pub fn json_encode_array<'a, A: Clone>(
     allocator: &'a Bump,
     element_to_json: impl Fn(A) -> JsonValue<'a>,
-    array: ArrayArray<'a, A>,
+    array: ArrayArray<A>,
 ) -> JsonValue<'a> {
-    JsonValue::Array(
-        allocator.alloc(
-            array
-                .into_iter()
-                .map(|el| element_to_json(el.clone()))
-                .collect::<Vec<JsonValue>>(),
-        ),
-    )
+    JsonValue::Array(allocator.alloc(array_map(element_to_json, array)))
 }
 pub fn json_encode_object<'a>(
     allocator: &'a Bump,
@@ -2530,7 +2539,7 @@ pub fn json_decode_index<'a, A>(
 pub fn json_decode_array<'a, A: Clone>(
     allocator: &'a Bump,
     element_decoder: JsonDecodeDecoder<'a, A>,
-) -> JsonDecodeDecoder<'a, ArrayArray<'a, A>> {
+) -> JsonDecodeDecoder<'a, ArrayArray<A>> {
     JsonDecodeDecoder {
         decode: allocator.alloc(move |json| match json {
             JsonValue::Array(array_of_json_elements) => {
@@ -2546,7 +2555,7 @@ pub fn json_decode_array<'a, A: Clone>(
                         Result::Ok(decoded_value) => decoded_array.push(decoded_value),
                     }
                 }
-                Result::Ok(std::borrow::Cow::Owned(decoded_array))
+                Result::Ok(std::rc::Rc::new(decoded_array))
             }
             json_not_array => Result::Err(JsonDecodeError::Failure(
                 StringString::One("Expecting an ARRAY"),
