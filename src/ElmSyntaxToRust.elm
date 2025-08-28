@@ -33590,7 +33590,7 @@ pub fn list_drop<'a, A: Clone>(skip_count: f64, list: ListList<'a, A>) -> ListLi
         match list {
             ListList::Empty => ListList::Empty,
             ListList::Cons(_, tail) => {
-                let mut iterator = tail.ref_iter();
+                let mut iterator: ListListRefIterator<A> = tail.ref_iter();
                 for _ in 1..=((skip_count - 1_f64) as usize) {
                     match iterator.next() {
                         None => return ListList::Empty,
@@ -33850,19 +33850,16 @@ pub fn list_map5<'a, A: Clone, B: Clone, C: Clone, D: Clone, E: Clone, Combined:
 
 pub type ArrayArray<A> = std::rc::Rc<Vec<A>>;
 
-pub fn array_empty<'a, A: Clone>() -> ArrayArray<A> {
+pub fn array_empty<'a, A>() -> ArrayArray<A> {
     std::rc::Rc::new(Vec::new())
 }
-pub fn array_singleton<'a, A: Clone>(only_element: A) -> ArrayArray<A> {
+pub fn array_singleton<'a, A>(only_element: A) -> ArrayArray<A> {
     std::rc::Rc::new(vec![only_element])
 }
 pub fn array_repeat<'a, A: Clone>(length: f64, element: A) -> ArrayArray<A> {
     std::rc::Rc::new(std::vec::from_elem(element, length as usize))
 }
-pub fn array_initialize<'a, A: Clone>(
-    length: f64,
-    index_to_element: impl Fn(f64) -> A,
-) -> ArrayArray<A> {
+pub fn array_initialize<'a, A>(length: f64, index_to_element: impl Fn(f64) -> A) -> ArrayArray<A> {
     std::rc::Rc::new(
         (0..(length as i64))
             .map(|i| index_to_element(i as f64))
@@ -36084,7 +36081,7 @@ pub fn json_decode_one_or_more<'a, A: Clone, Combined>(
     JsonDecodeDecoder {
         decode: allocator.alloc(move |json| match json {
             JsonValue::Array(array_of_json_elements) => {
-                let mut decoded_list: ListList<'a, A> = ListList::Empty;
+                let mut decoded_list: ListList<A> = ListList::Empty;
                 for (index, &value_json) in array_of_json_elements.iter().enumerate().rev() {
                     match (element_decoder.decode)(value_json) {
                         Result::Err(value_error) => {
