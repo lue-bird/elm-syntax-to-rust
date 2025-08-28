@@ -6147,7 +6147,7 @@ referenceToCoreRust reference =
         "Platform" ->
             case reference.name of
                 "worker" ->
-                    Just { qualification = [], name = "platform_worker", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "platform_worker", requiresAllocator = False }
 
                 _ ->
                     Nothing
@@ -6155,13 +6155,13 @@ referenceToCoreRust reference =
         "Platform.Cmd" ->
             case reference.name of
                 "none" ->
-                    Just { qualification = [], name = "platform_cmd_none", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "platform_cmd_none", requiresAllocator = False }
 
                 "batch" ->
-                    Just { qualification = [], name = "platform_cmd_batch", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "platform_cmd_batch", requiresAllocator = True }
 
                 "map" ->
-                    Just { qualification = [], name = "platform_cmd_map", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "platform_cmd_map", requiresAllocator = False }
 
                 _ ->
                     Nothing
@@ -6169,13 +6169,13 @@ referenceToCoreRust reference =
         "Platform.Sub" ->
             case reference.name of
                 "none" ->
-                    Just { qualification = [], name = "platform_sub_none", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "platform_sub_none", requiresAllocator = False }
 
                 "batch" ->
-                    Just { qualification = [], name = "platform_sub_batch", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "platform_sub_batch", requiresAllocator = True }
 
                 "map" ->
-                    Just { qualification = [], name = "platform_sub_map", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "platform_sub_map", requiresAllocator = True }
 
                 _ ->
                     Nothing
@@ -10410,7 +10410,7 @@ expression context expressionTypedNode =
                                     { parameters =
                                         [ { pattern =
                                                 RustPatternVariable
-                                                    { name = "generated_value"
+                                                    { name = "generated_data"
                                                     , isRef = False
                                                     , type_ = rustTypeJsonValue
                                                     }
@@ -10422,14 +10422,14 @@ expression context expressionTypedNode =
                                             [ RustExpressionCall
                                                 { called =
                                                     RustExpressionReferenceVariant
-                                                        { originTypeName = [ "PlatformCmdSingle" ]
-                                                        , name = "PortOutgoing"
+                                                        { originTypeName = []
+                                                        , name = "platform_cmd_port_outgoing"
                                                         }
                                                 , arguments =
                                                     [ RustExpressionString reference.name
                                                     , RustExpressionReference
                                                         { qualification = []
-                                                        , name = "generated_value"
+                                                        , name = "generated_data"
                                                         }
                                                     ]
                                                 }
@@ -10476,14 +10476,14 @@ expression context expressionTypedNode =
                                             [ RustExpressionCall
                                                 { called =
                                                     RustExpressionReferenceVariant
-                                                        { originTypeName = [ "PlatformSubSingle" ]
+                                                        { originTypeName = [ "PlatformSubSub" ]
                                                         , name = "PortIncoming"
                                                         }
                                                 , arguments =
                                                     [ RustExpressionString reference.name
                                                     , RustExpressionReference
                                                         { qualification = []
-                                                        , name = "generated_onValue"
+                                                        , name = "generated_on_value"
                                                         }
                                                     ]
                                                 }
@@ -33290,7 +33290,7 @@ pub enum ListList<'a, A> {
 }
 
 pub struct ListListRefIterator<'a, A> {
-    remaining_list: &'a ListList<'a, A>,
+    pub remaining_list: &'a ListList<'a, A>,
 }
 
 impl<'a, A> Iterator for ListListRefIterator<'a, A> {
@@ -34877,7 +34877,7 @@ pub fn result_map5<A, B, C, D, E, Combined, X>(
 /// because types like elm Float can be used as dictionary keys
 /// while rust `f64` being `PartialOrd` for exampled can not
 #[derive(Copy, Clone, PartialEq, PartialOrd)]
-pub struct PretendNotPartial<A>(A);
+pub struct PretendNotPartial<A>(pub A);
 impl<A: PartialEq> Eq for PretendNotPartial<A> {}
 impl<A: PartialEq + PartialOrd> Ord for PretendNotPartial<A> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
@@ -35559,7 +35559,7 @@ pub enum JsonDecodeError<'a> {
 }
 #[derive(Copy, Clone)]
 pub struct JsonDecodeDecoder<'a, A> {
-    decode: &'a dyn Fn(JsonValue<'a>) -> ResultResult<JsonDecodeError<'a>, A>,
+    pub decode: &'a dyn Fn(JsonValue<'a>) -> ResultResult<JsonDecodeError<'a>, A>,
 }
 pub fn json_decode_error_to_string<'a>(
     allocator: &'a Bump,
@@ -36327,7 +36327,7 @@ pub const fn bytes_width(bytes: BytesBytes) -> f64 {
 
 #[derive(Clone, Copy)]
 pub struct BytesDecodeDecoder<'a, A> {
-    decode: &'a dyn Fn(usize, BytesBytes<'a>) -> Option<(usize, A)>,
+    pub decode: &'a dyn Fn(usize, BytesBytes<'a>) -> Option<(usize, A)>,
 }
 
 pub fn bytes_decode_decode<'a, A>(
@@ -36815,10 +36815,10 @@ pub fn bytes_encode_encode<'a>(allocator: &'a Bump, encoder: BytesEncodeEncoder)
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GeneratedOffsetStart<Offset, Start> {
-    offset: Offset,
-    start: Start,
+    pub offset: Offset,
+    pub start: Start,
 }
-pub struct TimeCivil {
+struct TimeCivil {
     day: i64,
     month: i64,
     year: i64,
@@ -36919,7 +36919,7 @@ pub fn time_to_adjusted_minutes_help<'a>(
     }
 }
 
-pub fn time_to_civil(minutes: i64) -> TimeCivil {
+fn time_to_civil(minutes: i64) -> TimeCivil {
     let raw_day: i64 = floored_div(minutes, 60_i64 * 24_i64) + 719468_i64;
     let era: i64 = if raw_day >= 0_i64 {
         raw_day
@@ -37172,5 +37172,119 @@ pub fn elm_kernel_parser_find_sub_string(
             }
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlatformCmdCmd<'a, Event> {
+    tree: PlatformCmdTree<'a>,
+    // elm cmds can return stuff, we do not
+    phantom_data: std::marker::PhantomData<Event>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PlatformCmdTree<'a> {
+    PortOutgoing(&'a str, JsonValue<'a>),
+    Batch(&'a [PlatformCmdTree<'a>]),
+}
+
+pub fn platform_cmd_none<'a, Event>() -> PlatformCmdCmd<'a, Event> {
+    PlatformCmdCmd {
+        tree: PlatformCmdTree::Batch(&[]),
+        phantom_data: std::marker::PhantomData,
+    }
+}
+pub fn platform_cmd_batch<'a, Event: Clone>(
+    allocator: &'a Bump,
+    cmds: ListList<'a, PlatformCmdCmd<'a, Event>>,
+) -> PlatformCmdCmd<'a, Event> {
+    PlatformCmdCmd {
+        tree: PlatformCmdTree::Batch(
+            allocator.alloc(
+                cmds.into_iter()
+                    .map(|sub_cmd| sub_cmd.tree)
+                    .collect::<Vec<PlatformCmdTree<'a>>>(),
+            ),
+        ),
+        phantom_data: std::marker::PhantomData,
+    }
+}
+pub fn platform_cmd_map<'a, A: Clone, B>(
+    _event_change: impl Fn(A) -> B + Clone,
+    sub: PlatformCmdCmd<'a, A>,
+) -> PlatformCmdCmd<'a, B> {
+    PlatformCmdCmd {
+        tree: sub.tree,
+        phantom_data: std::marker::PhantomData,
+    }
+}
+pub fn platform_cmd_port_outgoing<'a, A: Clone, B>(
+    name: &'a str,
+    data: JsonValue<'a>,
+) -> PlatformCmdCmd<'a, B> {
+    PlatformCmdCmd {
+        tree: PlatformCmdTree::PortOutgoing(name, data),
+        phantom_data: std::marker::PhantomData,
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum PlatformSubSub<'a, Event> {
+    PortIncoming(&'a str, &'a dyn Fn(JsonValue<'a>) -> Event),
+    Batch(&'a [PlatformSubSub<'a, Event>]),
+}
+
+pub fn platform_sub_none<'a, Event>() -> PlatformSubSub<'a, Event> {
+    PlatformSubSub::Batch(&[])
+}
+pub fn platform_sub_batch<'a, Event: Clone>(
+    allocator: &'a Bump,
+    subs: ListList<'a, PlatformSubSub<'a, Event>>,
+) -> PlatformSubSub<'a, Event> {
+    PlatformSubSub::Batch(
+        allocator.alloc(subs.into_iter().collect::<Vec<PlatformSubSub<'a, Event>>>()),
+    )
+}
+pub fn platform_sub_map<'a, A: Clone, B>(
+    allocator: &'a Bump,
+    event_change: impl Fn(A) -> B + Clone + 'a,
+    sub: PlatformSubSub<'a, A>,
+) -> PlatformSubSub<'a, B> {
+    match sub {
+        PlatformSubSub::Batch(subs) => PlatformSubSub::Batch(
+            allocator.alloc(
+                subs.iter()
+                    .map(|sub_sub| {
+                        platform_sub_map(allocator, event_change.clone(), sub_sub.clone())
+                    })
+                    .collect::<Vec<PlatformSubSub<'a, B>>>(),
+            ),
+        ),
+        PlatformSubSub::PortIncoming(name, on_data) => PlatformSubSub::PortIncoming(
+            name,
+            alloc_shared(allocator, move |data| event_change.clone()(on_data(data))),
+        ),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GeneratedInitUpdateSubscriptions<Init, Update, Subscriptions> {
+    pub init: Init,
+    pub update: Update,
+    pub start: Subscriptions,
+}
+pub type PlatformProgram<'a, Flags, State, Event> = GeneratedInitUpdateSubscriptions<
+    &'a dyn Fn(Flags) -> (State, PlatformCmdCmd<'a, Event>),
+    &'a dyn Fn(Event) -> &'a dyn Fn(State) -> (State, PlatformCmdCmd<'a, Event>),
+    &'a dyn Fn(State) -> PlatformSubSub<'a, Event>,
+>;
+
+pub fn platform_worker<'a, Flags, State, Event>(
+    config: GeneratedInitUpdateSubscriptions<
+        &'a dyn Fn(Flags) -> (State, PlatformCmdCmd<'a, Event>),
+        &'a dyn Fn(Event) -> &'a dyn Fn(State) -> (State, PlatformCmdCmd<'a, Event>),
+        &'a dyn Fn(State) -> PlatformSubSub<'a, Event>,
+    >,
+) -> PlatformProgram<'a, Flags, State, Event> {
+    config
 }
 """
