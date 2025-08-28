@@ -5711,64 +5711,64 @@ referenceToCoreRust reference =
         "Bytes.Decode" ->
             case reference.name of
                 "decode" ->
-                    Just { qualification = [], name = "bytes_decode_decode", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_decode_decode", requiresAllocator = False }
 
                 "signedInt8" ->
-                    Just { qualification = [], name = "bytes_decode_signed_int8", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_decode_signed_int8", requiresAllocator = False }
 
                 "signedInt16" ->
-                    Just { qualification = [], name = "bytes_decode_signed_int16", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_decode_signed_int16", requiresAllocator = True }
 
                 "signedInt32" ->
-                    Just { qualification = [], name = "bytes_decode_signed_int32", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_decode_signed_int32", requiresAllocator = True }
 
                 "unsignedInt8" ->
-                    Just { qualification = [], name = "bytes_decode_unsigned_int8", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_decode_unsigned_int8", requiresAllocator = False }
 
                 "unsignedInt16" ->
-                    Just { qualification = [], name = "bytes_decode_unsigned_int16", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_decode_unsigned_int16", requiresAllocator = True }
 
                 "unsignedInt32" ->
-                    Just { qualification = [], name = "bytes_decode_unsigned_int32", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_decode_unsigned_int32", requiresAllocator = True }
 
                 "float32" ->
-                    Just { qualification = [], name = "bytes_decode_float32", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_decode_float32", requiresAllocator = True }
 
                 "float64" ->
-                    Just { qualification = [], name = "bytes_decode_float64", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_decode_float64", requiresAllocator = True }
 
                 "string" ->
-                    Just { qualification = [], name = "bytes_decode_string", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_decode_string", requiresAllocator = True }
 
                 "bytes" ->
-                    Just { qualification = [], name = "bytes_decode_bytes", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_decode_bytes", requiresAllocator = False }
 
                 "map" ->
-                    Just { qualification = [], name = "bytes_decode_map", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_decode_map", requiresAllocator = True }
 
                 "map2" ->
-                    Just { qualification = [], name = "bytes_decode_map2", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_decode_map2", requiresAllocator = True }
 
                 "map3" ->
-                    Just { qualification = [], name = "bytes_decode_map3", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_decode_map3", requiresAllocator = True }
 
                 "map4" ->
-                    Just { qualification = [], name = "bytes_decode_map4", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_decode_map4", requiresAllocator = True }
 
                 "map5" ->
-                    Just { qualification = [], name = "bytes_decode_map5", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_decode_map5", requiresAllocator = True }
 
                 "andThen" ->
-                    Just { qualification = [], name = "bytes_decode_and_then", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_decode_and_then", requiresAllocator = True }
 
                 "succeed" ->
-                    Just { qualification = [], name = "bytes_decode_succeed", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_decode_succeed", requiresAllocator = True }
 
                 "fail" ->
-                    Just { qualification = [], name = "bytes_decode_fail", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_decode_fail", requiresAllocator = False }
 
                 "loop" ->
-                    Just { qualification = [], name = "bytes_decode_loop", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_decode_loop", requiresAllocator = True }
 
                 _ ->
                     Nothing
@@ -5776,43 +5776,43 @@ referenceToCoreRust reference =
         "Bytes.Encode" ->
             case reference.name of
                 "encode" ->
-                    Just { qualification = [], name = "bytes_encode_encode", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_encode_encode", requiresAllocator = True }
 
                 "signedInt8" ->
-                    Just { qualification = [], name = "bytes_encode_signed_int8", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_encode_signed_int8", requiresAllocator = False }
 
                 "signedInt16" ->
-                    Just { qualification = [], name = "bytes_encode_signed_int16", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_encode_signed_int16", requiresAllocator = False }
 
                 "signedInt32" ->
-                    Just { qualification = [], name = "bytes_encode_signed_int32", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_encode_signed_int32", requiresAllocator = False }
 
                 "unsignedInt8" ->
-                    Just { qualification = [], name = "bytes_encode_unsigned_int8", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_encode_unsigned_int8", requiresAllocator = False }
 
                 "unsignedInt16" ->
-                    Just { qualification = [], name = "bytes_encode_unsigned_int16", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_encode_unsigned_int16", requiresAllocator = False }
 
                 "unsignedInt32" ->
-                    Just { qualification = [], name = "bytes_encode_unsigned_int32", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_encode_unsigned_int32", requiresAllocator = False }
 
                 "float32" ->
-                    Just { qualification = [], name = "bytes_encode_float32", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_encode_float32", requiresAllocator = False }
 
                 "float64" ->
-                    Just { qualification = [], name = "bytes_encode_float64", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_encode_float64", requiresAllocator = False }
 
                 "bytes" ->
-                    Just { qualification = [], name = "bytes_encode_bytes", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_encode_bytes", requiresAllocator = False }
 
                 "string" ->
-                    Just { qualification = [], name = "bytes_encode_string", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_encode_string", requiresAllocator = True }
 
                 "getStringWidth" ->
-                    Just { qualification = [], name = "bytes_encode_get_string_width", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "string_length", requiresAllocator = False }
 
                 "sequence" ->
-                    Just { qualification = [], name = "bytes_encode_sequence", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "bytes_encode_sequence", requiresAllocator = True }
 
                 _ ->
                     Nothing
@@ -36315,8 +36315,502 @@ pub fn json_decode_dict<'a, A>(
 }
 
 pub type BytesBytes<'a> = &'a [u8];
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BytesEndianness {
+    LE,
+    BE,
+}
+
 pub const fn bytes_width(bytes: BytesBytes) -> f64 {
     bytes.len() as f64
+}
+
+#[derive(Clone, Copy)]
+pub struct BytesDecodeDecoder<'a, A> {
+    decode: &'a dyn Fn(usize, BytesBytes<'a>) -> Option<(usize, A)>,
+}
+
+pub fn bytes_decode_decode<'a, A>(
+    decoder: BytesDecodeDecoder<'a, A>,
+    bytes: BytesBytes<'a>,
+) -> Option<A> {
+    (decoder.decode)(0, bytes).map(|(_, value)| value)
+}
+
+pub fn bytes_decode_bytes<'a>() -> BytesDecodeDecoder<'a, BytesBytes<'a>> {
+    BytesDecodeDecoder {
+        decode: &|_, bytes| Option::Some((bytes.len(), bytes)),
+    }
+}
+pub fn bytes_decode_unsigned_int8<'a>() -> BytesDecodeDecoder<'a, f64> {
+    BytesDecodeDecoder {
+        decode: &|index, bytes| {
+            bytes
+                .get(index)
+                .map(|&decoded_u8| (index + 1, decoded_u8 as f64))
+        },
+    }
+}
+pub fn bytes_decode_signed_int8<'a>() -> BytesDecodeDecoder<'a, f64> {
+    BytesDecodeDecoder {
+        decode: &|index, bytes| {
+            bytes
+                .get(index)
+                .map(|&decoded_byte| (index + 1, decoded_byte as i8 as f64))
+        },
+    }
+}
+pub fn bytes_decode_unsigned_int16<'a>(
+    allocator: &'a Bump,
+    endianness: BytesEndianness,
+) -> BytesDecodeDecoder<'a, f64> {
+    BytesDecodeDecoder {
+        decode: allocator.alloc(move |index, bytes: BytesBytes| {
+            let index_after: usize = index + 2;
+            if index_after > bytes.len() {
+                Option::None
+            } else {
+                match bytes[index..index_after].try_into() {
+                    Result::Err(_) => Option::None,
+                    Result::Ok(u16_bytes) => Option::Some((
+                        index_after,
+                        match endianness {
+                            BytesEndianness::LE => u16::from_le_bytes(u16_bytes),
+                            BytesEndianness::BE => u16::from_be_bytes(u16_bytes),
+                        } as f64,
+                    )),
+                }
+            }
+        }),
+    }
+}
+pub fn bytes_decode_signed_int16<'a>(
+    allocator: &'a Bump,
+    endianness: BytesEndianness,
+) -> BytesDecodeDecoder<'a, f64> {
+    BytesDecodeDecoder {
+        decode: allocator.alloc(move |index, bytes: BytesBytes| {
+            let index_after: usize = index + 2;
+            if index_after > bytes.len() {
+                Option::None
+            } else {
+                match bytes[index..index_after].try_into() {
+                    Result::Err(_) => Option::None,
+                    Result::Ok(two_bytes) => Option::Some((
+                        index_after,
+                        match endianness {
+                            BytesEndianness::LE => i16::from_le_bytes(two_bytes),
+                            BytesEndianness::BE => i16::from_be_bytes(two_bytes),
+                        } as f64,
+                    )),
+                }
+            }
+        }),
+    }
+}
+pub fn bytes_decode_unsigned_int32<'a>(
+    allocator: &'a Bump,
+    endianness: BytesEndianness,
+) -> BytesDecodeDecoder<'a, f64> {
+    BytesDecodeDecoder {
+        decode: allocator.alloc(move |index, bytes: BytesBytes| {
+            let index_after: usize = index + 4;
+            if index_after > bytes.len() {
+                Option::None
+            } else {
+                match bytes[index..index_after].try_into() {
+                    Result::Err(_) => Option::None,
+                    Result::Ok(u32_bytes) => Option::Some((
+                        index_after,
+                        match endianness {
+                            BytesEndianness::LE => u32::from_le_bytes(u32_bytes),
+                            BytesEndianness::BE => u32::from_be_bytes(u32_bytes),
+                        } as f64,
+                    )),
+                }
+            }
+        }),
+    }
+}
+pub fn bytes_decode_signed_int32<'a>(
+    allocator: &'a Bump,
+    endianness: BytesEndianness,
+) -> BytesDecodeDecoder<'a, f64> {
+    BytesDecodeDecoder {
+        decode: allocator.alloc(move |index, bytes: BytesBytes| {
+            let index_after: usize = index + 4;
+            if index_after > bytes.len() {
+                Option::None
+            } else {
+                match bytes[index..index_after].try_into() {
+                    Result::Err(_) => Option::None,
+                    Result::Ok(four_bytes) => Option::Some((
+                        index_after,
+                        match endianness {
+                            BytesEndianness::LE => i32::from_le_bytes(four_bytes),
+                            BytesEndianness::BE => i32::from_be_bytes(four_bytes),
+                        } as f64,
+                    )),
+                }
+            }
+        }),
+    }
+}
+pub fn bytes_decode_float32<'a>(
+    allocator: &'a Bump,
+    endianness: BytesEndianness,
+) -> BytesDecodeDecoder<'a, f64> {
+    BytesDecodeDecoder {
+        decode: allocator.alloc(move |index, bytes: BytesBytes| {
+            let index_after: usize = index + 4;
+            if index_after > bytes.len() {
+                Option::None
+            } else {
+                match bytes[index..index_after].try_into() {
+                    Result::Err(_) => Option::None,
+                    Result::Ok(four_bytes) => Option::Some((
+                        index_after,
+                        match endianness {
+                            BytesEndianness::LE => f32::from_le_bytes(four_bytes),
+                            BytesEndianness::BE => f32::from_be_bytes(four_bytes),
+                        } as f64,
+                    )),
+                }
+            }
+        }),
+    }
+}
+pub fn bytes_decode_float64<'a>(
+    allocator: &'a Bump,
+    endianness: BytesEndianness,
+) -> BytesDecodeDecoder<'a, f64> {
+    BytesDecodeDecoder {
+        decode: alloc_shared(allocator, move |index, bytes| {
+            let index_after: usize = index + 8;
+            if index_after > bytes.len() {
+                Option::None
+            } else {
+                match bytes[index..index_after].try_into() {
+                    Result::Err(_) => Option::None,
+                    Result::Ok(eight_bytes) => Option::Some((
+                        index_after,
+                        match endianness {
+                            BytesEndianness::LE => f64::from_le_bytes(eight_bytes),
+                            BytesEndianness::BE => f64::from_be_bytes(eight_bytes),
+                        },
+                    )),
+                }
+            }
+        }),
+    }
+}
+pub fn bytes_decode_string<'a>(
+    string_length: f64,
+    allocator: &'a Bump,
+) -> BytesDecodeDecoder<'a, StringString<'a>> {
+    let string_length_usize = string_length as usize;
+    BytesDecodeDecoder {
+        decode: alloc_shared(allocator, move |index, bytes| {
+            let index_after: usize = index + string_length_usize;
+            if index_after > bytes.len() {
+                Option::None
+            } else {
+                match str::from_utf8(&bytes[index..index_after]) {
+                    Result::Err(_) => Option::None,
+                    Result::Ok(decoded_string) => {
+                        Option::Some((bytes.len(), StringString::One(decoded_string)))
+                    }
+                }
+            }
+        }),
+    }
+}
+pub fn bytes_decode_fail<'a, A>() -> BytesDecodeDecoder<'a, A> {
+    BytesDecodeDecoder {
+        decode: &|_, _| Option::None,
+    }
+}
+pub fn bytes_decode_succeed<'a, A: Clone>(
+    allocator: &'a Bump,
+    value: A,
+) -> BytesDecodeDecoder<'a, A> {
+    BytesDecodeDecoder {
+        decode: allocator.alloc(move |index, _| Option::Some((index, value.clone()))),
+    }
+}
+pub fn bytes_decode_and_then<'a, A>(
+    allocator: &'a Bump,
+    value_to_next_decoder: impl Fn(A) -> BytesDecodeDecoder<'a, A> + Clone + 'a,
+    decoder: BytesDecodeDecoder<'a, A>,
+) -> BytesDecodeDecoder<'a, A> {
+    BytesDecodeDecoder {
+        decode: allocator.alloc(move |index0, bytes| {
+            (decoder.decode)(index0, bytes).and_then(|(index1, value)| {
+                (value_to_next_decoder.clone()(value).decode)(index1, bytes)
+            })
+        }),
+    }
+}
+pub fn bytes_decode_map<'a, A, B>(
+    allocator: &'a Bump,
+    value_change: impl Fn(A) -> B + Clone + 'a,
+    decoder: BytesDecodeDecoder<'a, A>,
+) -> BytesDecodeDecoder<'a, B> {
+    BytesDecodeDecoder {
+        decode: allocator.alloc(move |index0, bytes| {
+            (decoder.decode)(index0, bytes)
+                .map(|(index1, value)| (index1, value_change.clone()(value)))
+        }),
+    }
+}
+pub fn bytes_decode_map2<'a, A, B, Combined>(
+    allocator: &'a Bump,
+    combine: impl Fn(A, B) -> Combined + Clone + 'a,
+    a_decoder: BytesDecodeDecoder<'a, A>,
+    b_decoder: BytesDecodeDecoder<'a, B>,
+) -> BytesDecodeDecoder<'a, Combined> {
+    BytesDecodeDecoder {
+        decode: allocator.alloc(move |index, bytes| {
+            (a_decoder.decode)(index, bytes).and_then(|(index, a)| {
+                (b_decoder.decode)(index, bytes).map(|(index, b)| (index, combine.clone()(a, b)))
+            })
+        }),
+    }
+}
+pub fn bytes_decode_map3<'a, A, B, C, Combined>(
+    allocator: &'a Bump,
+    combine: impl Fn(A, B, C) -> Combined + Clone + 'a,
+    a_decoder: BytesDecodeDecoder<'a, A>,
+    b_decoder: BytesDecodeDecoder<'a, B>,
+    c_decoder: BytesDecodeDecoder<'a, C>,
+) -> BytesDecodeDecoder<'a, Combined> {
+    BytesDecodeDecoder {
+        decode: allocator.alloc(move |index, bytes| {
+            (a_decoder.decode)(index, bytes).and_then(|(index, a)| {
+                (b_decoder.decode)(index, bytes).and_then(|(index, b)| {
+                    (c_decoder.decode)(index, bytes)
+                        .map(|(index, c)| (index, combine.clone()(a, b, c)))
+                })
+            })
+        }),
+    }
+}
+pub fn bytes_decode_map4<'a, A, B, C, D, Combined>(
+    allocator: &'a Bump,
+    combine: impl Fn(A, B, C, D) -> Combined + Clone + 'a,
+    a_decoder: BytesDecodeDecoder<'a, A>,
+    b_decoder: BytesDecodeDecoder<'a, B>,
+    c_decoder: BytesDecodeDecoder<'a, C>,
+    d_decoder: BytesDecodeDecoder<'a, D>,
+) -> BytesDecodeDecoder<'a, Combined> {
+    BytesDecodeDecoder {
+        decode: allocator.alloc(move |index, bytes| {
+            (a_decoder.decode)(index, bytes).and_then(|(index, a)| {
+                (b_decoder.decode)(index, bytes).and_then(|(index, b)| {
+                    (c_decoder.decode)(index, bytes).and_then(|(index, c)| {
+                        (d_decoder.decode)(index, bytes)
+                            .map(|(index, d)| (index, combine.clone()(a, b, c, d)))
+                    })
+                })
+            })
+        }),
+    }
+}
+pub fn bytes_decode_map5<'a, A, B, C, D, E, Combined>(
+    allocator: &'a Bump,
+    combine: impl Fn(A, B, C, D, E) -> Combined + Clone + 'a,
+    a_decoder: BytesDecodeDecoder<'a, A>,
+    b_decoder: BytesDecodeDecoder<'a, B>,
+    c_decoder: BytesDecodeDecoder<'a, C>,
+    d_decoder: BytesDecodeDecoder<'a, D>,
+    e_decoder: BytesDecodeDecoder<'a, E>,
+) -> BytesDecodeDecoder<'a, Combined> {
+    BytesDecodeDecoder {
+        decode: allocator.alloc(move |index, bytes| {
+            (a_decoder.decode)(index, bytes).and_then(|(index, a)| {
+                (b_decoder.decode)(index, bytes).and_then(|(index, b)| {
+                    (c_decoder.decode)(index, bytes).and_then(|(index, c)| {
+                        (d_decoder.decode)(index, bytes).and_then(|(index, d)| {
+                            (e_decoder.decode)(index, bytes)
+                                .map(|(index, e)| (index, combine.clone()(a, b, c, d, e)))
+                        })
+                    })
+                })
+            })
+        }),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BytesDecodeStep<State, Done> {
+    Loop(State),
+    Done(Done),
+}
+
+pub fn bytes_decode_loop<'a, State: Clone + 'a, Done>(
+    allocator: &'a Bump,
+    initial_state: State,
+    step: impl Fn(State) -> BytesDecodeDecoder<'a, BytesDecodeStep<State, Done>> + Clone + 'a,
+) -> BytesDecodeDecoder<'a, Done> {
+    BytesDecodeDecoder {
+        decode: alloc_shared(allocator, move |index, bytes| {
+            bytes_decode_loop_fn(initial_state.clone(), step.clone(), index, bytes)
+        }),
+    }
+}
+pub fn bytes_decode_loop_fn<'a, State: 'a, Done: 'a>(
+    state: State,
+    step: impl Fn(State) -> BytesDecodeDecoder<'a, BytesDecodeStep<State, Done>>,
+    index: usize,
+    bytes: BytesBytes<'a>,
+) -> Option<(usize, Done)> {
+    match (step(state).decode)(index, bytes) {
+        Option::None => Option::None,
+        Option::Some((index, decoded_step)) => match decoded_step {
+            BytesDecodeStep::Done(done) => Option::Some((index, done)),
+            BytesDecodeStep::Loop(state) => bytes_decode_loop_fn(state, step, index, bytes),
+        },
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum BytesEncodeEncoder<'a> {
+    U8(u8),
+    U16(BytesEndianness, u16),
+    U32(BytesEndianness, u32),
+    I8(i8),
+    I16(BytesEndianness, i16),
+    I32(BytesEndianness, i32),
+    F32(BytesEndianness, f32),
+    F64(BytesEndianness, f64),
+    Sequence(&'a [BytesEncodeEncoder<'a>]),
+    Utf8(&'a str),
+    Bytes(BytesBytes<'a>),
+}
+pub fn bytes_encode_unsigned_int8<'a>(value: f64) -> BytesEncodeEncoder<'a> {
+    BytesEncodeEncoder::U8(value as u8)
+}
+pub fn bytes_encode_unsigned_int16<'a>(
+    endianness: BytesEndianness,
+    value: f64,
+) -> BytesEncodeEncoder<'a> {
+    BytesEncodeEncoder::U16(endianness, value as u16)
+}
+pub fn bytes_encode_unsigned_int32<'a>(
+    endianness: BytesEndianness,
+    value: f64,
+) -> BytesEncodeEncoder<'a> {
+    BytesEncodeEncoder::U32(endianness, value as u32)
+}
+pub fn bytes_encode_signed_int8<'a>(value: f64) -> BytesEncodeEncoder<'a> {
+    BytesEncodeEncoder::I8(value as i8)
+}
+pub fn bytes_encode_signed_int16<'a>(
+    endianness: BytesEndianness,
+    value: f64,
+) -> BytesEncodeEncoder<'a> {
+    BytesEncodeEncoder::I16(endianness, value as i16)
+}
+pub fn bytes_encode_signed_int32<'a>(
+    endianness: BytesEndianness,
+    value: f64,
+) -> BytesEncodeEncoder<'a> {
+    BytesEncodeEncoder::I32(endianness, value as i32)
+}
+pub fn bytes_encode_float32<'a>(endianness: BytesEndianness, value: f64) -> BytesEncodeEncoder<'a> {
+    BytesEncodeEncoder::F32(endianness, value as f32)
+}
+pub fn bytes_encode_float64<'a>(endianness: BytesEndianness, value: f64) -> BytesEncodeEncoder<'a> {
+    BytesEncodeEncoder::F64(endianness, value)
+}
+pub fn bytes_encode_bytes<'a>(bytes: BytesBytes<'a>) -> BytesEncodeEncoder<'a> {
+    BytesEncodeEncoder::Bytes(bytes)
+}
+pub fn bytes_encode_string<'a>(
+    allocator: &'a Bump,
+    string: StringString<'a>,
+) -> BytesEncodeEncoder<'a> {
+    BytesEncodeEncoder::Utf8(rope_to_str(allocator, string))
+}
+pub fn bytes_encode_sequence<'a>(
+    allocator: &'a Bump,
+    in_order: ListList<'a, BytesEncodeEncoder<'a>>,
+) -> BytesEncodeEncoder<'a> {
+    BytesEncodeEncoder::Sequence(
+        allocator.alloc(in_order.into_iter().collect::<Vec<BytesEncodeEncoder>>()),
+    )
+}
+
+fn bytes_encoder_byte_count(encoder: BytesEncodeEncoder) -> usize {
+    let mut combined_byte_count: usize = 0;
+    let mut next_encoder: BytesEncodeEncoder = encoder;
+    let mut remaining_encoders_unordered: Vec<BytesEncodeEncoder> = Vec::new();
+    'the_loop: loop {
+        match next_encoder {
+            BytesEncodeEncoder::I8(_) => combined_byte_count += 1,
+            BytesEncodeEncoder::I16(_, _) => combined_byte_count += 2,
+            BytesEncodeEncoder::I32(_, _) => combined_byte_count += 4,
+            BytesEncodeEncoder::U8(_) => combined_byte_count += 1,
+            BytesEncodeEncoder::U16(_, _) => combined_byte_count += 2,
+            BytesEncodeEncoder::U32(_, _) => combined_byte_count += 4,
+            BytesEncodeEncoder::F32(_, _) => combined_byte_count += 4,
+            BytesEncodeEncoder::F64(_, _) => combined_byte_count += 8,
+            BytesEncodeEncoder::Sequence(encoders) => remaining_encoders_unordered.extend(encoders),
+            BytesEncodeEncoder::Utf8(string) => combined_byte_count += string.len(),
+            BytesEncodeEncoder::Bytes(bytes) => combined_byte_count += bytes.len(),
+        }
+        match remaining_encoders_unordered.pop() {
+            Option::None => break 'the_loop,
+            Option::Some(popped) => next_encoder = popped,
+        }
+    }
+    combined_byte_count
+}
+pub fn bytes_encode_encode<'a>(allocator: &'a Bump, encoder: BytesEncodeEncoder) -> BytesBytes<'a> {
+    let mut bytes: Vec<u8> = Vec::with_capacity(bytes_encoder_byte_count(encoder));
+    let mut next_encoder: BytesEncodeEncoder = encoder;
+    let mut remaining_encoders: Vec<BytesEncodeEncoder> = Vec::new();
+    'the_loop: loop {
+        match next_encoder {
+            BytesEncodeEncoder::U8(value) => bytes.push(value),
+            BytesEncodeEncoder::U16(endianness, value) => bytes.extend(match endianness {
+                BytesEndianness::LE => value.to_le_bytes(),
+                BytesEndianness::BE => value.to_be_bytes(),
+            }),
+            BytesEncodeEncoder::U32(endianness, value) => bytes.extend(match endianness {
+                BytesEndianness::LE => value.to_le_bytes(),
+                BytesEndianness::BE => value.to_be_bytes(),
+            }),
+            BytesEncodeEncoder::I8(value) => bytes.extend(value.to_le_bytes()),
+            BytesEncodeEncoder::I16(endianness, value) => bytes.extend(match endianness {
+                BytesEndianness::LE => value.to_le_bytes(),
+                BytesEndianness::BE => value.to_be_bytes(),
+            }),
+            BytesEncodeEncoder::I32(endianness, value) => bytes.extend(match endianness {
+                BytesEndianness::LE => value.to_le_bytes(),
+                BytesEndianness::BE => value.to_be_bytes(),
+            }),
+            BytesEncodeEncoder::F32(endianness, value) => bytes.extend(match endianness {
+                BytesEndianness::LE => value.to_le_bytes(),
+                BytesEndianness::BE => value.to_be_bytes(),
+            }),
+            BytesEncodeEncoder::F64(endianness, value) => bytes.extend(match endianness {
+                BytesEndianness::LE => value.to_le_bytes(),
+                BytesEndianness::BE => value.to_be_bytes(),
+            }),
+            BytesEncodeEncoder::Utf8(string) => bytes.extend(string.as_bytes()),
+            BytesEncodeEncoder::Bytes(bytes_to_push) => bytes.extend(bytes_to_push),
+            BytesEncodeEncoder::Sequence(encoders) => {
+                // rev because the first in Sequence should be the first to pop and so on
+                remaining_encoders.extend(encoders.iter().rev())
+            }
+        }
+        match remaining_encoders.pop() {
+            Option::None => break 'the_loop,
+            Option::Some(popped) => next_encoder = popped,
+        }
+    }
+    allocator.alloc(bytes)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
