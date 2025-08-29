@@ -11927,13 +11927,18 @@ rustExpressionCallCondense :
     }
     -> RustExpression
 rustExpressionCallCondense call =
-    case call.called |> rustExpressionRemoveImmediateBorrow of
+    let
+        calledDereferenced : RustExpression
+        calledDereferenced =
+            call.called |> rustExpressionRemoveImmediateBorrow
+    in
+    case calledDereferenced of
         RustExpressionClosure calledLambda ->
             case calledLambda.parameters |> List.map .pattern of
                 [ RustPatternVariable parameter ] ->
                     if
                         (call.argument |> rustExpressionIsConstant)
-                            || (((call.called
+                            || (((calledDereferenced
                                     |> rustExpressionCountUsesOfReference
                                         { qualification = [], name = parameter.name }
                                  )
@@ -11945,7 +11950,7 @@ rustExpressionCallCondense call =
                                             -- try nested condensing call
                                             calledLambdaResultInnermostLambdaResult : { statements : List RustStatement, result : RustExpression }
                                             calledLambdaResultInnermostLambdaResult =
-                                                call.called
+                                                calledDereferenced
                                                     |> rustExpressionInnermostLambdaResult
                                          in
                                          (calledLambdaResultInnermostLambdaResult.result
@@ -11984,13 +11989,13 @@ rustExpressionCallCondense call =
 
                     else
                         RustExpressionCall
-                            { called = call.called
+                            { called = calledDereferenced
                             , arguments = [ call.argument ]
                             }
 
                 _ ->
                     RustExpressionCall
-                        { called = call.called
+                        { called = calledDereferenced
                         , arguments = [ call.argument ]
                         }
 
@@ -12040,127 +12045,127 @@ rustExpressionCallCondense call =
 
                 Nothing ->
                     RustExpressionCall
-                        { called = call.called
+                        { called = calledDereferenced
                         , arguments = [ call.argument ]
                         }
 
         RustExpressionCall _ ->
             RustExpressionCall
-                { called = call.called
+                { called = calledDereferenced
                 , arguments = [ call.argument ]
                 }
 
         RustExpressionBorrow _ ->
             RustExpressionCall
-                { called = call.called
+                { called = calledDereferenced
                 , arguments = [ call.argument ]
                 }
 
         RustExpressionAs _ ->
             RustExpressionCall
-                { called = call.called
+                { called = calledDereferenced
                 , arguments = [ call.argument ]
                 }
 
         RustExpressionUnit ->
             RustExpressionCall
-                { called = call.called
+                { called = calledDereferenced
                 , arguments = [ call.argument ]
                 }
 
         RustExpressionSelf ->
             RustExpressionCall
-                { called = call.called
+                { called = calledDereferenced
                 , arguments = [ call.argument ]
                 }
 
         RustExpressionReferenceVariant _ ->
             RustExpressionCall
-                { called = call.called
+                { called = calledDereferenced
                 , arguments = [ call.argument ]
                 }
 
         RustExpressionDeref _ ->
             RustExpressionCall
-                { called = call.called
+                { called = calledDereferenced
                 , arguments = [ call.argument ]
                 }
 
         RustExpressionReferenceMethod _ ->
             RustExpressionCall
-                { called = call.called
+                { called = calledDereferenced
                 , arguments = [ call.argument ]
                 }
 
         RustExpressionF64 _ ->
             RustExpressionCall
-                { called = call.called
+                { called = calledDereferenced
                 , arguments = [ call.argument ]
                 }
 
         RustExpressionChar _ ->
             RustExpressionCall
-                { called = call.called
+                { called = calledDereferenced
                 , arguments = [ call.argument ]
                 }
 
         RustExpressionString _ ->
             RustExpressionCall
-                { called = call.called
+                { called = calledDereferenced
                 , arguments = [ call.argument ]
                 }
 
         RustExpressionNegateOperation _ ->
             RustExpressionCall
-                { called = call.called
+                { called = calledDereferenced
                 , arguments = [ call.argument ]
                 }
 
         RustExpressionStructAccess _ ->
             RustExpressionCall
-                { called = call.called
+                { called = calledDereferenced
                 , arguments = [ call.argument ]
                 }
 
         RustExpressionBinaryOperation _ ->
             RustExpressionCall
-                { called = call.called
+                { called = calledDereferenced
                 , arguments = [ call.argument ]
                 }
 
         RustExpressionTuple _ ->
             RustExpressionCall
-                { called = call.called
+                { called = calledDereferenced
                 , arguments = [ call.argument ]
                 }
 
         RustExpressionIfElse _ ->
             RustExpressionCall
-                { called = call.called
+                { called = calledDereferenced
                 , arguments = [ call.argument ]
                 }
 
         RustExpressionArrayLiteral _ ->
             RustExpressionCall
-                { called = call.called
+                { called = calledDereferenced
                 , arguments = [ call.argument ]
                 }
 
         RustExpressionStruct _ ->
             RustExpressionCall
-                { called = call.called
+                { called = calledDereferenced
                 , arguments = [ call.argument ]
                 }
 
         RustExpressionMatch _ ->
             RustExpressionCall
-                { called = call.called
+                { called = calledDereferenced
                 , arguments = [ call.argument ]
                 }
 
         RustExpressionAfterStatement _ ->
             RustExpressionCall
-                { called = call.called
+                { called = calledDereferenced
                 , arguments = [ call.argument ]
                 }
 
