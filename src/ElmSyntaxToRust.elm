@@ -33113,7 +33113,7 @@ impl<'a, A> Iterator for ListListRefIterator<'a, A> {
 }
 
 impl<'a, A> ListList<'a, A> {
-    fn ref_iter(&'a self) -> ListListRefIterator<'a, A> {
+    pub fn ref_iter(&'a self) -> ListListRefIterator<'a, A> {
         ListListRefIterator {
             remaining_list: self,
         }
@@ -33122,7 +33122,7 @@ impl<'a, A> ListList<'a, A> {
 impl<'a, A: Clone> ListList<'a, A> {
     /// can be nice instead of .ref_iter() because it avoids cloning the head
     /// and actually consumes the (first cons of the) list
-    fn into_iter(self) -> impl Iterator<Item = A> {
+    pub fn into_iter(self) -> impl Iterator<Item = A> {
         // bit convoluted
         (match self {
             ListList::Empty => Option::None,
