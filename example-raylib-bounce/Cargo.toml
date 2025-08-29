@@ -1,0 +1,6 @@
+[package]
+name = "example-hello-world"
+edition = "2024"
+[dependencies]
+bumpalo = "3.19.0"
+raylib = "5.5.1"
