@@ -12772,10 +12772,10 @@ the transpiled code tends to contains a bunch of
 "expand, then condense if possible" steps, like
 
     List.append x x
-    -> (|a| |b| list_append(a, b))(x)(x)
-    -> (|b| list_append(x, b))(x)
-    -> list_append(x, x)
-    -> list_append(x.clone(), x)
+    → (|a| |b| list_append(a, b))(x)(x)
+    → (|b| list_append(x, b))(x)
+    → list_append(x, x)
+    → list_append(x.clone(), x)
 
 as you can see none of the intermediate syntax would pass ownership checking
 but the end result is.
@@ -17925,7 +17925,7 @@ inferredTypeNotVariableExpand expansions syntaxType =
 
                                 ElmSyntaxTypeInfer.TypeConstruct _ ->
                                     -- should already be expanded, which means it is a choice type
-                                    -- -> invalid expansion
+                                    -- → invalid expansion
                                     ElmSyntaxTypeInfer.TypeRecordExtension
                                         { recordVariable = typeRecordExtension.recordVariable
                                         , fields = fieldsExpanded
@@ -34318,7 +34318,10 @@ pub fn string_slice<'a>(
         normalize_string_slice_index_from_end_if_negative(start_inclusive_possibly_negative, &str);
     match start_inclusive_or_none_if_too_big {
         Option::None => string_rope_empty,
-        Option::Some(start_inclusive) => {
+        Option::Some(mut start_inclusive) => {
+            while !str.is_char_boundary(start_inclusive) {
+                start_inclusive -= 1;
+            }
             let end_exclusive_or_none_if_too_big: Option<usize> =
                 normalize_string_slice_index_from_end_if_negative(
                     end_exclusive_possibly_negative,
@@ -34326,7 +34329,10 @@ pub fn string_slice<'a>(
                 );
             match end_exclusive_or_none_if_too_big {
                 Option::None => StringString::One(&str[start_inclusive..]),
-                Option::Some(end_exclusive) => {
+                Option::Some(mut end_exclusive) => {
+                    while !str.is_char_boundary(end_exclusive) {
+                        end_exclusive += 1;
+                    }
                     if end_exclusive <= start_inclusive {
                         string_rope_empty
                     } else {
@@ -34339,22 +34345,18 @@ pub fn string_slice<'a>(
 }
 /// Option::None means too big
 fn normalize_string_slice_index_from_end_if_negative(
-    elm_index: f64,
+    index_possibly_negative: f64,
     string: &str,
 ) -> Option<usize> {
-    if elm_index >= 0_f64 {
-        match string.char_indices().nth(elm_index as usize) {
-            Option::None => Option::None,
-            Option::Some((end_inclusive, _)) => Option::Some(end_inclusive),
+    if index_possibly_negative >= 0_f64 {
+        let index: usize = index_possibly_negative as usize;
+        if index >= string.len() {
+            Option::None
+        } else {
+            Option::Some(index)
         }
     } else {
-        match string
-            .char_indices()
-            .nth_back((elm_index.abs() - 1_f64) as usize)
-        {
-            Option::None => Option::Some(0),
-            Option::Some((end_inclusive, _)) => Option::Some(end_inclusive),
-        }
+        Option::Some((string.len() - ((index_possibly_negative.abs() - 1_f64) as usize)).max(0))
     }
 }
 pub fn string_replace<'a>(
