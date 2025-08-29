@@ -8833,7 +8833,7 @@ rustStatementIsConst context rustStatement =
 rustTypeConstructBumpaloBump : RustType
 rustTypeConstructBumpaloBump =
     RustTypeConstruct
-        { qualification = []
+        { qualification = [ "bumpalo" ]
         , name = "Bump"
         , isCopy = False
         , isDebug = True
@@ -19496,8 +19496,6 @@ rustDeclarationsToModuleString rustDeclarations =
     """#![allow(dead_code)]
 #![allow(non_shorthand_field_patterns)]
 #![allow(non_upper_case_globals)]
-
-use bumpalo::Bump;
 
 """
         ++ defaultDeclarations
@@ -33153,7 +33151,7 @@ pub enum BasicsNever {}
 /// which can be implicitly cast to a shared one.
 /// However, rust sometimes gets confused that &mut != & and throws an error.
 /// Using `alloc_shared` already gives you a shared reference so it will always typecheck.
-pub fn alloc_shared<'a, A>(allocator: &'a Bump, to_allocate: A) -> &'a A {
+pub fn alloc_shared<'a, A>(allocator: &'a bumpalo::Bump, to_allocate: A) -> &'a A {
     allocator.alloc(to_allocate)
 }
 
@@ -33170,14 +33168,14 @@ pub fn basics_apl<A, B>(eat: impl FnOnce(A) -> B, food: A) -> B {
     eat(food)
 }
 pub fn basics_composer<'a, A, B, C>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     earlier: impl Fn(A) -> B + 'a,
     later: impl Fn(B) -> C + 'a,
 ) -> &'a dyn Fn(A) -> C {
     allocator.alloc(move |food| later(earlier(food)))
 }
 pub fn basics_composel<'a, A, B, C>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     later: impl Fn(B) -> C + 'a,
     earlier: impl Fn(A) -> B + 'a,
 ) -> &'a dyn Fn(A) -> C {
@@ -33327,26 +33325,34 @@ pub fn list_tail<'a, A: Clone>(list: ListList<'a, A>) -> Option<ListList<'a, A>>
         ListList::Cons(_, tail) => Option::Some(tail.clone()),
     }
 }
-pub fn list_cons<'a, A>(allocator: &'a Bump, head: A, tail: ListList<'a, A>) -> ListList<'a, A> {
+pub fn list_cons<'a, A>(
+    allocator: &'a bumpalo::Bump,
+    head: A,
+    tail: ListList<'a, A>,
+) -> ListList<'a, A> {
     ListList::Cons(head, allocator.alloc(tail))
 }
 pub fn list_singleton<'a, A>(only_element: A) -> ListList<'a, A> {
     ListList::Cons(only_element, &ListList::Empty)
 }
-pub fn list_repeat<'a, A: Clone>(allocator: &'a Bump, count: f64, element: A) -> ListList<'a, A> {
+pub fn list_repeat<'a, A: Clone>(
+    allocator: &'a bumpalo::Bump,
+    count: f64,
+    element: A,
+) -> ListList<'a, A> {
     double_ended_iterator_to_list(allocator, std::iter::repeat_n(element, count as usize))
 }
-pub fn list_range<'a>(allocator: &'a Bump, min: f64, max: f64) -> ListList<'a, f64> {
+pub fn list_range<'a>(allocator: &'a bumpalo::Bump, min: f64, max: f64) -> ListList<'a, f64> {
     double_ended_iterator_to_list(allocator, ((min as i32)..=(max as i32)).map(|n| n as f64))
 }
 pub fn list<'a, A: Clone, const ElementCount: usize>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     elements: [A; ElementCount],
 ) -> ListList<'a, A> {
     double_ended_iterator_to_list(allocator, elements.into_iter())
 }
 pub fn double_ended_iterator_to_list<'a, A, AIterator: DoubleEndedIterator<Item = A>>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     iterator: AIterator,
 ) -> ListList<'a, A> {
     let mut list_so_far: ListList<A> = ListList::Empty;
@@ -33381,7 +33387,7 @@ pub fn list_maximum<A: Clone + PartialOrd>(list: ListList<A>) -> Option<A> {
     list.into_iter().max_by(|l, r| basics_compare(l, r))
 }
 pub fn list_take<'a, A: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     keep_count: f64,
     list: ListList<'a, A>,
 ) -> ListList<'a, A> {
@@ -33389,7 +33395,7 @@ pub fn list_take<'a, A: Clone>(
 }
 /// prefer `double_ended_iterator_to_list` where possible
 pub fn iterator_to_list<'a, A: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     iterator: impl Iterator<Item = A>,
 ) -> ListList<'a, A> {
     double_ended_iterator_to_list(allocator, iterator.collect::<Vec<A>>().into_iter())
@@ -33414,7 +33420,7 @@ pub fn list_drop<'a, A: Clone>(skip_count: f64, list: ListList<'a, A>) -> ListLi
     }
 }
 pub fn list_intersperse<'a, A: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     in_between: A,
     list: ListList<A>,
 ) -> ListList<'a, A> {
@@ -33434,7 +33440,7 @@ pub fn list_intersperse<'a, A: Clone>(
     }
 }
 pub fn list_concat<'a, A: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     list: ListList<'a, ListList<A>>,
 ) -> ListList<'a, A> {
     iterator_to_list(
@@ -33443,7 +33449,7 @@ pub fn list_concat<'a, A: Clone>(
     )
 }
 pub fn list_concat_map<'a, A: Clone, B: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     element_to_list: impl Fn(A) -> ListList<'a, B>,
     list: ListList<A>,
 ) -> ListList<'a, B> {
@@ -33473,7 +33479,10 @@ pub fn list_foldr<A: Clone, State>(
         .fold(initial_state, |state, element| reduce(element, state))
 }
 
-pub fn list_reverse<'a, A: Clone>(allocator: &'a Bump, list: ListList<A>) -> ListList<'a, A> {
+pub fn list_reverse<'a, A: Clone>(
+    allocator: &'a bumpalo::Bump,
+    list: ListList<A>,
+) -> ListList<'a, A> {
     let mut reverse_list: ListList<A> = ListList::Empty;
     for new_head in list.into_iter() {
         reverse_list = list_cons(allocator, new_head, reverse_list)
@@ -33481,7 +33490,7 @@ pub fn list_reverse<'a, A: Clone>(allocator: &'a Bump, list: ListList<A>) -> Lis
     reverse_list
 }
 pub fn list_filter<'a, A: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     keep: impl Fn(A) -> bool,
     list: ListList<'a, A>,
 ) -> ListList<'a, A> {
@@ -33491,14 +33500,14 @@ pub fn list_filter<'a, A: Clone>(
     )
 }
 pub fn list_map<'a, A: Clone, B: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     element_change: impl Fn(A) -> B,
     list: ListList<A>,
 ) -> ListList<'a, B> {
     iterator_to_list(allocator, list.into_iter().map(element_change))
 }
 pub fn list_indexed_map<'a, A: Clone, B: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     indexed_element_to_new: impl Fn(f64, A) -> B,
     list: ListList<A>,
 ) -> ListList<'a, B> {
@@ -33510,14 +33519,14 @@ pub fn list_indexed_map<'a, A: Clone, B: Clone>(
     )
 }
 pub fn list_filter_map<'a, A: Clone, B: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     element_to_maybe: impl Fn(A) -> Option<B>,
     list: ListList<'a, A>,
 ) -> ListList<'a, B> {
     iterator_to_list(allocator, list.into_iter().filter_map(element_to_maybe))
 }
 pub fn list_sort<'a, A: Clone + PartialOrd>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     list: ListList<'a, A>,
 ) -> ListList<'a, A> {
     let mut list_as_vec: Vec<A> = list.into_iter().collect();
@@ -33525,7 +33534,7 @@ pub fn list_sort<'a, A: Clone + PartialOrd>(
     double_ended_iterator_to_list(allocator, list_as_vec.into_iter())
 }
 pub fn list_sort_by<'a, A: Clone, Comparable: PartialOrd>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     element_to_comparable: impl Fn(A) -> Comparable,
     list: ListList<'a, A>,
 ) -> ListList<'a, A> {
@@ -33539,7 +33548,7 @@ pub fn list_sort_by<'a, A: Clone, Comparable: PartialOrd>(
     double_ended_iterator_to_list(allocator, list_copy_as_vec.into_iter())
 }
 pub fn list_sort_with<'a, A: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     element_compare: impl Fn(A, A) -> std::cmp::Ordering,
     list: ListList<'a, A>,
 ) -> ListList<'a, A> {
@@ -33548,7 +33557,7 @@ pub fn list_sort_with<'a, A: Clone>(
     double_ended_iterator_to_list(allocator, list_copy_as_vec.into_iter())
 }
 pub fn list_append<'a, A: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     left: ListList<A>,
     right: ListList<'a, A>,
 ) -> ListList<'a, A> {
@@ -33559,7 +33568,7 @@ pub fn list_append<'a, A: Clone>(
     combined_list
 }
 pub fn list_unzip<'a, A: Clone, B: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     list: ListList<(A, B)>,
 ) -> (ListList<'a, A>, ListList<'a, B>) {
     let mut a_list: ListList<A> = ListList::Empty;
@@ -33571,7 +33580,7 @@ pub fn list_unzip<'a, A: Clone, B: Clone>(
     (a_list, b_list)
 }
 pub fn list_partition<'a, A: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     decode: impl Fn(A) -> bool,
     list: ListList<A>,
 ) -> (ListList<'a, A>, ListList<'a, A>) {
@@ -33584,7 +33593,7 @@ pub fn list_partition<'a, A: Clone>(
     )
 }
 pub fn list_zip<'a, A: Clone, B: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     a_list: ListList<A>,
     b_list: ListList<B>,
 ) -> ListList<'a, (A, B)> {
@@ -33594,7 +33603,7 @@ pub fn list_zip<'a, A: Clone, B: Clone>(
     )
 }
 pub fn list_map2<'a, A: Clone, B: Clone, Combined: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     combine: impl Fn(A, B) -> Combined,
     a_list: ListList<A>,
     b_list: ListList<B>,
@@ -33605,7 +33614,7 @@ pub fn list_map2<'a, A: Clone, B: Clone, Combined: Clone>(
     )
 }
 pub fn list_map3<'a, A: Clone, B: Clone, C: Clone, Combined: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     combine: impl Fn(A, B, C) -> Combined,
     a_list: ListList<A>,
     b_list: ListList<B>,
@@ -33621,7 +33630,7 @@ pub fn list_map3<'a, A: Clone, B: Clone, C: Clone, Combined: Clone>(
     )
 }
 pub fn list_map4<'a, A: Clone, B: Clone, C: Clone, D: Clone, Combined: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     combine: impl Fn(A, B, C, D) -> Combined,
     a_list: ListList<A>,
     b_list: ListList<B>,
@@ -33639,7 +33648,7 @@ pub fn list_map4<'a, A: Clone, B: Clone, C: Clone, D: Clone, Combined: Clone>(
     )
 }
 pub fn list_map5<'a, A: Clone, B: Clone, C: Clone, D: Clone, E: Clone, Combined: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     combine: impl Fn(A, B, C, D, E) -> Combined,
     a_list: ListList<A>,
     b_list: ListList<B>,
@@ -33790,7 +33799,10 @@ pub fn array_indexed_map<'a, A: Clone, B: Clone>(
     })
 }
 
-pub fn array_to_list<'a, A: Clone>(allocator: &'a Bump, array: ArrayArray<A>) -> ListList<'a, A> {
+pub fn array_to_list<'a, A: Clone>(
+    allocator: &'a bumpalo::Bump,
+    array: ArrayArray<A>,
+) -> ListList<'a, A> {
     match std::rc::Rc::try_unwrap(array) {
         Result::Ok(array_owned) => {
             double_ended_iterator_to_list(allocator, array_owned.into_iter())
@@ -33801,7 +33813,7 @@ pub fn array_to_list<'a, A: Clone>(allocator: &'a Bump, array: ArrayArray<A>) ->
     }
 }
 pub fn array_to_indexed_list<'a, A: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     array: ArrayArray<A>,
 ) -> ListList<'a, (f64, A)> {
     match std::rc::Rc::try_unwrap(array) {
@@ -34058,19 +34070,22 @@ pub fn rope_to_cow_str(string: StringString) -> std::borrow::Cow<str> {
     }
 }
 /// you may not need this. Typically `rope_to_cow_str` does the job
-pub fn rope_to_str<'a>(allocator: &'a Bump, string: StringString<'a>) -> &'a str {
+pub fn rope_to_str<'a>(allocator: &'a bumpalo::Bump, string: StringString<'a>) -> &'a str {
     match string {
         StringString::One(str) => str,
         StringString::Append(l, r) => allocator.alloc(string_rope_append_to_string(l, r)),
     }
 }
-pub fn string_rope_flatten<'a>(allocator: &'a Bump, string: StringString<'a>) -> StringString<'a> {
+pub fn string_rope_flatten<'a>(
+    allocator: &'a bumpalo::Bump,
+    string: StringString<'a>,
+) -> StringString<'a> {
     match string {
         StringString::One(_) => string,
         StringString::Append(l, r) => string_to_rope(allocator, string_rope_append_to_string(l, r)),
     }
 }
-pub fn string_to_rope<'a>(allocator: &'a Bump, string: String) -> StringString<'a> {
+pub fn string_to_rope<'a>(allocator: &'a bumpalo::Bump, string: String) -> StringString<'a> {
     StringString::One(allocator.alloc(string))
 }
 
@@ -34116,18 +34131,18 @@ pub fn string_ref_length(string: &StringString) -> usize {
         }
     }
 }
-pub fn string_from_int<'a>(allocator: &'a Bump, int: f64) -> StringString<'a> {
+pub fn string_from_int<'a>(allocator: &'a bumpalo::Bump, int: f64) -> StringString<'a> {
     string_to_rope(allocator, (int as i64).to_string())
 }
-pub fn string_from_float<'a>(allocator: &'a Bump, float: f64) -> StringString<'a> {
+pub fn string_from_float<'a>(allocator: &'a bumpalo::Bump, float: f64) -> StringString<'a> {
     string_to_rope(allocator, float.to_string())
 }
-pub fn string_from_char<'a>(allocator: &'a Bump, char: char) -> StringString<'a> {
+pub fn string_from_char<'a>(allocator: &'a bumpalo::Bump, char: char) -> StringString<'a> {
     // allocating here feels wrong because we know the final string size 1..4
     string_to_rope(allocator, char.to_string())
 }
 pub fn string_repeat<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     length: f64,
     segment: StringString,
 ) -> StringString<'a> {
@@ -34138,7 +34153,7 @@ pub fn string_repeat<'a>(
     }
 }
 pub fn string_cons<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     new_first_char: char,
     tail_string: StringString<'a>,
 ) -> StringString<'a> {
@@ -34154,7 +34169,7 @@ pub fn string_any(is_needle: impl Fn(char) -> bool, string: StringString) -> boo
     rope_to_cow_str(string).chars().any(is_needle)
 }
 pub fn string_filter<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     keep: impl Fn(char) -> bool,
     string: StringString,
 ) -> StringString<'a> {
@@ -34167,7 +34182,7 @@ pub fn string_filter<'a>(
     )
 }
 pub fn string_map<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     element_change: impl Fn(char) -> char,
     string: StringString,
 ) -> StringString<'a> {
@@ -34198,20 +34213,26 @@ pub fn string_foldr<State>(
         .rev()
         .fold(initial_state, |state, element| reduce(element, state))
 }
-pub fn string_to_list<'a>(allocator: &'a Bump, string: StringString) -> ListList<'a, char> {
+pub fn string_to_list<'a>(
+    allocator: &'a bumpalo::Bump,
+    string: StringString,
+) -> ListList<'a, char> {
     double_ended_iterator_to_list(allocator, rope_to_cow_str(string).chars())
 }
-pub fn string_from_list<'a>(allocator: &'a Bump, list: ListList<char>) -> StringString<'a> {
+pub fn string_from_list<'a>(
+    allocator: &'a bumpalo::Bump,
+    list: ListList<char>,
+) -> StringString<'a> {
     string_to_rope(allocator, list.ref_iter().collect::<String>())
 }
-pub fn string_reverse<'a>(allocator: &'a Bump, string: StringString) -> StringString<'a> {
+pub fn string_reverse<'a>(allocator: &'a bumpalo::Bump, string: StringString) -> StringString<'a> {
     string_to_rope(
         allocator,
         rope_to_cow_str(string).chars().rev().collect::<String>(),
     )
 }
 pub fn string_uncons<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     string: StringString<'a>,
 ) -> Option<(char, StringString<'a>)> {
     let str: &str = rope_to_str(allocator, string);
@@ -34224,7 +34245,7 @@ pub fn string_uncons<'a>(
 }
 
 pub fn string_left<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     taken_count: f64,
     string: StringString<'a>,
 ) -> StringString<'a> {
@@ -34239,7 +34260,7 @@ pub fn string_left<'a>(
     }
 }
 pub fn string_drop_left<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     skipped_count: f64,
     string: StringString<'a>,
 ) -> StringString<'a> {
@@ -34254,7 +34275,7 @@ pub fn string_drop_left<'a>(
     }
 }
 pub fn string_right<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     taken_count: f64,
     string: StringString<'a>,
 ) -> StringString<'a> {
@@ -34269,7 +34290,7 @@ pub fn string_right<'a>(
     }
 }
 pub fn string_drop_right<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     skipped_count: f64,
     string: StringString<'a>,
 ) -> StringString<'a> {
@@ -34287,7 +34308,7 @@ pub fn string_drop_right<'a>(
     }
 }
 pub fn string_slice<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     start_inclusive_possibly_negative: f64,
     end_exclusive_possibly_negative: f64,
     string: StringString<'a>,
@@ -34337,7 +34358,7 @@ fn normalize_string_slice_index_from_end_if_negative(
     }
 }
 pub fn string_replace<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     from: StringString,
     to: StringString,
     string: StringString<'a>,
@@ -34353,14 +34374,14 @@ pub fn string_replace<'a>(
     string_to_rope(allocator, rope_to_cow_str(string).replace(from_str, to_str))
 }
 pub fn string_append<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     left: StringString<'a>,
     right: StringString<'a>,
 ) -> StringString<'a> {
     StringString::Append(allocator.alloc(left), allocator.alloc(right))
 }
 pub fn string_concat<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     segments: ListList<StringString<'a>>,
 ) -> StringString<'a> {
     let mut concatenated: StringString<'a> = string_rope_empty;
@@ -34370,7 +34391,7 @@ pub fn string_concat<'a>(
     concatenated
 }
 pub fn string_join<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     in_between: StringString<'a>,
     segments: ListList<'a, StringString<'a>>,
 ) -> StringString<'a> {
@@ -34392,7 +34413,7 @@ pub fn string_join<'a>(
     }
 }
 pub fn string_split<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     separator: StringString,
     string: StringString<'a>,
 ) -> ListList<'a, StringString<'a>> {
@@ -34408,7 +34429,7 @@ pub fn string_split<'a>(
     )
 }
 pub fn string_words<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     string: StringString<'a>,
 ) -> ListList<'a, StringString<'a>> {
     iterator_to_list(
@@ -34419,7 +34440,7 @@ pub fn string_words<'a>(
     )
 }
 pub fn string_lines<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     string: StringString<'a>,
 ) -> ListList<'a, StringString<'a>> {
     iterator_to_list(
@@ -34433,7 +34454,7 @@ pub fn string_contains(needle: StringString, string: StringString) -> bool {
     rope_to_cow_str(string).contains(rope_to_cow_str(needle).as_ref())
 }
 pub fn string_indexes<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     needle: StringString,
     string: StringString<'a>,
 ) -> ListList<'a, f64> {
@@ -34462,7 +34483,7 @@ pub fn string_indexes<'a>(
     )
 }
 pub fn string_indices<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     needle: StringString,
     string: StringString<'a>,
 ) -> ListList<'a, f64> {
@@ -34486,14 +34507,14 @@ pub fn string_to_int(string: StringString) -> Option<f64> {
         Result::Ok(int) => Option::Some(int as f64),
     }
 }
-pub fn string_to_upper<'a>(allocator: &'a Bump, string: StringString) -> StringString<'a> {
+pub fn string_to_upper<'a>(allocator: &'a bumpalo::Bump, string: StringString) -> StringString<'a> {
     string_to_rope(allocator, rope_to_cow_str(string).to_uppercase())
 }
-pub fn string_to_lower<'a>(allocator: &'a Bump, string: StringString) -> StringString<'a> {
+pub fn string_to_lower<'a>(allocator: &'a bumpalo::Bump, string: StringString) -> StringString<'a> {
     string_to_rope(allocator, rope_to_cow_str(string).to_lowercase())
 }
 pub fn string_pad<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     minimum_full_char_count: f64,
     padding: char,
     string: StringString<'a>,
@@ -34511,7 +34532,7 @@ pub fn string_pad<'a>(
     )
 }
 pub fn string_pad_left<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     minimum_length: f64,
     padding: char,
     string: StringString<'a>,
@@ -34528,7 +34549,7 @@ pub fn string_pad_left<'a>(
     )
 }
 pub fn string_pad_right<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     minimum_length: f64,
     padding: char,
     string: StringString<'a>,
@@ -34544,17 +34565,26 @@ pub fn string_pad_right<'a>(
         ),
     )
 }
-pub fn string_trim<'a>(allocator: &'a Bump, string: StringString<'a>) -> StringString<'a> {
+pub fn string_trim<'a>(allocator: &'a bumpalo::Bump, string: StringString<'a>) -> StringString<'a> {
     StringString::One(rope_to_str(allocator, string).trim())
 }
-pub fn string_trim_left<'a>(allocator: &'a Bump, string: StringString<'a>) -> StringString<'a> {
+pub fn string_trim_left<'a>(
+    allocator: &'a bumpalo::Bump,
+    string: StringString<'a>,
+) -> StringString<'a> {
     StringString::One(rope_to_str(allocator, string).trim_start())
 }
-pub fn string_trim_right<'a>(allocator: &'a Bump, string: StringString<'a>) -> StringString<'a> {
+pub fn string_trim_right<'a>(
+    allocator: &'a bumpalo::Bump,
+    string: StringString<'a>,
+) -> StringString<'a> {
     StringString::One(rope_to_str(allocator, string).trim_end())
 }
 
-pub fn debug_to_string<'a, A: std::fmt::Debug>(allocator: &'a Bump, data: A) -> StringString<'a> {
+pub fn debug_to_string<'a, A: std::fmt::Debug>(
+    allocator: &'a bumpalo::Bump,
+    data: A,
+) -> StringString<'a> {
     string_to_rope(allocator, format!("{:?}", data))
 }
 pub fn debug_log<'a, A: std::fmt::Debug>(data: A) -> A {
@@ -34784,7 +34814,10 @@ pub fn dict_get<K: PartialOrd, V: Clone>(key: K, dict: DictDict<K, V>) -> Option
     dict.get(&PretendNotPartial(key)).cloned()
 }
 
-pub fn dict_keys<'a, K: Clone, V>(allocator: &'a Bump, dict: DictDict<K, V>) -> ListList<'a, K> {
+pub fn dict_keys<'a, K: Clone, V>(
+    allocator: &'a bumpalo::Bump,
+    dict: DictDict<K, V>,
+) -> ListList<'a, K> {
     match std::rc::Rc::try_unwrap(dict) {
         Result::Ok(dict_owned) => {
             double_ended_iterator_to_list(allocator, dict_owned.into_keys().map(|k| k.0))
@@ -34794,7 +34827,10 @@ pub fn dict_keys<'a, K: Clone, V>(allocator: &'a Bump, dict: DictDict<K, V>) -> 
         }
     }
 }
-pub fn dict_values<'a, K, V: Clone>(allocator: &'a Bump, dict: DictDict<K, V>) -> ListList<'a, V> {
+pub fn dict_values<'a, K, V: Clone>(
+    allocator: &'a bumpalo::Bump,
+    dict: DictDict<K, V>,
+) -> ListList<'a, V> {
     match std::rc::Rc::try_unwrap(dict) {
         Result::Ok(dict_owned) => {
             double_ended_iterator_to_list(allocator, dict_owned.into_values())
@@ -34805,7 +34841,7 @@ pub fn dict_values<'a, K, V: Clone>(allocator: &'a Bump, dict: DictDict<K, V>) -
     }
 }
 pub fn dict_to_list<'a, K: Clone, V: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     dict: DictDict<K, V>,
 ) -> ListList<'a, (K, V)> {
     match std::rc::Rc::try_unwrap(dict) {
@@ -34990,7 +35026,7 @@ pub fn set_member<K: PartialOrd>(key: K, set: SetSet<K>) -> bool {
     set.contains(&PretendNotPartial(key))
 }
 
-pub fn set_to_list<'a, K: Clone>(allocator: &'a Bump, set: SetSet<K>) -> ListList<'a, K> {
+pub fn set_to_list<'a, K: Clone>(allocator: &'a bumpalo::Bump, set: SetSet<K>) -> ListList<'a, K> {
     match std::rc::Rc::try_unwrap(set) {
         Result::Ok(set_owned) => {
             double_ended_iterator_to_list(allocator, set_owned.into_iter().map(|k| k.0))
@@ -35131,7 +35167,7 @@ pub enum JsonValue<'a> {
     Object(&'a std::collections::BTreeMap<&'a str, JsonValue<'a>>),
 }
 pub fn json_encode_encode<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     indent_size: f64,
     json: JsonValue<'a>,
 ) -> StringString<'a> {
@@ -35277,7 +35313,10 @@ pub fn json_encode_null<'a>() -> JsonValue<'a> {
 pub fn json_encode_bool<'a>(bool: bool) -> JsonValue<'a> {
     JsonValue::Bool(bool)
 }
-pub fn json_encode_string<'a>(allocator: &'a Bump, string: StringString<'a>) -> JsonValue<'a> {
+pub fn json_encode_string<'a>(
+    allocator: &'a bumpalo::Bump,
+    string: StringString<'a>,
+) -> JsonValue<'a> {
     JsonValue::String(rope_to_str(allocator, string))
 }
 pub fn json_encode_int<'a>(int: f64) -> JsonValue<'a> {
@@ -35287,7 +35326,7 @@ pub fn json_encode_float<'a>(float: f64) -> JsonValue<'a> {
     JsonValue::Number(float)
 }
 pub fn json_encode_list<'a, A: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     element_to_json: impl Fn(A) -> JsonValue<'a>,
     list: ListList<'a, A>,
 ) -> JsonValue<'a> {
@@ -35300,14 +35339,14 @@ pub fn json_encode_list<'a, A: Clone>(
     )
 }
 pub fn json_encode_array<'a, A: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     element_to_json: impl Fn(A) -> JsonValue<'a>,
     array: ArrayArray<A>,
 ) -> JsonValue<'a> {
     JsonValue::Array(allocator.alloc(array_map(element_to_json, array)))
 }
 pub fn json_encode_set<'a, A: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     element_to_json: impl Fn(A) -> JsonValue<'a>,
     set: SetSet<A>,
 ) -> JsonValue<'a> {
@@ -35325,7 +35364,7 @@ pub fn json_encode_set<'a, A: Clone>(
     )
 }
 pub fn json_encode_object<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     entries: ListList<'a, (StringString, JsonValue)>,
 ) -> JsonValue<'a> {
     JsonValue::Object(
@@ -35340,7 +35379,7 @@ pub fn json_encode_object<'a>(
     )
 }
 pub fn json_encode_dict<'a, K: Clone, V: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     key_to_string: impl Fn(K) -> StringString<'a>,
     value_to_json: impl Fn(V) -> JsonValue<'a>,
     dict: DictDict<K, V>,
@@ -35380,7 +35419,7 @@ pub struct JsonDecodeDecoder<'a, A> {
     pub decode: &'a dyn Fn(JsonValue<'a>) -> ResultResult<JsonDecodeError<'a>, A>,
 }
 pub fn json_decode_error_to_string<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     error: JsonDecodeError<'a>,
 ) -> StringString<'a> {
     let mut builder = String::new();
@@ -35388,7 +35427,7 @@ pub fn json_decode_error_to_string<'a>(
     string_to_rope(allocator, builder)
 }
 pub fn json_decode_error_to_string_help<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     error: &JsonDecodeError,
     mut context: String,
     so_far: &mut String,
@@ -35500,7 +35539,7 @@ pub fn json_decode_decode_value<'a, A>(
     (decoder.decode)(json)
 }
 pub fn json_decode_succeed<'a, A: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     value: A,
 ) -> JsonDecodeDecoder<'a, A> {
     JsonDecodeDecoder {
@@ -35508,7 +35547,7 @@ pub fn json_decode_succeed<'a, A: Clone>(
     }
 }
 pub fn json_decode_fail<'a, A>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     error_message: StringString<'a>,
 ) -> JsonDecodeDecoder<'a, A> {
     JsonDecodeDecoder {
@@ -35517,7 +35556,7 @@ pub fn json_decode_fail<'a, A>(
     }
 }
 pub fn json_decode_lazy<'a, A>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     build: impl Fn(()) -> JsonDecodeDecoder<'a, A> + 'a,
 ) -> JsonDecodeDecoder<'a, A> {
     JsonDecodeDecoder {
@@ -35525,7 +35564,7 @@ pub fn json_decode_lazy<'a, A>(
     }
 }
 pub fn json_decode_and_then<'a, A, B>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     decoder_on_succeed: impl Fn(A) -> JsonDecodeDecoder<'a, B> + 'a,
     decoder: JsonDecodeDecoder<'a, A>,
 ) -> JsonDecodeDecoder<'a, B> {
@@ -35536,7 +35575,7 @@ pub fn json_decode_and_then<'a, A, B>(
     }
 }
 pub fn json_decode_map<'a, A, B>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     decoded_change: impl Fn(A) -> B + 'a,
     decoder: JsonDecodeDecoder<'a, A>,
 ) -> JsonDecodeDecoder<'a, B> {
@@ -35546,7 +35585,7 @@ pub fn json_decode_map<'a, A, B>(
     }
 }
 pub fn json_decode_map2<'a, A, B, Combined>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     combine: impl Fn(A, B) -> Combined + 'a,
     a_decoder: JsonDecodeDecoder<'a, A>,
     b_decoder: JsonDecodeDecoder<'a, B>,
@@ -35561,7 +35600,7 @@ pub fn json_decode_map2<'a, A, B, Combined>(
     }
 }
 pub fn json_decode_map3<'a, A, B, C, Combined>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     combine: impl Fn(A, B, C) -> Combined + 'a,
     a_decoder: JsonDecodeDecoder<'a, A>,
     b_decoder: JsonDecodeDecoder<'a, B>,
@@ -35578,7 +35617,7 @@ pub fn json_decode_map3<'a, A, B, C, Combined>(
     }
 }
 pub fn json_decode_map4<'a, A, B, C, D, Combined>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     combine: impl Fn(A, B, C, D) -> Combined + 'a,
     a_decoder: JsonDecodeDecoder<'a, A>,
     b_decoder: JsonDecodeDecoder<'a, B>,
@@ -35597,7 +35636,7 @@ pub fn json_decode_map4<'a, A, B, C, D, Combined>(
     }
 }
 pub fn json_decode_map5<'a, A, B, C, D, E, Combined>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     combine: impl Fn(A, B, C, D, E) -> Combined + 'a,
     a_decoder: JsonDecodeDecoder<'a, A>,
     b_decoder: JsonDecodeDecoder<'a, B>,
@@ -35618,7 +35657,7 @@ pub fn json_decode_map5<'a, A, B, C, D, E, Combined>(
     }
 }
 pub fn json_decode_map6<'a, A, B, C, D, E, F, Combined>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     combine: impl Fn(A, B, C, D, E, F) -> Combined + 'a,
     a_decoder: JsonDecodeDecoder<'a, A>,
     b_decoder: JsonDecodeDecoder<'a, B>,
@@ -35641,7 +35680,7 @@ pub fn json_decode_map6<'a, A, B, C, D, E, F, Combined>(
     }
 }
 pub fn json_decode_map7<'a, A, B, C, D, E, F, G, Combined>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     combine: impl Fn(A, B, C, D, E, F, G) -> Combined + 'a,
     a_decoder: JsonDecodeDecoder<'a, A>,
     b_decoder: JsonDecodeDecoder<'a, B>,
@@ -35666,7 +35705,7 @@ pub fn json_decode_map7<'a, A, B, C, D, E, F, G, Combined>(
     }
 }
 pub fn json_decode_map8<'a, A, B, C, D, E, F, G, H, Combined>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     combine: impl Fn(A, B, C, D, E, F, G, H) -> Combined + 'a,
     a_decoder: JsonDecodeDecoder<'a, A>,
     b_decoder: JsonDecodeDecoder<'a, B>,
@@ -35693,7 +35732,7 @@ pub fn json_decode_map8<'a, A, B, C, D, E, F, G, H, Combined>(
     }
 }
 pub fn json_decode_maybe<'a, A>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     decoder: JsonDecodeDecoder<'a, A>,
 ) -> JsonDecodeDecoder<'a, Option<A>> {
     JsonDecodeDecoder {
@@ -35706,7 +35745,7 @@ pub fn json_decode_maybe<'a, A>(
     }
 }
 pub fn json_decode_one_of<'a, A>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     options: ListList<'a, JsonDecodeDecoder<'a, A>>,
 ) -> JsonDecodeDecoder<'a, A> {
     JsonDecodeDecoder {
@@ -35731,7 +35770,10 @@ pub fn json_decode_value<'a>() -> JsonDecodeDecoder<'a, JsonValue<'a>> {
         decode: &|json| Result::Ok(json),
     }
 }
-pub fn json_decode_null<'a, A: Clone>(allocator: &'a Bump, value: A) -> JsonDecodeDecoder<'a, A> {
+pub fn json_decode_null<'a, A: Clone>(
+    allocator: &'a bumpalo::Bump,
+    value: A,
+) -> JsonDecodeDecoder<'a, A> {
     JsonDecodeDecoder {
         decode: allocator.alloc(move |json| match json {
             JsonValue::Null => Result::Ok(value.clone()),
@@ -35788,7 +35830,7 @@ pub fn json_decode_string<'a>() -> JsonDecodeDecoder<'a, StringString<'a>> {
 }
 
 pub fn json_decode_nullable<'a, A>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     on_not_null_decoder: JsonDecodeDecoder<'a, A>,
 ) -> JsonDecodeDecoder<'a, Option<A>> {
     JsonDecodeDecoder {
@@ -35813,7 +35855,7 @@ pub fn json_decode_nullable<'a, A>(
     }
 }
 pub fn json_decode_index<'a, A>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     index: f64,
     element_decoder: JsonDecodeDecoder<'a, A>,
 ) -> JsonDecodeDecoder<'a, A> {
@@ -35834,7 +35876,7 @@ pub fn json_decode_index<'a, A>(
     }
 }
 pub fn json_decode_array<'a, A: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     element_decoder: JsonDecodeDecoder<'a, A>,
 ) -> JsonDecodeDecoder<'a, ArrayArray<A>> {
     JsonDecodeDecoder {
@@ -35862,7 +35904,7 @@ pub fn json_decode_array<'a, A: Clone>(
     }
 }
 pub fn json_decode_list<'a, A>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     element_decoder: JsonDecodeDecoder<'a, A>,
 ) -> JsonDecodeDecoder<'a, ListList<'a, A>> {
     JsonDecodeDecoder {
@@ -35892,7 +35934,7 @@ pub fn json_decode_list<'a, A>(
     }
 }
 pub fn json_decode_one_or_more<'a, A: Clone, Combined>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     combine_head_tail: impl Fn(A, ListList<'a, A>) -> Combined + 'a,
     element_decoder: JsonDecodeDecoder<'a, A>,
 ) -> JsonDecodeDecoder<'a, Combined> {
@@ -35931,7 +35973,7 @@ pub fn json_decode_one_or_more<'a, A: Clone, Combined>(
     }
 }
 pub fn json_decode_field_value<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     field_name: &'a str,
 ) -> JsonDecodeDecoder<'a, JsonValue<'a>> {
     JsonDecodeDecoder {
@@ -35967,7 +36009,7 @@ pub fn json_decode_field_value<'a>(
     }
 }
 pub fn json_decode_field<'a, A>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     field_name: StringString<'a>,
     field_value_decoder: JsonDecodeDecoder<'a, A>,
 ) -> JsonDecodeDecoder<'a, A> {
@@ -36014,7 +36056,7 @@ pub fn json_decode_field<'a, A>(
     }
 }
 pub fn at<'a, A>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     path: ListList<'a, StringString>,
     inner_decoder: JsonDecodeDecoder<'a, A>,
 ) -> JsonDecodeDecoder<'a, A> {
@@ -36064,7 +36106,7 @@ pub fn at<'a, A>(
     }
 }
 pub fn json_decode_key_value_pairs<'a, A>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     value_decoder: JsonDecodeDecoder<'a, A>,
 ) -> JsonDecodeDecoder<'a, ListList<'a, (StringString<'a>, A)>> {
     JsonDecodeDecoder {
@@ -36098,7 +36140,7 @@ pub fn json_decode_key_value_pairs<'a, A>(
     }
 }
 pub fn json_decode_dict<'a, A>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     value_decoder: JsonDecodeDecoder<'a, A>,
 ) -> JsonDecodeDecoder<'a, DictDict<StringString<'a>, A>> {
     JsonDecodeDecoder {
@@ -36133,7 +36175,7 @@ pub fn json_decode_dict<'a, A>(
 }
 
 pub fn json_decode_decode_string<'a, A>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     decoder: JsonDecodeDecoder<'a, A>,
     s: StringString<'a>,
 ) -> ResultResult<JsonDecodeError<'a>, A> {
@@ -36172,7 +36214,7 @@ pub fn json_decode_decode_string<'a, A>(
 /// THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 fn json_parse_to_end<'a>(
     chars: std::str::Chars<'a>,
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
 ) -> Result<JsonValue<'a>, JsonParseError> {
     let mut parser: JsonParser = JsonParser {
         chars: chars.peekable(),
@@ -36302,7 +36344,10 @@ impl<'a> JsonParser<'a> {
         }
     }
 
-    fn parse_object(&mut self, allocator: &'a Bump) -> Result<JsonValue<'a>, JsonParseError> {
+    fn parse_object(
+        &mut self,
+        allocator: &'a bumpalo::Bump,
+    ) -> Result<JsonValue<'a>, JsonParseError> {
         if self.consume()? != '{' {
             return Result::Err(self.error(String::from("Object must starts with '{'")));
         }
@@ -36344,7 +36389,10 @@ impl<'a> JsonParser<'a> {
         }
     }
 
-    fn parse_array(&mut self, allocator: &'a Bump) -> Result<JsonValue<'a>, JsonParseError> {
+    fn parse_array(
+        &mut self,
+        allocator: &'a bumpalo::Bump,
+    ) -> Result<JsonValue<'a>, JsonParseError> {
         if self.consume()? != '[' {
             return Result::Err(self.error(String::from("Array must starts with '['")));
         }
@@ -36369,7 +36417,10 @@ impl<'a> JsonParser<'a> {
         }
     }
 
-    fn parse_string(&mut self, allocator: &'a Bump) -> Result<JsonValue<'a>, JsonParseError> {
+    fn parse_string(
+        &mut self,
+        allocator: &'a bumpalo::Bump,
+    ) -> Result<JsonValue<'a>, JsonParseError> {
         if self.consume()? != '"' {
             return Result::Err(self.error(String::from("String must starts with double quote")));
         }
@@ -36505,7 +36556,7 @@ impl<'a> JsonParser<'a> {
         }
     }
 
-    fn parse_any(&mut self, allocator: &'a Bump) -> Result<JsonValue<'a>, JsonParseError> {
+    fn parse_any(&mut self, allocator: &'a bumpalo::Bump) -> Result<JsonValue<'a>, JsonParseError> {
         match self.peek()? {
             '0'..='9' | '-' => self.parse_number(),
             '"' => self.parse_string(allocator),
@@ -36566,7 +36617,7 @@ pub fn bytes_decode_signed_int8<'a>() -> BytesDecodeDecoder<'a, f64> {
     }
 }
 pub fn bytes_decode_unsigned_int16<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     endianness: BytesEndianness,
 ) -> BytesDecodeDecoder<'a, f64> {
     BytesDecodeDecoder {
@@ -36590,7 +36641,7 @@ pub fn bytes_decode_unsigned_int16<'a>(
     }
 }
 pub fn bytes_decode_signed_int16<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     endianness: BytesEndianness,
 ) -> BytesDecodeDecoder<'a, f64> {
     BytesDecodeDecoder {
@@ -36614,7 +36665,7 @@ pub fn bytes_decode_signed_int16<'a>(
     }
 }
 pub fn bytes_decode_unsigned_int32<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     endianness: BytesEndianness,
 ) -> BytesDecodeDecoder<'a, f64> {
     BytesDecodeDecoder {
@@ -36638,7 +36689,7 @@ pub fn bytes_decode_unsigned_int32<'a>(
     }
 }
 pub fn bytes_decode_signed_int32<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     endianness: BytesEndianness,
 ) -> BytesDecodeDecoder<'a, f64> {
     BytesDecodeDecoder {
@@ -36662,7 +36713,7 @@ pub fn bytes_decode_signed_int32<'a>(
     }
 }
 pub fn bytes_decode_float32<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     endianness: BytesEndianness,
 ) -> BytesDecodeDecoder<'a, f64> {
     BytesDecodeDecoder {
@@ -36686,7 +36737,7 @@ pub fn bytes_decode_float32<'a>(
     }
 }
 pub fn bytes_decode_float64<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     endianness: BytesEndianness,
 ) -> BytesDecodeDecoder<'a, f64> {
     BytesDecodeDecoder {
@@ -36711,7 +36762,7 @@ pub fn bytes_decode_float64<'a>(
 }
 pub fn bytes_decode_string<'a>(
     string_length: f64,
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
 ) -> BytesDecodeDecoder<'a, StringString<'a>> {
     let string_length_usize = string_length as usize;
     BytesDecodeDecoder {
@@ -36736,7 +36787,7 @@ pub fn bytes_decode_fail<'a, A>() -> BytesDecodeDecoder<'a, A> {
     }
 }
 pub fn bytes_decode_succeed<'a, A: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     value: A,
 ) -> BytesDecodeDecoder<'a, A> {
     BytesDecodeDecoder {
@@ -36744,7 +36795,7 @@ pub fn bytes_decode_succeed<'a, A: Clone>(
     }
 }
 pub fn bytes_decode_and_then<'a, A>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     value_to_next_decoder: impl Fn(A) -> BytesDecodeDecoder<'a, A> + Clone + 'a,
     decoder: BytesDecodeDecoder<'a, A>,
 ) -> BytesDecodeDecoder<'a, A> {
@@ -36757,7 +36808,7 @@ pub fn bytes_decode_and_then<'a, A>(
     }
 }
 pub fn bytes_decode_map<'a, A, B>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     value_change: impl Fn(A) -> B + Clone + 'a,
     decoder: BytesDecodeDecoder<'a, A>,
 ) -> BytesDecodeDecoder<'a, B> {
@@ -36769,7 +36820,7 @@ pub fn bytes_decode_map<'a, A, B>(
     }
 }
 pub fn bytes_decode_map2<'a, A, B, Combined>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     combine: impl Fn(A, B) -> Combined + Clone + 'a,
     a_decoder: BytesDecodeDecoder<'a, A>,
     b_decoder: BytesDecodeDecoder<'a, B>,
@@ -36783,7 +36834,7 @@ pub fn bytes_decode_map2<'a, A, B, Combined>(
     }
 }
 pub fn bytes_decode_map3<'a, A, B, C, Combined>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     combine: impl Fn(A, B, C) -> Combined + Clone + 'a,
     a_decoder: BytesDecodeDecoder<'a, A>,
     b_decoder: BytesDecodeDecoder<'a, B>,
@@ -36801,7 +36852,7 @@ pub fn bytes_decode_map3<'a, A, B, C, Combined>(
     }
 }
 pub fn bytes_decode_map4<'a, A, B, C, D, Combined>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     combine: impl Fn(A, B, C, D) -> Combined + Clone + 'a,
     a_decoder: BytesDecodeDecoder<'a, A>,
     b_decoder: BytesDecodeDecoder<'a, B>,
@@ -36822,7 +36873,7 @@ pub fn bytes_decode_map4<'a, A, B, C, D, Combined>(
     }
 }
 pub fn bytes_decode_map5<'a, A, B, C, D, E, Combined>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     combine: impl Fn(A, B, C, D, E) -> Combined + Clone + 'a,
     a_decoder: BytesDecodeDecoder<'a, A>,
     b_decoder: BytesDecodeDecoder<'a, B>,
@@ -36853,7 +36904,7 @@ pub enum BytesDecodeStep<State, Done> {
 }
 
 pub fn bytes_decode_loop<'a, State: Clone + 'a, Done>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     initial_state: State,
     step: impl Fn(State) -> BytesDecodeDecoder<'a, BytesDecodeStep<State, Done>> + Clone + 'a,
 ) -> BytesDecodeDecoder<'a, Done> {
@@ -36932,13 +36983,13 @@ pub fn bytes_encode_bytes<'a>(bytes: BytesBytes<'a>) -> BytesEncodeEncoder<'a> {
     BytesEncodeEncoder::Bytes(bytes)
 }
 pub fn bytes_encode_string<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     string: StringString<'a>,
 ) -> BytesEncodeEncoder<'a> {
     BytesEncodeEncoder::Utf8(rope_to_str(allocator, string))
 }
 pub fn bytes_encode_sequence<'a>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     in_order: ListList<'a, BytesEncodeEncoder<'a>>,
 ) -> BytesEncodeEncoder<'a> {
     BytesEncodeEncoder::Sequence(
@@ -36971,7 +37022,10 @@ fn bytes_encoder_byte_count(encoder: BytesEncodeEncoder) -> usize {
     }
     combined_byte_count
 }
-pub fn bytes_encode_encode<'a>(allocator: &'a Bump, encoder: BytesEncodeEncoder) -> BytesBytes<'a> {
+pub fn bytes_encode_encode<'a>(
+    allocator: &'a bumpalo::Bump,
+    encoder: BytesEncodeEncoder,
+) -> BytesBytes<'a> {
     let mut bytes: Vec<u8> = Vec::with_capacity(bytes_encoder_byte_count(encoder));
     let mut next_encoder: BytesEncodeEncoder = encoder;
     let mut remaining_encoders: Vec<BytesEncodeEncoder> = Vec::new();
@@ -37399,7 +37453,7 @@ pub fn platform_cmd_none<'a, Event>() -> PlatformCmdCmd<'a, Event> {
     }
 }
 pub fn platform_cmd_batch<'a, Event: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     cmds: ListList<'a, PlatformCmdCmd<'a, Event>>,
 ) -> PlatformCmdCmd<'a, Event> {
     PlatformCmdCmd {
@@ -37442,7 +37496,7 @@ pub fn platform_sub_none<'a, Event>() -> PlatformSubSub<'a, Event> {
     PlatformSubSub::Batch(&[])
 }
 pub fn platform_sub_batch<'a, Event: Clone>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     subs: ListList<'a, PlatformSubSub<'a, Event>>,
 ) -> PlatformSubSub<'a, Event> {
     PlatformSubSub::Batch(
@@ -37450,7 +37504,7 @@ pub fn platform_sub_batch<'a, Event: Clone>(
     )
 }
 pub fn platform_sub_map<'a, A: Clone, B>(
-    allocator: &'a Bump,
+    allocator: &'a bumpalo::Bump,
     event_change: impl Fn(A) -> B + Clone + 'a,
     sub: PlatformSubSub<'a, A>,
 ) -> PlatformSubSub<'a, B> {
