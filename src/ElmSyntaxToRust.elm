@@ -33146,6 +33146,7 @@ impl<'a, A: std::fmt::Debug> std::fmt::Debug for ListList<'a, A> {
     }
 }
 
+/// because the `!` never type is still "experimental"
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum BasicsNever {}
 
@@ -34314,24 +34315,17 @@ pub fn string_slice<'a>(
 ) -> StringString<'a> {
     let str: &str = rope_to_str(allocator, string);
     let start_inclusive_or_none_if_too_big: Option<usize> =
-        normalize_string_slice_index_from_end_if_negative(start_inclusive_possibly_negative, &str);
+        str_index_normalize_from_end_if_negative(start_inclusive_possibly_negative, &str);
     match start_inclusive_or_none_if_too_big {
         Option::None => string_rope_empty,
         Option::Some(mut start_inclusive) => {
-            while !str.is_char_boundary(start_inclusive) {
-                start_inclusive -= 1;
-            }
+            start_inclusive = str_index_next_char_boundary(start_inclusive, str);
             let end_exclusive_or_none_if_too_big: Option<usize> =
-                normalize_string_slice_index_from_end_if_negative(
-                    end_exclusive_possibly_negative,
-                    str,
-                );
+                str_index_normalize_from_end_if_negative(end_exclusive_possibly_negative, str);
             match end_exclusive_or_none_if_too_big {
                 Option::None => StringString::One(&str[start_inclusive..]),
                 Option::Some(mut end_exclusive) => {
-                    while !str.is_char_boundary(end_exclusive) {
-                        end_exclusive += 1;
-                    }
+                    end_exclusive = str_index_move_back_to_char_boundary(end_exclusive, str);
                     if end_exclusive <= start_inclusive {
                         string_rope_empty
                     } else {
@@ -34342,8 +34336,30 @@ pub fn string_slice<'a>(
         }
     }
 }
+fn str_index_move_back_to_char_boundary(index: usize, str: &str) -> usize {
+    if str.is_char_boundary(index) {
+        index
+    } else if str.is_char_boundary(index - 1) {
+        index - 1
+    } else if str.is_char_boundary(index - 2) {
+        index - 2
+    } else {
+        index - 3
+    }
+}
+fn str_index_next_char_boundary(index: usize, str: &str) -> usize {
+    if str.is_char_boundary(index) {
+        index
+    } else if str.is_char_boundary(index + 1) {
+        index + 1
+    } else if str.is_char_boundary(index + 2) {
+        index + 2
+    } else {
+        index + 3
+    }
+}
 /// Option::None means too big
-fn normalize_string_slice_index_from_end_if_negative(
+fn str_index_normalize_from_end_if_negative(
     index_possibly_negative: f64,
     string: &str,
 ) -> Option<usize> {
