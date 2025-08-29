@@ -2065,27 +2065,8 @@ pub fn json_encode_encode_from<'a>(
             false => "false",
         }),
         JsonValue::Number(number) => so_far.push_str(&number.to_string()),
-        JsonValue::String(string) => {
-            so_far.push_str("\"");
-            // can be optimized
-            for char in string.chars() {
-                match char {
-                    '"' => so_far.push_str("\\\""),
-                    '/' => so_far.push_str("\\/"),
-                    '\\' => so_far.push_str("\\\\"),
-                    '\u{08}' => so_far.push_str("\\b"),
-                    '\u{0C}' => so_far.push_str("\\f"),
-                    '\n' => so_far.push_str("\\n"),
-                    '\r' => so_far.push_str("\\r"),
-                    '\t' => so_far.push_str("\\t"),
-                    unicode_char if char.is_control() => {
-                        so_far.push_str("u");
-                        so_far.push_str(&format!("{:04x}", unicode_char as usize))
-                    }
-                    normal_char => so_far.push(normal_char),
-                }
-            }
-            so_far.push_str("\"");
+        JsonValue::String(str) => {
+            push_json_string(&mut so_far, str);
         }
         JsonValue::Array(json_elements) => {
             let mut json_elements_iterator = json_elements.iter();
@@ -2147,7 +2128,7 @@ pub fn json_encode_encode_from<'a>(
                     let between_field_name_and_value = if indent_size == 0 { ":" } else { ": " };
                     so_far.push('{');
                     so_far.push_str(inner_linebreak_indented);
-                    so_far.push_str(first_field_name);
+                    push_json_object_key(&mut so_far, first_field_name);
                     so_far.push_str(between_field_name_and_value);
                     so_far = json_encode_encode_from(
                         indent_size,
@@ -2158,7 +2139,7 @@ pub fn json_encode_encode_from<'a>(
                     for (field_name, field_value) in json_elements_iterator {
                         so_far.push(',');
                         so_far.push_str(inner_linebreak_indented);
-                        so_far.push_str(field_name);
+                        push_json_object_key(&mut so_far, field_name);
                         so_far.push_str(between_field_name_and_value);
                         so_far = json_encode_encode_from(
                             indent_size,
@@ -2175,6 +2156,32 @@ pub fn json_encode_encode_from<'a>(
     }
     so_far
 }
+fn push_json_object_key(so_far: &mut String, field_name: &str) {
+    push_json_string(so_far, field_name);
+}
+fn push_json_string(so_far: &mut String, str: &str) {
+    so_far.push_str("\"");
+    // can be optimized
+    for char in str.chars() {
+        match char {
+            '"' => so_far.push_str("\\\""),
+            '/' => so_far.push_str("\\/"),
+            '\\' => so_far.push_str("\\\\"),
+            '\u{08}' => so_far.push_str("\\b"),
+            '\u{0C}' => so_far.push_str("\\f"),
+            '\n' => so_far.push_str("\\n"),
+            '\r' => so_far.push_str("\\r"),
+            '\t' => so_far.push_str("\\t"),
+            unicode_char if char.is_control() => {
+                so_far.push_str("u");
+                so_far.push_str(&format!("{:04x}", unicode_char as usize))
+            }
+            normal_char => so_far.push(normal_char),
+        }
+    }
+    so_far.push_str("\"");
+}
+
 pub fn json_encode_null<'a>() -> JsonValue<'a> {
     JsonValue::Null
 }
@@ -3033,6 +3040,393 @@ pub fn json_decode_dict<'a, A>(
                 json_not_object,
             )),
         }),
+    }
+}
+
+pub fn json_decode_decode_string<'a, A>(
+    allocator: &'a Bump,
+    decoder: JsonDecodeDecoder<'a, A>,
+    s: StringString<'a>,
+) -> ResultResult<JsonDecodeError<'a>, A> {
+    let str_to_parse: &str = rope_to_str(allocator, s);
+    match json_parse_to_end(str_to_parse.chars(), allocator) {
+        Result::Ok(parsed_json) => (decoder.decode)(parsed_json),
+        Result::Err(parse_error) => Result::Err(JsonDecodeError::Failure(
+            string_to_rope(allocator, parse_error.to_string()),
+            JsonValue::String(str_to_parse),
+        )),
+    }
+}
+
+/// The json parser is a modified version of https://github.com/rhysd/tinyjson
+/// which is licensed under:
+///
+/// the MIT License
+///
+/// Copyright (c) 2016 rhysd
+///
+/// Permission is hereby granted, free of charge, to any person obtaining a copy
+/// of this software and associated documentation files (the "Software"), to deal
+/// in the Software without restriction, including without limitation the rights
+/// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+/// of the Software, and to permit persons to whom the Software is furnished to do so,
+/// subject to the following conditions:
+///
+/// The above copyright notice and this permission notice shall be included in all
+/// copies or substantial portions of the Software.
+///
+/// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+/// INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+/// PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+/// LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+/// TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR
+/// THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+fn json_parse_to_end<'a>(
+    chars: std::str::Chars<'a>,
+    allocator: &'a Bump,
+) -> Result<JsonValue<'a>, JsonParseError> {
+    let mut parser: JsonParser = JsonParser {
+        chars: chars.peekable(),
+        line: 1,
+        col: 0,
+    };
+    let parsed_json: JsonValue = parser.parse_any(allocator)?;
+    match parser.next() {
+        Some(c) => Result::Err(parser.error(format!(
+            "Expected EOF but got character '{}'",
+            c.escape_debug(),
+        ))),
+        None => Ok(parsed_json),
+    }
+}
+
+#[derive(Debug)]
+pub struct JsonParseError {
+    msg: String, // maybe better as &str
+    line: usize,
+    col: usize,
+}
+impl std::fmt::Display for JsonParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "Parse error at line:{}, col:{}: {}",
+            self.line, self.col, &self.msg,
+        )
+    }
+}
+fn is_json_whitespace(c: char) -> bool {
+    match c {
+        '\u{0020}' | '\u{000a}' | '\u{000d}' | '\u{0009}' => true,
+        _ => false,
+    }
+}
+struct JsonParser<'a> {
+    chars: std::iter::Peekable<std::str::Chars<'a>>,
+    line: usize,
+    col: usize,
+}
+impl<'a> JsonParser<'a> {
+    fn error(&self, msg: String) -> JsonParseError {
+        JsonParseError {
+            msg: msg,
+            line: self.line,
+            col: self.col,
+        }
+    }
+
+    fn next_pos(&mut self, c: char) {
+        if c == '\n' {
+            self.col = 0;
+            self.line += 1;
+        } else {
+            self.col += 1;
+        }
+    }
+    fn peek(&mut self) -> Result<char, JsonParseError> {
+        while let Option::Some(c) = self.chars.peek().copied() {
+            if !is_json_whitespace(c) {
+                return Result::Ok(c);
+            }
+            self.next_pos(c);
+            self.chars.next().unwrap();
+        }
+        Result::Err(self.error(String::from("Unexpected EOF")))
+    }
+    fn next(&mut self) -> Option<char> {
+        while let Option::Some(c) = self.chars.next() {
+            self.next_pos(c);
+            if !is_json_whitespace(c) {
+                return Option::Some(c);
+            }
+        }
+        Option::None
+    }
+    fn consume(&mut self) -> Result<char, JsonParseError> {
+        match self.next() {
+            Option::Some(c) => Result::Ok(c),
+            Option::None => Result::Err(self.error(String::from("Unexpected EOF"))),
+        }
+    }
+    fn consume_no_skip(&mut self) -> Result<char, JsonParseError> {
+        match self.chars.next() {
+            Option::Some(c) => {
+                self.next_pos(c);
+                Result::Ok(c)
+            }
+            Option::None => Result::Err(self.error(String::from("Unexpected EOF"))),
+        }
+    }
+    fn parse_constant(&mut self, s: &'static str) -> Option<JsonParseError> {
+        for c in s.chars() {
+            match self.consume_no_skip() {
+                Result::Ok(x) => {
+                    if x != c {
+                        return Option::Some(self.error(format!(
+                            "Unexpected character '{}' while parsing '{}' of {:?}",
+                            x, c, s,
+                        )));
+                    }
+                }
+                Result::Err(e) => return Option::Some(e),
+            }
+        }
+        Option::None
+    }
+
+    fn parse_null(&mut self) -> Result<JsonValue<'a>, JsonParseError> {
+        match self.parse_constant("null") {
+            Option::Some(err) => Result::Err(err),
+            Option::None => Result::Ok(JsonValue::Null),
+        }
+    }
+    fn parse_true(&mut self) -> Result<JsonValue<'a>, JsonParseError> {
+        match self.parse_constant("true") {
+            Option::Some(err) => Result::Err(err),
+            Option::None => Result::Ok(JsonValue::Bool(true)),
+        }
+    }
+    fn parse_false(&mut self) -> Result<JsonValue<'a>, JsonParseError> {
+        match self.parse_constant("false") {
+            Option::Some(err) => Result::Err(err),
+            Option::None => Result::Ok(JsonValue::Bool(false)),
+        }
+    }
+
+    fn parse_object(&mut self, allocator: &'a Bump) -> Result<JsonValue<'a>, JsonParseError> {
+        if self.consume()? != '{' {
+            return Result::Err(self.error(String::from("Object must starts with '{'")));
+        }
+        if self.peek()? == '}' {
+            self.consume().unwrap();
+            return Result::Ok(JsonValue::Object(
+                allocator.alloc(std::collections::BTreeMap::new()),
+            ));
+        }
+        let mut m: std::collections::BTreeMap<&str, JsonValue> = std::collections::BTreeMap::new();
+        loop {
+            let key: &str = match self.parse_any(allocator)? {
+                JsonValue::String(s) => s,
+                v => {
+                    return Result::Err(
+                        self.error(format!("Key of object must be string but found {:?}", v)),
+                    );
+                }
+            };
+            let c: char = self.consume()?;
+            if c != ':' {
+                return Result::Err(self.error(format!(
+                    "':' is expected after key of object but actually found '{}'",
+                    c
+                )));
+            }
+            m.insert(key, self.parse_any(allocator)?);
+
+            match self.consume()? {
+                ',' => {}
+                '}' => return Result::Ok(JsonValue::Object(allocator.alloc(m))),
+                c => {
+                    return Result::Err(self.error(format!(
+                        "',' or '}}' is expected for object but actually found '{}'",
+                        c.escape_debug(),
+                    )));
+                }
+            }
+        }
+    }
+
+    fn parse_array(&mut self, allocator: &'a Bump) -> Result<JsonValue<'a>, JsonParseError> {
+        if self.consume()? != '[' {
+            return Result::Err(self.error(String::from("Array must starts with '['")));
+        }
+        if self.peek()? == ']' {
+            self.consume().unwrap();
+            return Result::Ok(JsonValue::Array(&[]));
+        }
+
+        let mut v: Vec<JsonValue> = vec![self.parse_any(allocator)?];
+        loop {
+            match self.consume()? {
+                ',' => {}
+                ']' => return Ok(JsonValue::Array(allocator.alloc(v))),
+                c => {
+                    return Result::Err(self.error(format!(
+                        "',' or ']' is expected for array but actually found '{}'",
+                        c
+                    )));
+                }
+            }
+            v.push(self.parse_any(allocator)?); // Next element
+        }
+    }
+
+    fn parse_string(&mut self, allocator: &'a Bump) -> Result<JsonValue<'a>, JsonParseError> {
+        if self.consume()? != '"' {
+            return Result::Err(self.error(String::from("String must starts with double quote")));
+        }
+        let mut utf16: Vec<u16> = Vec::new(); // Buffer for parsing \uXXXX UTF-16 characters
+        let mut s: String = String::new();
+        loop {
+            let c: char = match self.consume_no_skip()? {
+                '\\' => match self.consume_no_skip()? {
+                    '\\' => '\\',
+                    '/' => '/',
+                    '"' => '"',
+                    'b' => '\u{0008}',
+                    'f' => '\u{000c}',
+                    'n' => '\n',
+                    'r' => '\r',
+                    't' => '\t',
+                    'u' => {
+                        let mut u: u16 = 0u16;
+                        for _ in 0..4 {
+                            let c = self.consume()?;
+                            if let Some(h) = c.to_digit(16) {
+                                u = u * 0x10 + h as u16;
+                            } else {
+                                return Result::Err(self.error(format!("Unicode character must be \\uXXXX (X is hex character) format but found character '{}'", c)));
+                            }
+                        }
+                        utf16.push(u);
+                        // Additional \uXXXX character may follow. UTF-16 characters must be converted
+                        // into UTF-8 string as sequence because surrogate pairs must be considered
+                        // like "\uDBFF\uDFFF".
+                        continue;
+                    }
+                    c => {
+                        return Result::Err(
+                            self.error(format!("'\\{}' is invalid escaped character", c)),
+                        );
+                    }
+                },
+                '"' => {
+                    self.push_utf16(&mut s, &mut utf16)?;
+                    return Ok(JsonValue::String(allocator.alloc(s)));
+                }
+                // Note: c.is_control() is not available here because JSON accepts 0x7f (DEL) in
+                // string literals but 0x7f is control character.
+                // Rough spec of JSON says string literal cannot contain control characters. But it
+                // can actually contain 0x7f.
+                c if (c as u32) < 0x20 => {
+                    return Result::Err(self.error(format!(
+                        "String cannot contain control character {}",
+                        c.escape_debug(),
+                    )));
+                }
+                c => c,
+            };
+            self.push_utf16(&mut s, &mut utf16)?;
+            s.push(c);
+        }
+    }
+    fn push_utf16(&self, s: &mut String, utf16: &mut Vec<u16>) -> Result<(), JsonParseError> {
+        if utf16.is_empty() {
+            return Result::Ok(());
+        }
+
+        match String::from_utf16(utf16) {
+            Result::Ok(utf8) => s.push_str(&utf8),
+            Result::Err(err) => {
+                return Result::Err(
+                    self.error(format!("Invalid UTF-16 sequence {:?}: {}", &utf16, err)),
+                );
+            }
+        }
+        utf16.clear();
+        Result::Ok(())
+    }
+
+    fn parse_number(&mut self) -> Result<JsonValue<'a>, JsonParseError> {
+        let mut s: String = String::new();
+        if let Option::Some('-') = self.chars.peek() {
+            self.consume_no_skip().unwrap();
+            s.push('-');
+        };
+        match self.consume_no_skip()? {
+            '0' => s.push('0'),
+            d @ '1'..='9' => {
+                s.push(d);
+                while let Option::Some('0'..='9') = self.chars.peek() {
+                    s.push(self.consume_no_skip().unwrap());
+                }
+            }
+            c => {
+                return Result::Err(self.error(format!(
+                    "Expected '0'~'9' for integer part of number but got {}",
+                    c
+                )));
+            }
+        }
+        if let Option::Some('.') = self.chars.peek() {
+            s.push(self.consume_no_skip().unwrap()); // Eat '.'
+            match self.consume_no_skip()? {
+                d @ '0'..='9' => s.push(d),
+                c => {
+                    let msg = format!("At least one digit must follow after '.' but got {}", c);
+                    return Result::Err(self.error(msg));
+                }
+            }
+            while let Option::Some('0'..='9') = self.chars.peek() {
+                s.push(self.consume_no_skip().unwrap());
+            }
+        }
+        if let Option::Some('e' | 'E') = self.chars.peek() {
+            s.push(self.consume_no_skip().unwrap()); // Eat 'e' or 'E'
+            if let Option::Some('-' | '+') = self.chars.peek() {
+                s.push(self.consume_no_skip().unwrap());
+            }
+            match self.consume_no_skip()? {
+                d @ '0'..='9' => s.push(d),
+                c => {
+                    return Result::Err(self.error(format!(
+                        "At least one digit must follow exponent part of number but got {}",
+                        c
+                    )));
+                }
+            };
+            while let Option::Some('0'..='9') = self.chars.peek() {
+                s.push(self.consume_no_skip().unwrap());
+            }
+        }
+        match s.parse() {
+            Result::Ok(n) => Result::Ok(JsonValue::Number(n)),
+            Result::Err(err) => {
+                Result::Err(self.error(format!("Invalid number literal '{}': {}", s, err)))
+            }
+        }
+    }
+
+    fn parse_any(&mut self, allocator: &'a Bump) -> Result<JsonValue<'a>, JsonParseError> {
+        match self.peek()? {
+            '0'..='9' | '-' => self.parse_number(),
+            '"' => self.parse_string(allocator),
+            '[' => self.parse_array(allocator),
+            '{' => self.parse_object(allocator),
+            't' => self.parse_true(),
+            'f' => self.parse_false(),
+            'n' => self.parse_null(),
+            c => Result::Err(self.error(format!("Invalid character: {}", c.escape_debug()))),
+        }
     }
 }
 
