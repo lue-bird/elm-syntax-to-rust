@@ -2,8 +2,7 @@ mod elm;
 
 fn main() {
     let ((mut raylib_handle, raylib_thread), mut elm_state) = {
-        let allocator_for_init = bumpalo::Bump::new();
-        let elm_initialized = elm::main_init_window(&allocator_for_init);
+        let elm_initialized = elm::main_init_window();
         (
             raylib::init()
                 .size(
