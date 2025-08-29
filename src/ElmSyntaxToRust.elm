@@ -4065,6 +4065,20 @@ variantToCoreRust reference =
             Nothing
 
 
+justRustReferenceIdentity :
+    Maybe
+        { qualification : List String
+        , name : String
+        , requiresAllocator : Bool
+        }
+justRustReferenceIdentity =
+    Just
+        { qualification = [ "std", "convert" ]
+        , name = "identity"
+        , requiresAllocator = False
+        }
+
+
 {-| Use `typeConstructReferenceToCoreRust` for types
 -}
 referenceToCoreRust :
@@ -4083,11 +4097,7 @@ referenceToCoreRust reference =
         "Basics" ->
             case reference.name of
                 "identity" ->
-                    Just
-                        { qualification = []
-                        , name = "basics_identity"
-                        , requiresAllocator = False
-                        }
+                    justRustReferenceIdentity
 
                 "always" ->
                     Just
@@ -4188,11 +4198,7 @@ referenceToCoreRust reference =
                         }
 
                 "toFloat" ->
-                    Just
-                        { qualification = []
-                        , name = "basics_identity"
-                        , requiresAllocator = False
-                        }
+                    justRustReferenceIdentity
 
                 "isNaN" ->
                     Just
@@ -4286,11 +4292,7 @@ referenceToCoreRust reference =
                         }
 
                 "radians" ->
-                    Just
-                        { qualification = []
-                        , name = "basics_identity"
-                        , requiresAllocator = False
-                        }
+                    justRustReferenceIdentity
 
                 "degrees" ->
                     Just
@@ -8625,7 +8627,7 @@ rustExpressionIsConst context rustExpression =
 
         RustExpressionReference reference ->
             case ( reference.qualification, reference.name ) of
-                ( [], "basics_identity" ) ->
+                ( [ "std", "convert" ], "identity" ) ->
                     True
 
                 ( [], "basics_and" ) ->
@@ -33155,9 +33157,6 @@ pub fn alloc_shared<'a, A>(allocator: &'a bumpalo::Bump, to_allocate: A) -> &'a 
     allocator.alloc(to_allocate)
 }
 
-pub const fn basics_identity<A>(a: A) -> A {
-    a
-}
 pub fn basics_always<Kept, Ignored>(kept: Kept, _: Ignored) -> Kept {
     kept
 }

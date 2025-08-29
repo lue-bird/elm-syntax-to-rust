@@ -67,9 +67,6 @@ pub fn alloc_shared<'a, A>(allocator: &'a bumpalo::Bump, to_allocate: A) -> &'a 
     allocator.alloc(to_allocate)
 }
 
-pub const fn basics_identity<A>(a: A) -> A {
-    a
-}
 pub fn basics_always<Kept, Ignored>(kept: Kept, _: Ignored) -> Kept {
     kept
 }
