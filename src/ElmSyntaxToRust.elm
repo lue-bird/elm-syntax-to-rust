@@ -34319,13 +34319,13 @@ pub fn string_slice<'a>(
     match start_inclusive_or_none_if_too_big {
         Option::None => string_rope_empty,
         Option::Some(mut start_inclusive) => {
-            start_inclusive = str_index_next_char_boundary(start_inclusive, str);
+            start_inclusive = str_index_previous_char_boundary(start_inclusive, str);
             let end_exclusive_or_none_if_too_big: Option<usize> =
                 str_index_normalize_from_end_if_negative(end_exclusive_possibly_negative, str);
             match end_exclusive_or_none_if_too_big {
                 Option::None => StringString::One(&str[start_inclusive..]),
                 Option::Some(mut end_exclusive) => {
-                    end_exclusive = str_index_move_back_to_char_boundary(end_exclusive, str);
+                    end_exclusive = str_index_next_char_boundary(end_exclusive, str);
                     if end_exclusive <= start_inclusive {
                         string_rope_empty
                     } else {
@@ -34336,7 +34336,7 @@ pub fn string_slice<'a>(
         }
     }
 }
-fn str_index_move_back_to_char_boundary(index: usize, str: &str) -> usize {
+fn str_index_previous_char_boundary(index: usize, str: &str) -> usize {
     if str.is_char_boundary(index) {
         index
     } else if str.is_char_boundary(index - 1) {
