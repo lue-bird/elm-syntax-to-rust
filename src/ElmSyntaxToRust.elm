@@ -34253,9 +34253,10 @@ pub fn string_left<'a>(
         string_rope_empty
     } else {
         let str: &str = rope_to_str(allocator, string);
-        match str.char_indices().nth(taken_count as usize) {
-            Option::None => string,
-            Option::Some((end_exclusive, _)) => StringString::One(&str[..end_exclusive]),
+        if taken_count >= str.len() as f64 {
+            string
+        } else {
+            StringString::One(&str[..str_index_previous_char_boundary(taken_count as usize, str)])
         }
     }
 }
@@ -34268,9 +34269,10 @@ pub fn string_drop_left<'a>(
         string
     } else {
         let str: &str = rope_to_str(allocator, string);
-        match str.char_indices().nth(skipped_count as usize) {
-            Option::None => string_rope_empty,
-            Option::Some((start, _)) => StringString::One(&str[start..]),
+        if skipped_count >= str.len() as f64 {
+            string_rope_empty
+        } else {
+            StringString::One(&str[str_index_previous_char_boundary(skipped_count as usize, str)..])
         }
     }
 }
@@ -34283,9 +34285,12 @@ pub fn string_right<'a>(
         string_rope_empty
     } else {
         let str: &str = rope_to_str(allocator, string);
-        match str.char_indices().nth_back((taken_count - 1_f64) as usize) {
-            Option::None => string,
-            Option::Some((start, _)) => StringString::One(&str[start..]),
+        if taken_count >= str.len() as f64 {
+            string
+        } else {
+            StringString::One(
+                &str[str_index_previous_char_boundary(str.len() - taken_count as usize, str)..],
+            )
         }
     }
 }
@@ -34298,12 +34303,12 @@ pub fn string_drop_right<'a>(
         string
     } else {
         let str: &str = rope_to_str(allocator, string);
-        match str
-            .char_indices()
-            .nth_back((skipped_count - 1_f64) as usize)
-        {
-            Option::None => string_rope_empty,
-            Option::Some((end_exclusive, _)) => StringString::One(&str[..end_exclusive]),
+        if skipped_count >= str.len() as f64 {
+            string_rope_empty
+        } else {
+            StringString::One(
+                &str[..str_index_previous_char_boundary(str.len() - skipped_count as usize, str)],
+            )
         }
     }
 }
