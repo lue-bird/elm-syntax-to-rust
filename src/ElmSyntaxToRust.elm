@@ -103,8 +103,8 @@ type RustPattern
 type RustExpression
     = RustExpressionUnit
     | RustExpressionF64 Float
-    | -- NUMBER currently represented as Double | RustExpressionInt64 Int
-      RustExpressionChar Char
+    | RustExpressionI64 Int
+    | RustExpressionChar Char
     | RustExpressionString String
     | RustExpressionSelf
     | RustExpressionReference
@@ -1861,6 +1861,11 @@ printRustTypeParenthesizedIfSpaceSeparated rustType =
         notParenthesizedPrint
 
 
+i64Literal : Int -> String
+i64Literal int =
+    (int |> String.fromInt) ++ "_i64"
+
+
 f64Literal : Float -> String
 f64Literal double =
     let
@@ -3333,8 +3338,7 @@ typeConstructReferenceToCoreRust reference =
                     justRustReferenceBool
 
                 "Int" ->
-                    -- NUMBER currently Int is treated as Float
-                    justRustReferenceF64
+                    justRustReferenceI64
 
                 "Float" ->
                     justRustReferenceF64
@@ -3716,6 +3720,37 @@ typeConstructReferenceToCoreRust reference =
 
         _ ->
             Nothing
+
+
+justRustReferenceI64 :
+    Maybe
+        { qualification : List String
+        , name : String
+        , lifetimeParameters : List String
+        , isCopy : Bool
+        , isDebug : Bool
+        , isPartialEq : Bool
+        }
+justRustReferenceI64 =
+    Just rustReferenceI64
+
+
+rustReferenceI64 :
+    { qualification : List String
+    , name : String
+    , lifetimeParameters : List String
+    , isCopy : Bool
+    , isDebug : Bool
+    , isPartialEq : Bool
+    }
+rustReferenceI64 =
+    { qualification = []
+    , name = "i64"
+    , lifetimeParameters = []
+    , isCopy = True
+    , isDebug = True
+    , isPartialEq = True
+    }
 
 
 justRustReferenceF64 :
@@ -4178,8 +4213,8 @@ referenceToCoreRust reference =
 
                 "truncate" ->
                     Just
-                        { qualification = [ "f64" ]
-                        , name = "trunc"
+                        { qualification = []
+                        , name = "basics_truncate"
                         , requiresAllocator = False
                         }
 
@@ -4192,13 +4227,34 @@ referenceToCoreRust reference =
 
                 "abs" ->
                     Just
-                        { qualification = [ "f64" ]
-                        , name = "abs"
-                        , requiresAllocator = False
-                        }
+                        (case
+                            case reference.type_ of
+                                ElmSyntaxTypeInfer.TypeNotVariable (ElmSyntaxTypeInfer.TypeFunction typeFunction) ->
+                                    typeFunction.input |> inferredTypeCheckOrGuessIntOrFloat
+
+                                _ ->
+                                    -- assume Int
+                                    IntNotFloat
+                         of
+                            FloatNotInt ->
+                                { qualification = [ "f64" ]
+                                , name = "abs"
+                                , requiresAllocator = False
+                                }
+
+                            IntNotFloat ->
+                                { qualification = [ "i64" ]
+                                , name = "abs"
+                                , requiresAllocator = False
+                                }
+                        )
 
                 "toFloat" ->
-                    justRustReferenceIdentity
+                    Just
+                        { qualification = []
+                        , name = "basics_to_float"
+                        , requiresAllocator = False
+                        }
 
                 "isNaN" ->
                     Just
@@ -4324,10 +4380,27 @@ referenceToCoreRust reference =
 
                 "clamp" ->
                     Just
-                        { qualification = []
-                        , name = "basics_clamp"
-                        , requiresAllocator = False
-                        }
+                        (case
+                            case reference.type_ of
+                                ElmSyntaxTypeInfer.TypeNotVariable (ElmSyntaxTypeInfer.TypeFunction typeFunction) ->
+                                    typeFunction.input |> inferredTypeCheckOrGuessIntOrFloat
+
+                                _ ->
+                                    -- assume Int
+                                    IntNotFloat
+                         of
+                            FloatNotInt ->
+                                { qualification = []
+                                , name = "basics_clamp_float"
+                                , requiresAllocator = False
+                                }
+
+                            IntNotFloat ->
+                                { qualification = []
+                                , name = "basics_clamp_int"
+                                , requiresAllocator = False
+                                }
+                        )
 
                 "never" ->
                     Just
@@ -4834,17 +4907,51 @@ referenceToCoreRust reference =
 
                 "sum" ->
                     Just
-                        { qualification = []
-                        , name = "list_sum"
-                        , requiresAllocator = False
-                        }
+                        (case
+                            case reference.type_ of
+                                ElmSyntaxTypeInfer.TypeNotVariable (ElmSyntaxTypeInfer.TypeFunction typeFunction) ->
+                                    typeFunction.output |> inferredTypeCheckOrGuessIntOrFloat
+
+                                _ ->
+                                    -- assume Int
+                                    IntNotFloat
+                         of
+                            FloatNotInt ->
+                                { qualification = []
+                                , name = "list_sum_float"
+                                , requiresAllocator = False
+                                }
+
+                            IntNotFloat ->
+                                { qualification = []
+                                , name = "list_sum_int"
+                                , requiresAllocator = False
+                                }
+                        )
 
                 "product" ->
                     Just
-                        { qualification = []
-                        , name = "list_product"
-                        , requiresAllocator = False
-                        }
+                        (case
+                            case reference.type_ of
+                                ElmSyntaxTypeInfer.TypeNotVariable (ElmSyntaxTypeInfer.TypeFunction typeFunction) ->
+                                    typeFunction.output |> inferredTypeCheckOrGuessIntOrFloat
+
+                                _ ->
+                                    -- assume Int
+                                    IntNotFloat
+                         of
+                            FloatNotInt ->
+                                { qualification = []
+                                , name = "list_product_float"
+                                , requiresAllocator = False
+                                }
+
+                            IntNotFloat ->
+                                { qualification = []
+                                , name = "list_product_int"
+                                , requiresAllocator = False
+                                }
+                        )
 
                 "append" ->
                     Just
@@ -6064,8 +6171,7 @@ printRustPattern rustPattern =
 
 printRustPatternInteger : Int -> Print
 printRustPatternInteger int64 =
-    -- NUMBER currently represented as f64
-    Print.exactly (f64Literal (int64 |> Basics.toFloat))
+    Print.exactly (i64Literal int64)
 
 
 printRustPatternVariable :
@@ -6325,38 +6431,38 @@ modules :
         { errors : List String
         , declarations :
             { fns :
-                FastDict.Dict
-                    String
-                    { parameters : List { pattern : RustPattern, type_ : RustType }
+                List
+                    { name : String
+                    , parameters : List { pattern : RustPattern, type_ : RustType }
                     , result : RustExpression
                     , resultType : RustType
                     , lifetimeParameters : List String
                     }
             , consts :
-                FastDict.Dict
-                    String
-                    { result : RustExpression
+                List
+                    { name : String
+                    , result : RustExpression
                     , resultType : RustType
                     }
             , typeAliases :
-                FastDict.Dict
-                    String
-                    { lifetimeParameters : List String
+                List
+                    { name : String
+                    , lifetimeParameters : List String
                     , parameters : List String
                     , type_ : RustType
                     }
             , enumTypes :
-                FastDict.Dict
-                    String
-                    { lifetimeParameters : List String
+                List
+                    { name : String
+                    , lifetimeParameters : List String
                     , parameters : List String
                     , variants :
                         FastDict.Dict String (List RustType)
                     }
             , structs :
-                FastDict.Dict
-                    String
-                    { parameters : List String
+                List
+                    { name : String
+                    , parameters : List String
                     , fields : FastDict.Dict String RustType
                     }
             }
@@ -6988,11 +7094,11 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
         Err error ->
             { errors = [ error ]
             , declarations =
-                { consts = FastDict.empty
-                , fns = FastDict.empty
-                , typeAliases = FastDict.empty
-                , enumTypes = FastDict.empty
-                , structs = FastDict.empty
+                { consts = []
+                , fns = []
+                , typeAliases = []
+                , enumTypes = []
+                , structs = []
                 }
             }
 
@@ -7188,30 +7294,30 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                     , rustFns : FastDict.Dict String { requiresAllocator : Bool }
                     , declarations :
                         { fns :
-                            FastDict.Dict
-                                String
-                                { parameters : List { pattern : RustPattern, type_ : RustType }
+                            List
+                                { name : String
+                                , parameters : List { pattern : RustPattern, type_ : RustType }
                                 , result : RustExpression
                                 , resultType : RustType
                                 , lifetimeParameters : List String
                                 }
                         , consts :
-                            FastDict.Dict
-                                String
-                                { result : RustExpression
+                            List
+                                { name : String
+                                , result : RustExpression
                                 , resultType : RustType
                                 }
                         , typeAliases :
-                            FastDict.Dict
-                                String
-                                { lifetimeParameters : List String
+                            List
+                                { name : String
+                                , lifetimeParameters : List String
                                 , parameters : List String
                                 , type_ : RustType
                                 }
                         , enumTypes :
-                            FastDict.Dict
-                                String
-                                { parameters : List String
+                            List
+                                { name : String
+                                , parameters : List String
                                 , lifetimeParameters : List String
                                 , variants : FastDict.Dict String (List RustType)
                                 }
@@ -7639,13 +7745,13 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                         , enumTypes = withInferredValeAndFunctionDeclarationsSoFar.declarations.enumTypes
                                                                         , consts = withInferredValeAndFunctionDeclarationsSoFar.declarations.consts
                                                                         , fns =
-                                                                            withInferredValeAndFunctionDeclarationsSoFar.declarations.fns
-                                                                                |> FastDict.insert rustName
-                                                                                    { parameters = parameters
-                                                                                    , resultType = rustValueOrFunctionDeclaration.resultType
-                                                                                    , result = rustValueOrFunctionDeclaration.result
-                                                                                    , lifetimeParameters = rustValueOrFunctionDeclaration.lifetimeParameters
-                                                                                    }
+                                                                            { name = rustName
+                                                                            , parameters = parameters
+                                                                            , resultType = rustValueOrFunctionDeclaration.resultType
+                                                                            , result = rustValueOrFunctionDeclaration.result
+                                                                            , lifetimeParameters = rustValueOrFunctionDeclaration.lifetimeParameters
+                                                                            }
+                                                                                :: withInferredValeAndFunctionDeclarationsSoFar.declarations.fns
                                                                         }
                                                                     }
 
@@ -7661,11 +7767,11 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                         , enumTypes = withInferredValeAndFunctionDeclarationsSoFar.declarations.enumTypes
                                                                         , fns = withInferredValeAndFunctionDeclarationsSoFar.declarations.fns
                                                                         , consts =
-                                                                            withInferredValeAndFunctionDeclarationsSoFar.declarations.consts
-                                                                                |> FastDict.insert rustName
-                                                                                    { resultType = rustValueOrFunctionDeclaration.resultType
-                                                                                    , result = rustValueOrFunctionDeclaration.result
-                                                                                    }
+                                                                            { name = rustName
+                                                                            , resultType = rustValueOrFunctionDeclaration.resultType
+                                                                            , result = rustValueOrFunctionDeclaration.result
+                                                                            }
+                                                                                :: withInferredValeAndFunctionDeclarationsSoFar.declarations.consts
                                                                         }
                                                                     }
 
@@ -7719,17 +7825,17 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                             , enumTypes = withCycleMembersSoFar.declarations.enumTypes
                                                                             , consts = withCycleMembersSoFar.declarations.consts
                                                                             , fns =
-                                                                                withCycleMembersSoFar.declarations.fns
-                                                                                    |> FastDict.insert rustName
-                                                                                        { parameters =
-                                                                                            rustValueOrFunctionDeclaration.parameters
-                                                                                                |> -- mutual recursion with a value declaration
-                                                                                                   -- is always an error
-                                                                                                   Maybe.withDefault []
-                                                                                        , resultType = rustValueOrFunctionDeclaration.resultType
-                                                                                        , result = rustValueOrFunctionDeclaration.result
-                                                                                        , lifetimeParameters = rustValueOrFunctionDeclaration.lifetimeParameters
-                                                                                        }
+                                                                                { name = rustName
+                                                                                , parameters =
+                                                                                    rustValueOrFunctionDeclaration.parameters
+                                                                                        |> -- mutual recursion with a value declaration
+                                                                                           -- is always an error
+                                                                                           Maybe.withDefault []
+                                                                                , resultType = rustValueOrFunctionDeclaration.resultType
+                                                                                , result = rustValueOrFunctionDeclaration.result
+                                                                                , lifetimeParameters = rustValueOrFunctionDeclaration.lifetimeParameters
+                                                                                }
+                                                                                    :: withCycleMembersSoFar.declarations.fns
                                                                             }
                                                                         }
 
@@ -7762,28 +7868,10 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                             , consts = soFarAcrossModules.declarations.consts
                                             , typeAliases =
                                                 transpiledModuleDeclaredRustTypes.rustTypeAliasDeclarations
-                                                    |> List.foldl
-                                                        (\transpiledDeclaration withModuleDeclaredSoFar ->
-                                                            withModuleDeclaredSoFar
-                                                                |> FastDict.insert transpiledDeclaration.name
-                                                                    { lifetimeParameters = transpiledDeclaration.lifetimeParameters
-                                                                    , parameters = transpiledDeclaration.parameters
-                                                                    , type_ = transpiledDeclaration.type_
-                                                                    }
-                                                        )
-                                                        soFarAcrossModules.declarations.typeAliases
+                                                    ++ soFarAcrossModules.declarations.typeAliases
                                             , enumTypes =
                                                 transpiledModuleDeclaredRustTypes.rustEnumDeclarations
-                                                    |> List.foldl
-                                                        (\transpiledDeclaration withModuleDeclaredSoFar ->
-                                                            withModuleDeclaredSoFar
-                                                                |> FastDict.insert transpiledDeclaration.name
-                                                                    { lifetimeParameters = transpiledDeclaration.lifetimeParameters
-                                                                    , parameters = transpiledDeclaration.parameters
-                                                                    , variants = transpiledDeclaration.variants
-                                                                    }
-                                                        )
-                                                        soFarAcrossModules.declarations.enumTypes
+                                                    ++ soFarAcrossModules.declarations.enumTypes
                                             }
                                         }
                             )
@@ -7792,51 +7880,26 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                             , rustConsts = FastSet.empty
                             , rustFns = FastDict.empty
                             , declarations =
-                                { consts = FastDict.empty
-                                , fns = FastDict.empty
-                                , typeAliases = FastDict.empty
-                                , enumTypes = FastDict.empty
+                                { consts = []
+                                , fns = []
+                                , typeAliases = []
+                                , enumTypes = []
                                 }
                             }
             in
             { declarations =
                 { consts =
                     transpiledRustDeclarations.declarations.consts
-                        |> FastDict.map
-                            (\_ valueOrFunctionInfo ->
-                                { result = valueOrFunctionInfo.result
-                                , resultType = valueOrFunctionInfo.resultType
-                                }
-                            )
+                        |> listToUniqueSortedDescendingBy .name
                 , fns =
                     transpiledRustDeclarations.declarations.fns
-                        |> FastDict.map
-                            (\_ valueOrFunctionInfo ->
-                                { parameters = valueOrFunctionInfo.parameters
-                                , result = valueOrFunctionInfo.result
-                                , resultType = valueOrFunctionInfo.resultType
-                                , lifetimeParameters =
-                                    valueOrFunctionInfo.lifetimeParameters
-                                }
-                            )
+                        |> listToUniqueSortedDescendingBy .name
                 , enumTypes =
                     transpiledRustDeclarations.declarations.enumTypes
-                        |> FastDict.map
-                            (\_ enumDeclarationInfo ->
-                                { parameters = enumDeclarationInfo.parameters
-                                , variants = enumDeclarationInfo.variants
-                                , lifetimeParameters = enumDeclarationInfo.lifetimeParameters
-                                }
-                            )
+                        |> listToUniqueSortedDescendingBy .name
                 , typeAliases =
                     transpiledRustDeclarations.declarations.typeAliases
-                        |> FastDict.map
-                            (\_ typeAliasInfo ->
-                                { lifetimeParameters = typeAliasInfo.lifetimeParameters
-                                , parameters = typeAliasInfo.parameters
-                                , type_ = typeAliasInfo.type_
-                                }
-                            )
+                        |> listToUniqueSortedDescendingBy .name
                 , structs =
                     allElmRecords
                         |> FastSet.foldl
@@ -7863,25 +7926,24 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                         soFar
 
                                     elmRecordFieldsNotAlreadyInDefaultDeclarations ->
-                                        soFar
-                                            |> FastDict.insert
-                                                (generatedRecordStructTypeName elmRecordFieldsNotAlreadyInDefaultDeclarations)
-                                                { parameters =
-                                                    elmRecordFieldsNotAlreadyInDefaultDeclarations
-                                                        |> List.map toPascalCaseRustName
-                                                , fields =
-                                                    elmRecordFieldsNotAlreadyInDefaultDeclarations
-                                                        |> List.map
-                                                            (\elmRecordField ->
-                                                                ( elmRecordField |> toSnakeCaseRustName
-                                                                , RustTypeVariable
-                                                                    (elmRecordField |> toPascalCaseRustName)
-                                                                )
-                                                            )
-                                                        |> FastDict.fromList
-                                                }
+                                        { name = generatedRecordStructTypeName elmRecordFieldsNotAlreadyInDefaultDeclarations
+                                        , parameters =
+                                            elmRecordFieldsNotAlreadyInDefaultDeclarations
+                                                |> List.map toPascalCaseRustName
+                                        , fields =
+                                            elmRecordFieldsNotAlreadyInDefaultDeclarations
+                                                |> List.map
+                                                    (\elmRecordField ->
+                                                        ( elmRecordField |> toSnakeCaseRustName
+                                                        , RustTypeVariable
+                                                            (elmRecordField |> toPascalCaseRustName)
+                                                        )
+                                                    )
+                                                |> FastDict.fromList
+                                        }
+                                            :: soFar
                             )
-                            FastDict.empty
+                            []
                 }
             , errors =
                 (modulesInferred.errors |> List.reverse)
@@ -7889,6 +7951,41 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                             |> List.reverse
                        )
             }
+
+
+listToUniqueSortedDescendingBy : (a -> comparable) -> List a -> List a
+listToUniqueSortedDescendingBy elementToKey list =
+    list
+        |> List.sortBy elementToKey
+        |> listReverseDeduplicateNeighboringElementsBy elementToKey
+
+
+listReverseDeduplicateNeighboringElementsBy : (a -> comparable) -> List a -> List a
+listReverseDeduplicateNeighboringElementsBy elementToKey list =
+    listReverseDeduplicateNeighboringElementsIntoBy [] elementToKey list
+
+
+listReverseDeduplicateNeighboringElementsIntoBy : List a -> (a -> comparable) -> List a -> List a
+listReverseDeduplicateNeighboringElementsIntoBy soFar elementToKey list =
+    -- can be optimized
+    case list of
+        [] ->
+            soFar
+
+        [ onlyElement ] ->
+            onlyElement :: soFar
+
+        element0 :: element1 :: element2Up ->
+            if (element0 |> elementToKey) == (element1 |> elementToKey) then
+                listReverseDeduplicateNeighboringElementsIntoBy soFar
+                    elementToKey
+                    (element1 :: element2Up)
+
+            else
+                listReverseDeduplicateNeighboringElementsIntoBy
+                    (element0 :: soFar)
+                    elementToKey
+                    (element1 :: element2Up)
 
 
 rustTypeIncludesAnyLocalTypeConstruct : FastSet.Set String -> RustType -> Bool
@@ -8612,6 +8709,9 @@ rustExpressionIsConst context rustExpression =
         RustExpressionUnit ->
             True
 
+        RustExpressionI64 _ ->
+            True
+
         RustExpressionF64 _ ->
             True
 
@@ -8642,16 +8742,10 @@ rustExpressionIsConst context rustExpression =
                 ( [], "basics_not" ) ->
                     True
 
-                ( [], "basics_clamp" ) ->
+                ( [], "basics_clamp_float" ) ->
                     True
 
-                ( [], "basics_add" ) ->
-                    True
-
-                ( [], "basics_sub" ) ->
-                    True
-
-                ( [], "basics_mul" ) ->
+                ( [], "basics_idiv" ) ->
                     True
 
                 ( [], "basics_fdiv" ) ->
@@ -9148,6 +9242,66 @@ listAll2 aList bList abIsExpected =
                         False
 
 
+type IntOrFloat
+    = IntNotFloat
+    | FloatNotInt
+
+
+inferredTypeCheckOrGuessIntOrFloat : ElmSyntaxTypeInfer.Type -> IntOrFloat
+inferredTypeCheckOrGuessIntOrFloat inferredType =
+    case inferredType of
+        ElmSyntaxTypeInfer.TypeVariable inputTypeVariable ->
+            if inputTypeVariable.name |> String.startsWith "number" then
+                -- assume Float
+                FloatNotInt
+
+            else
+                -- assume Int
+                IntNotFloat
+
+        ElmSyntaxTypeInfer.TypeNotVariable inferredTypeNotVariable ->
+            case inferredTypeNotVariable of
+                ElmSyntaxTypeInfer.TypeConstruct typeConstruct ->
+                    case typeConstruct.moduleOrigin of
+                        "Basics" ->
+                            case typeConstruct.name of
+                                "Float" ->
+                                    FloatNotInt
+
+                                "Int" ->
+                                    IntNotFloat
+
+                                _ ->
+                                    IntNotFloat
+
+                        _ ->
+                            IntNotFloat
+
+                ElmSyntaxTypeInfer.TypeUnit ->
+                    -- incorrect type inference, assume Float
+                    IntNotFloat
+
+                ElmSyntaxTypeInfer.TypeTuple _ ->
+                    -- incorrect type inference, assume Float
+                    IntNotFloat
+
+                ElmSyntaxTypeInfer.TypeTriple _ ->
+                    -- incorrect type inference, assume Float
+                    IntNotFloat
+
+                ElmSyntaxTypeInfer.TypeRecord _ ->
+                    -- incorrect type inference, assume Float
+                    IntNotFloat
+
+                ElmSyntaxTypeInfer.TypeRecordExtension _ ->
+                    -- incorrect type inference, assume Float
+                    IntNotFloat
+
+                ElmSyntaxTypeInfer.TypeFunction _ ->
+                    -- incorrect type inference, assume Float
+                    IntNotFloat
+
+
 {-| Attention: Use `expressionWrappingInLetIfOrMatchResult`
 instead when rust if/match are not allowed as `.result`
 -}
@@ -9162,12 +9316,12 @@ expression context expressionTypedNode =
             Ok RustExpressionUnit
 
         ElmSyntaxTypeInfer.ExpressionInteger intValue ->
-            -- NUMBER
-            -- case expressionTypedNode.type_ |> inferredTypeCheckOrGuessIntOrFloat of
-            --     IntNotFloat ->
-            --         Ok (RustExpressionInt64 intValue.value)
-            --     FloatNotInt ->
-            Ok (RustExpressionF64 (intValue.value |> Basics.toFloat))
+            case expressionTypedNode.type_ |> inferredTypeCheckOrGuessIntOrFloat of
+                IntNotFloat ->
+                    Ok (RustExpressionI64 intValue.value)
+
+                FloatNotInt ->
+                    Ok (RustExpressionF64 (intValue.value |> Basics.toFloat))
 
         ElmSyntaxTypeInfer.ExpressionFloat doubleValue ->
             Ok (RustExpressionF64 doubleValue)
@@ -10299,6 +10453,7 @@ expression context expressionTypedNode =
                                     }
 
                             else
+                                -- not a port
                                 let
                                     rustName : String
                                     rustName =
@@ -10337,35 +10492,51 @@ expression context expressionTypedNode =
                                                     originDeclarationType
                                                         |> inferredTypeExpandInnerAliases
                                                             typeAliasesInModule
-
-                                                rustReference :
-                                                    { qualification : List String
-                                                    , name : String
-                                                    , requiresAllocator : Bool
-                                                    }
-                                                rustReference =
-                                                    case
-                                                        { moduleOrigin = reference.moduleOrigin
-                                                        , name = reference.name
-                                                        , type_ = expressionTypedNode.type_
+                                            in
+                                            case
+                                                { moduleOrigin = reference.moduleOrigin
+                                                , name = reference.name
+                                                , type_ = expressionTypedNode.type_
+                                                }
+                                                    |> referenceToCoreRust
+                                            of
+                                                Just coreRustReference ->
+                                                    rustExpressionReferenceDeclaredFnAppliedLazilyOrCurriedIfNecessary context
+                                                        { qualification = coreRustReference.qualification
+                                                        , name = coreRustReference.name
+                                                        , requiresAllocator = coreRustReference.requiresAllocator
+                                                        , inferredType = expressionTypedNode.type_
+                                                        , originDeclarationTypeWithExpandedAliases =
+                                                            originDeclarationTypeWithExpandedAliases
                                                         }
-                                                            |> referenceToCoreRust
-                                                    of
-                                                        Just coreRustReference ->
-                                                            coreRustReference
 
-                                                        Nothing ->
-                                                            { qualification = []
-                                                            , name =
-                                                                rustName
-                                                                    |> rustNameWithSpecializedTypes
-                                                                        (inferredTypeSpecializedVariablesFrom
-                                                                            originDeclarationTypeWithExpandedAliases
-                                                                            (expressionTypedNode.type_
-                                                                                |> inferredTypeExpandInnerAliases
-                                                                                    typeAliasesInModule
-                                                                            )
+                                                Nothing ->
+                                                    let
+                                                        specializedRustName : String
+                                                        specializedRustName =
+                                                            rustName
+                                                                |> rustNameWithSpecializedTypes
+                                                                    (inferredTypeSpecializedVariablesFrom
+                                                                        originDeclarationTypeWithExpandedAliases
+                                                                        (expressionTypedNode.type_
+                                                                            |> inferredTypeExpandInnerAliases
+                                                                                typeAliasesInModule
                                                                         )
+                                                                    )
+                                                    in
+                                                    if context.rustConsts |> FastSet.member specializedRustName then
+                                                        RustExpressionReference
+                                                            { qualification = []
+                                                            , name = specializedRustName
+                                                            }
+
+                                                    else
+                                                        rustExpressionReferenceDeclaredFnAppliedLazilyOrCurriedIfNecessary context
+                                                            { inferredType = expressionTypedNode.type_
+                                                            , originDeclarationTypeWithExpandedAliases =
+                                                                originDeclarationTypeWithExpandedAliases
+                                                            , qualification = []
+                                                            , name = specializedRustName
                                                             , requiresAllocator =
                                                                 case context.rustFns |> FastDict.get rustName of
                                                                     Nothing ->
@@ -10375,15 +10546,6 @@ expression context expressionTypedNode =
                                                                     Just rustFn ->
                                                                         rustFn.requiresAllocator
                                                             }
-                                            in
-                                            rustExpressionReferenceDeclaredFnAppliedLazilyOrCurriedIfNecessary context
-                                                { qualification = rustReference.qualification
-                                                , name = rustReference.name
-                                                , requiresAllocator = rustReference.requiresAllocator
-                                                , inferredType = expressionTypedNode.type_
-                                                , originDeclarationTypeWithExpandedAliases =
-                                                    originDeclarationTypeWithExpandedAliases
-                                                }
                 )
 
         ElmSyntaxTypeInfer.ExpressionIfThenElse ifThenElse ->
@@ -11558,18 +11720,18 @@ inferredLetDeclarationsInsertLetDestructurings :
             { declaration : ElmSyntaxTypeInfer.LetDeclaration
             , range : Elm.Syntax.Range.Range
             }
-inferredLetDeclarationsInsertLetDestructurings fsharpLetDestructuringsToInsert existingLetDeclarations =
-    fsharpLetDestructuringsToInsert
+inferredLetDeclarationsInsertLetDestructurings inferredLetDestructuringsToInsert existingLetDeclarations =
+    inferredLetDestructuringsToInsert
         |> List.foldl
-            (\fsharpLetDestructuringToInsert soFar ->
+            (\inferredLetDestructuringToInsert soFar ->
                 soFar
-                    |> fsharpLetDeclarationsInsertFsharpLetDestructuring
-                        fsharpLetDestructuringToInsert
+                    |> inferredLetDeclarationsInsertInferredLetDestructuring
+                        inferredLetDestructuringToInsert
             )
             existingLetDeclarations
 
 
-fsharpLetDeclarationsInsertFsharpLetDestructuring :
+inferredLetDeclarationsInsertInferredLetDestructuring :
     { range : Elm.Syntax.Range.Range
     , declaration :
         { pattern : ElmSyntaxTypeInfer.TypedNode ElmSyntaxTypeInfer.Pattern
@@ -11586,11 +11748,11 @@ fsharpLetDeclarationsInsertFsharpLetDestructuring :
             { declaration : ElmSyntaxTypeInfer.LetDeclaration
             , range : Elm.Syntax.Range.Range
             }
-fsharpLetDeclarationsInsertFsharpLetDestructuring fsharpLetDestructuringToInsert existingLetDeclarationsMostToLeastDependedOn =
+inferredLetDeclarationsInsertInferredLetDestructuring inferredLetDestructuringToInsert existingLetDeclarationsMostToLeastDependedOn =
     let
         variablesIntroducedInDestructuringPattern : FastSet.Set String
         variablesIntroducedInDestructuringPattern =
-            fsharpLetDestructuringToInsert.declaration.pattern
+            inferredLetDestructuringToInsert.declaration.pattern
                 |> patternTypedNodeIntroducedVariables
                 |> FastDict.foldl
                     (\variable _ soFar ->
@@ -11630,8 +11792,8 @@ fsharpLetDeclarationsInsertFsharpLetDestructuring fsharpLetDestructuringToInsert
                                     existingLetDeclaration
                                         :: { declaration =
                                                 ElmSyntaxTypeInfer.LetDestructuring
-                                                    fsharpLetDestructuringToInsert.declaration
-                                           , range = fsharpLetDestructuringToInsert.range
+                                                    inferredLetDestructuringToInsert.declaration
+                                           , range = inferredLetDestructuringToInsert.range
                                            }
                                         :: soFar.leastToMostDependedOn
                                 }
@@ -11651,8 +11813,8 @@ fsharpLetDeclarationsInsertFsharpLetDestructuring fsharpLetDestructuringToInsert
     else
         { declaration =
             ElmSyntaxTypeInfer.LetDestructuring
-                fsharpLetDestructuringToInsert.declaration
-        , range = fsharpLetDestructuringToInsert.range
+                inferredLetDestructuringToInsert.declaration
+        , range = inferredLetDestructuringToInsert.range
         }
             :: withLetDestructuring.leastToMostDependedOn
             |> List.reverse
@@ -11691,8 +11853,7 @@ inferredTypeIsConcreteRustType : ElmSyntaxTypeInfer.Type -> Bool
 inferredTypeIsConcreteRustType inferredType =
     case inferredType of
         ElmSyntaxTypeInfer.TypeVariable variable ->
-            -- number... gets turned into Double
-            -- (or NUMBER specialized away to Int64/Double)
+            -- number gets "specialized" away to i64/f64
             String.startsWith "number" variable.name
 
         ElmSyntaxTypeInfer.TypeNotVariable inferredTypNotVariable ->
@@ -11884,6 +12045,9 @@ rustExpressionRemoveImmediateBorrow rustExpression =
             rustExpression
 
         RustExpressionReferenceMethod _ ->
+            rustExpression
+
+        RustExpressionI64 _ ->
             rustExpression
 
         RustExpressionF64 _ ->
@@ -12099,6 +12263,12 @@ rustExpressionCallCondense call =
                 , arguments = [ call.argument ]
                 }
 
+        RustExpressionI64 _ ->
+            RustExpressionCall
+                { called = calledDereferenced
+                , arguments = [ call.argument ]
+                }
+
         RustExpressionF64 _ ->
             RustExpressionCall
                 { called = calledDereferenced
@@ -12180,6 +12350,9 @@ rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck rustExpressi
     -- IGNORE TCO
     case rustExpression of
         RustExpressionUnit ->
+            False
+
+        RustExpressionI64 _ ->
             False
 
         RustExpressionF64 _ ->
@@ -12349,6 +12522,9 @@ rustExpressionInnermostLambdaResult rustExpression =
         RustExpressionUnit ->
             { statements = [], result = rustExpression }
 
+        RustExpressionI64 _ ->
+            { statements = [], result = rustExpression }
+
         RustExpressionF64 _ ->
             { statements = [], result = rustExpression }
 
@@ -12480,6 +12656,9 @@ rustExpressionIsConstant rustExpression =
         RustExpressionUnit ->
             True
 
+        RustExpressionI64 _ ->
+            True
+
         RustExpressionF64 _ ->
             True
 
@@ -12569,6 +12748,9 @@ rustExpressionCountUsesOfReference referenceToCountUsesOf rustExpression =
             0
 
         RustExpressionReferenceVariant _ ->
+            0
+
+        RustExpressionI64 _ ->
             0
 
         RustExpressionF64 _ ->
@@ -12802,6 +12984,9 @@ rustExpressionCloneWhereNecessary context rustExpression =
             RustExpressionSelf
 
         RustExpressionChar _ ->
+            rustExpression
+
+        RustExpressionI64 _ ->
             rustExpression
 
         RustExpressionF64 _ ->
@@ -13234,6 +13419,9 @@ rustExpressionCloneVariables variableShouldBeCloned rustExpression =
         RustExpressionUnit ->
             RustExpressionUnit
 
+        RustExpressionI64 _ ->
+            rustExpression
+
         RustExpressionF64 _ ->
             rustExpression
 
@@ -13635,6 +13823,9 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
 
         RustExpressionSelf ->
             { withClones = RustExpressionSelf, bindingWasUsed = False }
+
+        RustExpressionI64 _ ->
+            { withClones = rustExpression, bindingWasUsed = False }
 
         RustExpressionF64 _ ->
             { withClones = rustExpression, bindingWasUsed = False }
@@ -14360,6 +14551,9 @@ rustExpressionUsedLocalBindings rustExpression =
         RustExpressionString _ ->
             FastSet.empty
 
+        RustExpressionI64 _ ->
+            FastSet.empty
+
         RustExpressionF64 _ ->
             FastSet.empty
 
@@ -14533,6 +14727,9 @@ rustExpressionSubstituteReferences referenceToExpression rustExpression =
     case rustExpression of
         RustExpressionUnit ->
             RustExpressionUnit
+
+        RustExpressionI64 _ ->
+            rustExpression
 
         RustExpressionF64 _ ->
             rustExpression
@@ -15576,7 +15773,28 @@ expressionOperatorToRustFunctionReference operator =
             okReferenceIdiv
 
         "^" ->
-            okReferencePow
+            Ok
+                (case
+                    case operator.type_ of
+                        ElmSyntaxTypeInfer.TypeNotVariable (ElmSyntaxTypeInfer.TypeFunction typeFunction) ->
+                            typeFunction.input |> inferredTypeCheckOrGuessIntOrFloat
+
+                        _ ->
+                            -- assume Int
+                            IntNotFloat
+                 of
+                    FloatNotInt ->
+                        { qualification = []
+                        , name = "basics_pow_float"
+                        , requiresAllocator = False
+                        }
+
+                    IntNotFloat ->
+                        { qualification = []
+                        , name = "basics_pow_int"
+                        , requiresAllocator = False
+                        }
+                )
 
         "==" ->
             okReferenceEq
@@ -15645,21 +15863,6 @@ expressionOperatorToRustFunctionReference operator =
 
         unknownOrUnsupportedOperator ->
             Err ("unknown/unsupported operator " ++ unknownOrUnsupportedOperator)
-
-
-okReferencePow :
-    Result
-        error_
-        { qualification : List String
-        , name : String
-        , requiresAllocator : Bool
-        }
-okReferencePow =
-    Ok
-        { qualification = []
-        , name = "basics_pow"
-        , requiresAllocator = False
-        }
 
 
 okReferenceNeq :
@@ -15791,8 +15994,8 @@ okReferenceMul :
         }
 okReferenceMul =
     Ok
-        { qualification = []
-        , name = "basics_mul"
+        { qualification = [ "std", "ops", "Mul" ]
+        , name = "mul"
         , requiresAllocator = False
         }
 
@@ -15836,8 +16039,8 @@ okReferenceSub :
         }
 okReferenceSub =
     Ok
-        { qualification = []
-        , name = "basics_sub"
+        { qualification = [ "std", "ops", "Sub" ]
+        , name = "sub"
         , requiresAllocator = False
         }
 
@@ -15851,8 +16054,8 @@ okReferenceAdd :
         }
 okReferenceAdd =
     Ok
-        { qualification = []
-        , name = "basics_add"
+        { qualification = [ "std", "ops", "Add" ]
+        , name = "add"
         , requiresAllocator = False
         }
 
@@ -17233,9 +17436,9 @@ createSynchronizationFromInferredTypeNotVariableVariableToSyntaxTypeVariable inf
 
 
 type RustTypeVariableSpecialization
-    = -- | RustTypeVariableSpecializationToInt
-      -- | RustTypeVariableSpecializationToFloat
-      RustTypeVariableSpecializationToRecord (List String)
+    = RustTypeVariableSpecializationToInt
+    | RustTypeVariableSpecializationToFloat
+    | RustTypeVariableSpecializationToRecord (List String)
 
 
 inferredTypeWithExpandedInnerAliasesSplitIntoSpecializedRustTypes :
@@ -17244,19 +17447,25 @@ inferredTypeWithExpandedInnerAliasesSplitIntoSpecializedRustTypes :
     -> FastDict.Dict String (List RustTypeVariableSpecialization)
 inferredTypeWithExpandedInnerAliasesSplitIntoSpecializedRustTypes context inferredType =
     case inferredType of
-        ElmSyntaxTypeInfer.TypeVariable _ ->
-            -- NUMBER
-            -- if variable.name |> String.startsWith "number" then
-            --     FastDict.singleton variable.name
-            --         rustTypeVariableSpecializationsToIntAndFloat
-            --
-            -- else
-            FastDict.empty
+        ElmSyntaxTypeInfer.TypeVariable variable ->
+            if variable.name |> String.startsWith "number" then
+                FastDict.singleton variable.name
+                    rustTypeVariableSpecializationsToIntAndFloat
+
+            else
+                FastDict.empty
 
         ElmSyntaxTypeInfer.TypeNotVariable inferredTypeNotVariable ->
             inferredTypeNotVariableWithExpandedInnerAliasesSplitIntoSpecializedRustTypes
                 context
                 inferredTypeNotVariable
+
+
+rustTypeVariableSpecializationsToIntAndFloat : List RustTypeVariableSpecialization
+rustTypeVariableSpecializationsToIntAndFloat =
+    [ RustTypeVariableSpecializationToInt
+    , RustTypeVariableSpecializationToFloat
+    ]
 
 
 inferredTypeNotVariableWithExpandedInnerAliasesSplitIntoSpecializedRustTypes :
@@ -17321,8 +17530,7 @@ inferredTypeNotVariableWithExpandedInnerAliasesSplitIntoSpecializedRustTypes con
                                                 elmRecord |> List.member fieldName
                                             )
                                 then
-                                    RustTypeVariableSpecializationToRecord
-                                        elmRecord
+                                    RustTypeVariableSpecializationToRecord elmRecord
                                         :: rustRecordsThatContainAllSyntaxFieldsSoFar
 
                                 else
@@ -17396,6 +17604,20 @@ syntaxTypeNodeApplySpecialization specialization syntaxTypeNode =
             )
 
 
+syntaxTypeBasicsInt : Elm.Syntax.TypeAnnotation.TypeAnnotation
+syntaxTypeBasicsInt =
+    Elm.Syntax.TypeAnnotation.Typed
+        (Elm.Syntax.Node.empty ( [ "Basics" ], "Int" ))
+        []
+
+
+syntaxTypeBasicsFloat : Elm.Syntax.TypeAnnotation.TypeAnnotation
+syntaxTypeBasicsFloat =
+    Elm.Syntax.TypeAnnotation.Typed
+        (Elm.Syntax.Node.empty ( [ "Basics" ], "Float" ))
+        []
+
+
 syntaxTypeApplySpecialization :
     FastDict.Dict String RustTypeVariableSpecialization
     -> Elm.Syntax.TypeAnnotation.TypeAnnotation
@@ -17412,6 +17634,12 @@ syntaxTypeApplySpecialization specialization syntaxType =
 
                 Just specificSpecialization ->
                     case specificSpecialization of
+                        RustTypeVariableSpecializationToInt ->
+                            syntaxTypeBasicsInt
+
+                        RustTypeVariableSpecializationToFloat ->
+                            syntaxTypeBasicsFloat
+
                         RustTypeVariableSpecializationToRecord fields ->
                             Elm.Syntax.TypeAnnotation.Record
                                 (fields
@@ -17488,6 +17716,14 @@ syntaxTypeApplySpecialization specialization syntaxType =
 
                 Just specificSpecialization ->
                     case specificSpecialization of
+                        RustTypeVariableSpecializationToInt ->
+                            Elm.Syntax.TypeAnnotation.Record
+                                fieldsSpecialized
+
+                        RustTypeVariableSpecializationToFloat ->
+                            Elm.Syntax.TypeAnnotation.Record
+                                fieldsSpecialized
+
                         RustTypeVariableSpecializationToRecord allFields ->
                             let
                                 additionalFields :
@@ -18185,6 +18421,12 @@ rustNameWithSpecializedTypes specializedTypes name =
                     ++ variable
                     ++ "_"
                     ++ (case specializedType of
+                            RustTypeVariableSpecializationToInt ->
+                                "int"
+
+                            RustTypeVariableSpecializationToFloat ->
+                                "float"
+
                             RustTypeVariableSpecializationToRecord specializedTypeRecordFields ->
                                 case specializedTypeRecordFields of
                                     [] ->
@@ -18209,8 +18451,52 @@ inferredTypeSpecializedVariablesFrom :
 inferredTypeSpecializedVariablesFrom originalInferredType specializedInferredType =
     -- IGNORE TCO
     case originalInferredType of
-        ElmSyntaxTypeInfer.TypeVariable _ ->
-            FastDict.empty
+        ElmSyntaxTypeInfer.TypeVariable originalVariable ->
+            if originalVariable.name |> String.startsWith "number" then
+                case specializedInferredType of
+                    ElmSyntaxTypeInfer.TypeVariable _ ->
+                        FastDict.empty
+
+                    ElmSyntaxTypeInfer.TypeNotVariable inferredTypeNotVariable_ ->
+                        case inferredTypeNotVariable_ of
+                            ElmSyntaxTypeInfer.TypeConstruct specializedTypeConstruct ->
+                                case specializedTypeConstruct.moduleOrigin of
+                                    "Basics" ->
+                                        case specializedTypeConstruct.name of
+                                            "Int" ->
+                                                FastDict.singleton originalVariable.name
+                                                    RustTypeVariableSpecializationToInt
+
+                                            "Float" ->
+                                                FastDict.singleton originalVariable.name
+                                                    RustTypeVariableSpecializationToFloat
+
+                                            _ ->
+                                                FastDict.empty
+
+                                    _ ->
+                                        FastDict.empty
+
+                            ElmSyntaxTypeInfer.TypeUnit ->
+                                FastDict.empty
+
+                            ElmSyntaxTypeInfer.TypeTuple _ ->
+                                FastDict.empty
+
+                            ElmSyntaxTypeInfer.TypeTriple _ ->
+                                FastDict.empty
+
+                            ElmSyntaxTypeInfer.TypeRecord _ ->
+                                FastDict.empty
+
+                            ElmSyntaxTypeInfer.TypeRecordExtension _ ->
+                                FastDict.empty
+
+                            ElmSyntaxTypeInfer.TypeFunction _ ->
+                                FastDict.empty
+
+            else
+                FastDict.empty
 
         ElmSyntaxTypeInfer.TypeNotVariable originalTypeNotVariable ->
             inferredTypeSpecializedVariablesFromNotVariable
@@ -18407,6 +18693,9 @@ printRustExpressionParenthesizedIfSpaceSeparated rustExpression =
         RustExpressionChar _ ->
             notParenthesizedPrint
 
+        RustExpressionI64 _ ->
+            notParenthesizedPrint
+
         RustExpressionF64 _ ->
             notParenthesizedPrint
 
@@ -18479,6 +18768,9 @@ printRustExpressionNotParenthesizedNotCurlyEmbracedIfAfterStatement rustExpressi
 
         RustExpressionChar charValue ->
             printRustCharLiteral charValue
+
+        RustExpressionI64 int ->
+            Print.exactly (int |> i64Literal)
 
         RustExpressionF64 double ->
             Print.exactly (double |> f64Literal)
@@ -18731,6 +19023,9 @@ printRustExpressionCall call =
                     calledNotParenthesizedPrint
 
                 RustExpressionChar _ ->
+                    calledNotParenthesizedPrint
+
+                RustExpressionI64 _ ->
                     calledNotParenthesizedPrint
 
                 RustExpressionF64 _ ->
@@ -19420,38 +19715,38 @@ Will also add some internal wrapper declarations.
 -}
 rustDeclarationsToModuleString :
     { fns :
-        FastDict.Dict
-            String
-            { parameters : List { pattern : RustPattern, type_ : RustType }
+        List
+            { name : String
+            , parameters : List { pattern : RustPattern, type_ : RustType }
             , result : RustExpression
             , lifetimeParameters : List String
             , resultType : RustType
             }
     , consts :
-        FastDict.Dict
-            String
-            { result : RustExpression
+        List
+            { name : String
+            , result : RustExpression
             , resultType : RustType
             }
     , typeAliases :
-        FastDict.Dict
-            String
-            { lifetimeParameters : List String
+        List
+            { name : String
+            , lifetimeParameters : List String
             , parameters : List String
             , type_ : RustType
             }
     , enumTypes :
-        FastDict.Dict
-            String
-            { parameters : List String
+        List
+            { name : String
+            , parameters : List String
             , variants :
                 FastDict.Dict String (List RustType)
             , lifetimeParameters : List String
             }
     , structs :
-        FastDict.Dict
-            String
-            { parameters : List String
+        List
+            { name : String
+            , parameters : List String
             , fields : FastDict.Dict String RustType
             }
     }
@@ -19467,15 +19762,8 @@ rustDeclarationsToModuleString rustDeclarations =
                     FastDict.Dict String (List RustType)
                 }
         rustEnumDeclarationList =
+            -- TODO inline
             rustDeclarations.enumTypes
-                |> fastDictMapAndToList
-                    (\name info ->
-                        { name = name
-                        , parameters = info.parameters
-                        , lifetimeParameters = info.lifetimeParameters
-                        , variants = info.variants
-                        }
-                    )
 
         rustTypeAliasDeclarationList :
             List
@@ -19485,15 +19773,8 @@ rustDeclarationsToModuleString rustDeclarations =
                 , type_ : RustType
                 }
         rustTypeAliasDeclarationList =
+            -- TODO inline
             rustDeclarations.typeAliases
-                |> fastDictMapAndToList
-                    (\name info ->
-                        { name = name
-                        , lifetimeParameters = info.lifetimeParameters
-                        , parameters = info.parameters
-                        , type_ = info.type_
-                        }
-                    )
     in
     """#![allow(dead_code)]
 #![allow(non_shorthand_field_patterns)]
@@ -19505,16 +19786,8 @@ rustDeclarationsToModuleString rustDeclarations =
 
 """
         ++ (rustDeclarations.structs
-                |> fastDictMapAndToList
-                    (\name info ->
-                        printRustStructDeclaration
-                            { name = name
-                            , parameters = info.parameters
-                            , fields = info.fields
-                            }
-                    )
                 |> Print.listMapAndIntersperseAndFlatten
-                    (\rustValueOrFunctionPrint -> rustValueOrFunctionPrint)
+                    printRustStructDeclaration
                     printLinebreakLinebreakIndented
                 |> Print.toString
            )
@@ -19541,26 +19814,10 @@ rustDeclarationsToModuleString rustDeclarations =
 
 """
         ++ ((rustDeclarations.consts
-                |> fastDictMapAndToList
-                    (\name valueOrFunctionInfo ->
-                        printRustLetDeclaration
-                            { name = name
-                            , result = valueOrFunctionInfo.result
-                            , resultType = valueOrFunctionInfo.resultType
-                            }
-                    )
+                |> List.map printRustLetDeclaration
             )
                 ++ (rustDeclarations.fns
-                        |> fastDictMapAndToList
-                            (\name valueOrFunctionInfo ->
-                                printRustFnDeclaration
-                                    { name = name
-                                    , parameters = valueOrFunctionInfo.parameters
-                                    , result = valueOrFunctionInfo.result
-                                    , resultType = valueOrFunctionInfo.resultType
-                                    , lifetimeParameters = valueOrFunctionInfo.lifetimeParameters
-                                    }
-                            )
+                        |> List.map printRustFnDeclaration
                    )
                 |> Print.listMapAndIntersperseAndFlatten
                     (\rustValueOrFunctionPrint ->
@@ -19800,6 +20057,20 @@ inferredTypeBasicsInt =
 
 typeNotVariableBasicsInt : ElmSyntaxTypeInfer.TypeNotVariable
 typeNotVariableBasicsInt =
+    ElmSyntaxTypeInfer.TypeConstruct
+        { moduleOrigin = "Basics"
+        , name = "Int"
+        , arguments = []
+        }
+
+
+inferredTypeBasicsFloat : ElmSyntaxTypeInfer.Type
+inferredTypeBasicsFloat =
+    ElmSyntaxTypeInfer.TypeNotVariable typeNotVariableBasicsFloat
+
+
+typeNotVariableBasicsFloat : ElmSyntaxTypeInfer.TypeNotVariable
+typeNotVariableBasicsFloat =
     ElmSyntaxTypeInfer.TypeConstruct
         { moduleOrigin = "Basics"
         , name = "Int"
@@ -33227,41 +33498,44 @@ pub const fn basics_not(bool: bool) -> bool {
     !bool
 }
 
-pub const fn basics_clamp(min: f64, max: f64, n: f64) -> f64 {
+pub const fn basics_to_float(int: i64) -> f64 {
+    int as f64
+}
+pub const fn basics_truncate(float: f64) -> i64 {
+    float as i64
+}
+pub fn basics_clamp_int(min: i64, max: i64, n: i64) -> i64 {
+    n.clamp(min, max)
+}
+pub const fn basics_clamp_float(min: f64, max: f64, n: f64) -> f64 {
     n.clamp(min, max)
 }
 pub fn basics_log_base(base: f64, n: f64) -> f64 {
     n.log(base)
 }
-pub const fn basics_add(a: f64, b: f64) -> f64 {
-    a + b
-}
-pub const fn basics_sub(base: f64, reduction: f64) -> f64 {
-    base - reduction
-}
-pub const fn basics_mul(a: f64, b: f64) -> f64 {
-    a * b
-}
 pub const fn basics_fdiv(base: f64, by: f64) -> f64 {
     base / by
 }
-pub fn basics_idiv(base: f64, by: f64) -> f64 {
-    (base / by).trunc()
+pub const fn basics_idiv(base: i64, by: i64) -> i64 {
+    base / by
 }
-pub fn basics_pow(base: f64, by: f64) -> f64 {
+pub fn basics_pow_int(base: i64, by: i64) -> i64 {
+    base.pow(by as u32)
+}
+pub fn basics_pow_float(base: f64, by: f64) -> f64 {
     base.powf(by)
 }
-pub fn basics_remainder_by(by: f64, base: f64) -> f64 {
+pub fn basics_remainder_by(by: i64, base: i64) -> i64 {
     std::ops::Rem::rem(base, by)
 }
-pub fn basics_mod_by(by: f64, base: f64) -> f64 {
+pub fn basics_mod_by(by: i64, base: i64) -> i64 {
     // https://github.com/elm/core/blob/1.0.5/src/Elm/Kernel/Basics.js#L20
     // https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/divmodnote-letter.pdf
-    if by == 0_f64 {
+    if by == 0_i64 {
         panic!("mod by 0")
     } else {
-        let remainder: f64 = std::ops::Rem::rem(base, by);
-        if (remainder > 0_f64 && by < 0_f64) || (remainder < 0_f64 && by > 0_f64) {
+        let remainder: i64 = std::ops::Rem::rem(base, by);
+        if (remainder > 0_i64 && by < 0_i64) || (remainder < 0_i64 && by > 0_i64) {
             remainder + by
         } else {
             remainder
@@ -33285,26 +33559,26 @@ pub const fn basics_never<A>(never: BasicsNever) -> A {
     match never {}
 }
 
-pub const fn bitwise_complement(n: f64) -> f64 {
-    !(n as i32) as f64
+pub const fn bitwise_complement(n: i64) -> i64 {
+    !(n as i32) as i64
 }
-pub fn bitwise_and(a: f64, b: f64) -> f64 {
-    std::ops::BitAnd::bitand(a as i32, b as i32) as f64
+pub fn bitwise_and(a: i64, b: i64) -> i64 {
+    std::ops::BitAnd::bitand(a as i32, b as i32) as i64
 }
-pub fn bitwise_or(a: f64, b: f64) -> f64 {
-    std::ops::BitOr::bitor(a as i32, b as i32) as f64
+pub fn bitwise_or(a: i64, b: i64) -> i64 {
+    std::ops::BitOr::bitor(a as i32, b as i32) as i64
 }
-pub fn bitwise_xor(a: f64, b: f64) -> f64 {
-    std::ops::BitXor::bitxor(a as i32, b as i32) as f64
+pub fn bitwise_xor(a: i64, b: i64) -> i64 {
+    std::ops::BitXor::bitxor(a as i32, b as i32) as i64
 }
-pub fn bitwise_shift_left_by(positions: f64, n: f64) -> f64 {
-    std::ops::Shl::shl(n as i32, positions as i32) as f64
+pub fn bitwise_shift_left_by(positions: i64, n: i64) -> i64 {
+    std::ops::Shl::shl(n as i32, positions as i32) as i64
 }
-pub fn bitwise_shift_right_by(positions: f64, n: f64) -> f64 {
-    std::ops::Shr::shr(n as i32, positions as i32) as f64
+pub fn bitwise_shift_right_by(positions: i64, n: i64) -> i64 {
+    std::ops::Shr::shr(n as i32, positions as i32) as i64
 }
-pub fn bitwise_shift_right_zf_by(positions: f64, n: f64) -> f64 {
-    std::ops::Shr::shr(n as u32, positions as u32) as f64
+pub fn bitwise_shift_right_zf_by(positions: i64, n: i64) -> i64 {
+    std::ops::Shr::shr(n as u32, positions as u32) as i64
 }
 
 pub fn list_is_empty<A>(list: ListList<A>) -> bool {
@@ -33337,13 +33611,13 @@ pub fn list_singleton<'a, A>(only_element: A) -> ListList<'a, A> {
 }
 pub fn list_repeat<'a, A: Clone>(
     allocator: &'a bumpalo::Bump,
-    count: f64,
+    count: i64,
     element: A,
 ) -> ListList<'a, A> {
     double_ended_iterator_to_list(allocator, std::iter::repeat_n(element, count as usize))
 }
-pub fn list_range<'a>(allocator: &'a bumpalo::Bump, min: f64, max: f64) -> ListList<'a, f64> {
-    double_ended_iterator_to_list(allocator, ((min as i32)..=(max as i32)).map(|n| n as f64))
+pub fn list_range<'a>(allocator: &'a bumpalo::Bump, min: i64, max: i64) -> ListList<'a, i64> {
+    double_ended_iterator_to_list(allocator, min..=max)
 }
 pub fn list<'a, A: Clone, const ElementCount: usize>(
     allocator: &'a bumpalo::Bump,
@@ -33362,13 +33636,19 @@ pub fn double_ended_iterator_to_list<'a, A, AIterator: DoubleEndedIterator<Item 
     list_so_far
 }
 
-pub fn list_length<A>(list: ListList<A>) -> f64 {
-    list.ref_iter().count() as f64
+pub fn list_length<A>(list: ListList<A>) -> i64 {
+    list.ref_iter().count() as i64
 }
-pub fn list_sum(list: ListList<f64>) -> f64 {
+pub fn list_sum_int(list: ListList<i64>) -> i64 {
     list.ref_iter().sum()
 }
-pub fn list_product(list: ListList<f64>) -> f64 {
+pub fn list_sum_float(list: ListList<f64>) -> f64 {
+    list.ref_iter().sum()
+}
+pub fn list_product_int(list: ListList<i64>) -> i64 {
+    list.ref_iter().product()
+}
+pub fn list_product_float(list: ListList<f64>) -> f64 {
     list.ref_iter().product()
 }
 pub fn list_all<A: Clone>(is_expected: impl Fn(A) -> bool, list: ListList<A>) -> bool {
@@ -33388,7 +33668,7 @@ pub fn list_maximum<A: Clone + PartialOrd>(list: ListList<A>) -> Option<A> {
 }
 pub fn list_take<'a, A: Clone>(
     allocator: &'a bumpalo::Bump,
-    keep_count: f64,
+    keep_count: i64,
     list: ListList<'a, A>,
 ) -> ListList<'a, A> {
     iterator_to_list(allocator, list.into_iter().take(keep_count as usize))
@@ -33400,15 +33680,15 @@ pub fn iterator_to_list<'a, A: Clone>(
 ) -> ListList<'a, A> {
     double_ended_iterator_to_list(allocator, iterator.collect::<Vec<A>>().into_iter())
 }
-pub fn list_drop<'a, A: Clone>(skip_count: f64, list: ListList<'a, A>) -> ListList<'a, A> {
-    if skip_count <= 0_f64 {
+pub fn list_drop<'a, A: Clone>(skip_count: i64, list: ListList<'a, A>) -> ListList<'a, A> {
+    if skip_count <= 0_i64 {
         ListList::Empty
     } else {
         match list {
             ListList::Empty => ListList::Empty,
             ListList::Cons(_, tail) => {
                 let mut iterator: ListListRefIterator<A> = tail.ref_iter();
-                for _ in 1..=((skip_count - 1_f64) as usize) {
+                for _ in 1..=((skip_count - 1_i64) as usize) {
                     match iterator.next() {
                         None => return ListList::Empty,
                         Some(_) => {}
@@ -33508,14 +33788,14 @@ pub fn list_map<'a, A: Clone, B: Clone>(
 }
 pub fn list_indexed_map<'a, A: Clone, B: Clone>(
     allocator: &'a bumpalo::Bump,
-    indexed_element_to_new: impl Fn(f64, A) -> B,
+    indexed_element_to_new: impl Fn(i64, A) -> B,
     list: ListList<A>,
 ) -> ListList<'a, B> {
     iterator_to_list(
         allocator,
         list.into_iter()
             .enumerate()
-            .map(|(index, element)| indexed_element_to_new(index as f64, element)),
+            .map(|(index, element)| indexed_element_to_new(index as i64, element)),
     )
 }
 pub fn list_filter_map<'a, A: Clone, B: Clone>(
@@ -33676,23 +33956,19 @@ pub fn array_empty<'a, A>() -> ArrayArray<A> {
 pub fn array_singleton<'a, A>(only_element: A) -> ArrayArray<A> {
     std::rc::Rc::new(vec![only_element])
 }
-pub fn array_repeat<'a, A: Clone>(length: f64, element: A) -> ArrayArray<A> {
+pub fn array_repeat<'a, A: Clone>(length: i64, element: A) -> ArrayArray<A> {
     std::rc::Rc::new(std::vec::from_elem(element, length as usize))
 }
-pub fn array_initialize<'a, A>(length: f64, index_to_element: impl Fn(f64) -> A) -> ArrayArray<A> {
-    std::rc::Rc::new(
-        (0..(length as i64))
-            .map(|i| index_to_element(i as f64))
-            .collect::<Vec<A>>(),
-    )
+pub fn array_initialize<'a, A>(length: i64, index_to_element: impl Fn(i64) -> A) -> ArrayArray<A> {
+    std::rc::Rc::new((0..length).map(index_to_element).collect::<Vec<A>>())
 }
 pub fn array_is_empty<A>(array: ArrayArray<A>) -> bool {
     array.is_empty()
 }
-pub fn array_length<A>(array: ArrayArray<A>) -> f64 {
-    array.len() as f64
+pub fn array_length<A>(array: ArrayArray<A>) -> i64 {
+    array.len() as i64
 }
-pub fn array_get<A: Clone>(index: f64, array: ArrayArray<A>) -> Option<A> {
+pub fn array_get<A: Clone>(index: i64, array: ArrayArray<A>) -> Option<A> {
     array.get(index as usize).cloned()
 }
 pub fn array_push<'a, A: Clone>(new_last_element: A, array: ArrayArray<A>) -> ArrayArray<A> {
@@ -33700,8 +33976,8 @@ pub fn array_push<'a, A: Clone>(new_last_element: A, array: ArrayArray<A>) -> Ar
     array_as_vec.push(new_last_element);
     std::rc::Rc::new(array_as_vec)
 }
-pub fn array_set<'a, A: Clone>(index: f64, new_element: A, array: ArrayArray<A>) -> ArrayArray<A> {
-    if index < 0_f64 {
+pub fn array_set<'a, A: Clone>(index: i64, new_element: A, array: ArrayArray<A>) -> ArrayArray<A> {
+    if index < 0_i64 {
         array
     } else {
         let index_usize: usize = index as usize;
@@ -33720,8 +33996,8 @@ pub fn array_set<'a, A: Clone>(index: f64, new_element: A, array: ArrayArray<A>)
 }
 
 pub fn array_slice<'a, A: Clone>(
-    start_inclusive_possibly_negative: f64,
-    end_exclusive_possibly_negative: f64,
+    start_inclusive_possibly_negative: i64,
+    end_exclusive_possibly_negative: i64,
     array: ArrayArray<A>,
 ) -> ArrayArray<A> {
     let start_inclusive: usize =
@@ -33736,11 +34012,11 @@ pub fn array_slice<'a, A: Clone>(
 }
 /// For an index where -1 meaning one before the last element, 1 meaning one after the first element,
 /// normalize to valid index from the start (or the index _after_ the last valid index)
-fn index_from_end_if_negative(index_possibly_negative: f64, full_length: usize) -> usize {
-    if index_possibly_negative >= 0_f64 {
-        (index_possibly_negative.max(0_f64) as usize).min(full_length)
+fn index_from_end_if_negative(index_possibly_negative: i64, full_length: usize) -> usize {
+    if index_possibly_negative >= 0_i64 {
+        (index_possibly_negative.max(0_i64) as usize).min(full_length)
     } else {
-        ((full_length as f64 + index_possibly_negative).max(0_f64) as usize).min(full_length)
+        ((full_length as i64 + index_possibly_negative).max(0_i64) as usize).min(full_length)
     }
 }
 pub fn array_from_list<'a, A: Clone>(list: ListList<A>) -> ArrayArray<A> {
@@ -33782,19 +34058,19 @@ pub fn array_map<'a, A: Clone, B: Clone>(
     })
 }
 pub fn array_indexed_map<'a, A: Clone, B: Clone>(
-    element_change: impl Fn(f64, A) -> B,
+    element_change: impl Fn(i64, A) -> B,
     array: ArrayArray<A>,
 ) -> ArrayArray<B> {
     std::rc::Rc::new(match std::rc::Rc::try_unwrap(array) {
         Result::Ok(array_owned) => array_owned
             .into_iter()
             .enumerate()
-            .map(|(index, element)| element_change(index as f64, element))
+            .map(|(index, element)| element_change(index as i64, element))
             .collect::<Vec<B>>(),
         Result::Err(array_shared) => array_shared
             .iter()
             .enumerate()
-            .map(|(index, element)| element_change(index as f64, element.clone()))
+            .map(|(index, element)| element_change(index as i64, element.clone()))
             .collect::<Vec<B>>(),
     })
 }
@@ -33815,21 +34091,21 @@ pub fn array_to_list<'a, A: Clone>(
 pub fn array_to_indexed_list<'a, A: Clone>(
     allocator: &'a bumpalo::Bump,
     array: ArrayArray<A>,
-) -> ListList<'a, (f64, A)> {
+) -> ListList<'a, (i64, A)> {
     match std::rc::Rc::try_unwrap(array) {
         Result::Ok(array_owned) => double_ended_iterator_to_list(
             allocator,
             array_owned
                 .into_iter()
                 .enumerate()
-                .map(|(index, element)| (index as f64, element)),
+                .map(|(index, element)| (index as i64, element)),
         ),
         Result::Err(array_shared) => double_ended_iterator_to_list(
             allocator,
             array_shared
                 .iter()
                 .enumerate()
-                .map(|(index, element)| (index as f64, element.clone())),
+                .map(|(index, element)| (index as i64, element.clone())),
         ),
     }
 }
@@ -33908,10 +34184,10 @@ pub fn char_to_lower(char: char) -> char {
         Some(approximate_lowercase) => approximate_lowercase,
     }
 }
-pub const fn char_to_code(char: char) -> f64 {
-    char as u32 as f64
+pub const fn char_to_code(char: char) -> i64 {
+    char as i64
 }
-pub fn char_from_code(code: f64) -> char {
+pub fn char_from_code(code: i64) -> char {
     char::from_u32(code as u32).unwrap_or('\\0')
 }
 
@@ -34100,8 +34376,8 @@ pub fn string_ref_is_empty(string: &StringString) -> bool {
         }
     }
 }
-pub fn string_length(string: StringString) -> f64 {
-    string_ref_length(&string) as f64
+pub fn string_length(string: StringString) -> i64 {
+    string_ref_length(&string) as i64
 }
 pub fn string_ref_length(string: &StringString) -> usize {
     match string {
@@ -34131,8 +34407,8 @@ pub fn string_ref_length(string: &StringString) -> usize {
         }
     }
 }
-pub fn string_from_int<'a>(allocator: &'a bumpalo::Bump, int: f64) -> StringString<'a> {
-    string_to_rope(allocator, (int as i64).to_string())
+pub fn string_from_int<'a>(allocator: &'a bumpalo::Bump, int: i64) -> StringString<'a> {
+    string_to_rope(allocator, int.to_string())
 }
 pub fn string_from_float<'a>(allocator: &'a bumpalo::Bump, float: f64) -> StringString<'a> {
     string_to_rope(allocator, float.to_string())
@@ -34143,10 +34419,10 @@ pub fn string_from_char<'a>(allocator: &'a bumpalo::Bump, char: char) -> StringS
 }
 pub fn string_repeat<'a>(
     allocator: &'a bumpalo::Bump,
-    length: f64,
+    length: i64,
     segment: StringString,
 ) -> StringString<'a> {
-    if length <= 0_f64 {
+    if length <= 0_i64 {
         string_rope_empty
     } else {
         string_to_rope(allocator, rope_to_cow_str(segment).repeat(length as usize))
@@ -34246,14 +34522,14 @@ pub fn string_uncons<'a>(
 
 pub fn string_left<'a>(
     allocator: &'a bumpalo::Bump,
-    taken_count: f64,
+    taken_count: i64,
     string: StringString<'a>,
 ) -> StringString<'a> {
-    if taken_count <= 0_f64 {
+    if taken_count <= 0_i64 {
         string_rope_empty
     } else {
         let str: &str = rope_to_str(allocator, string);
-        if taken_count >= str.len() as f64 {
+        if taken_count >= str.len() as i64 {
             string
         } else {
             StringString::One(&str[..str_index_previous_char_boundary(taken_count as usize, str)])
@@ -34262,14 +34538,14 @@ pub fn string_left<'a>(
 }
 pub fn string_drop_left<'a>(
     allocator: &'a bumpalo::Bump,
-    skipped_count: f64,
+    skipped_count: i64,
     string: StringString<'a>,
 ) -> StringString<'a> {
-    if skipped_count <= 0_f64 {
+    if skipped_count <= 0_i64 {
         string
     } else {
         let str: &str = rope_to_str(allocator, string);
-        if skipped_count >= str.len() as f64 {
+        if skipped_count >= str.len() as i64 {
             string_rope_empty
         } else {
             StringString::One(&str[str_index_previous_char_boundary(skipped_count as usize, str)..])
@@ -34278,14 +34554,14 @@ pub fn string_drop_left<'a>(
 }
 pub fn string_right<'a>(
     allocator: &'a bumpalo::Bump,
-    taken_count: f64,
+    taken_count: i64,
     string: StringString<'a>,
 ) -> StringString<'a> {
-    if taken_count <= 0_f64 {
+    if taken_count <= 0_i64 {
         string_rope_empty
     } else {
         let str: &str = rope_to_str(allocator, string);
-        if taken_count >= str.len() as f64 {
+        if taken_count >= str.len() as i64 {
             string
         } else {
             StringString::One(
@@ -34296,14 +34572,14 @@ pub fn string_right<'a>(
 }
 pub fn string_drop_right<'a>(
     allocator: &'a bumpalo::Bump,
-    skipped_count: f64,
+    skipped_count: i64,
     string: StringString<'a>,
 ) -> StringString<'a> {
-    if skipped_count <= 0_f64 {
+    if skipped_count <= 0_i64 {
         string
     } else {
         let str: &str = rope_to_str(allocator, string);
-        if skipped_count >= str.len() as f64 {
+        if skipped_count >= str.len() as i64 {
             string_rope_empty
         } else {
             StringString::One(
@@ -34314,8 +34590,8 @@ pub fn string_drop_right<'a>(
 }
 pub fn string_slice<'a>(
     allocator: &'a bumpalo::Bump,
-    start_inclusive_possibly_negative: f64,
-    end_exclusive_possibly_negative: f64,
+    start_inclusive_possibly_negative: i64,
+    end_exclusive_possibly_negative: i64,
     string: StringString<'a>,
 ) -> StringString<'a> {
     let str: &str = rope_to_str(allocator, string);
@@ -34365,10 +34641,10 @@ fn str_index_next_char_boundary(index: usize, str: &str) -> usize {
 }
 /// Option::None means too big
 fn str_index_normalize_from_end_if_negative(
-    index_possibly_negative: f64,
+    index_possibly_negative: i64,
     string: &str,
 ) -> Option<usize> {
-    if index_possibly_negative >= 0_f64 {
+    if index_possibly_negative >= 0_i64 {
         let index: usize = index_possibly_negative as usize;
         if index >= string.len() {
             Option::None
@@ -34376,7 +34652,7 @@ fn str_index_normalize_from_end_if_negative(
             Option::Some(index)
         }
     } else {
-        Option::Some((string.len() - ((index_possibly_negative.abs() - 1_f64) as usize)).max(0))
+        Option::Some((string.len() - ((index_possibly_negative.abs() - 1_i64) as usize)).max(0))
     }
 }
 pub fn string_replace<'a>(
@@ -34479,7 +34755,7 @@ pub fn string_indexes<'a>(
     allocator: &'a bumpalo::Bump,
     needle: StringString,
     string: StringString<'a>,
-) -> ListList<'a, f64> {
+) -> ListList<'a, i64> {
     let as_str: &str = match string {
         StringString::One(str) => str,
         StringString::Append(early, late) => &string_rope_append_to_string(early, late),
@@ -34500,7 +34776,7 @@ pub fn string_indexes<'a>(
                     .map(|(char_index, _)| char_index)
                     .find(|&char_index| instance_byte_index >= char_index)
                     // find should always succeed
-                    .map(|char_index_usize| char_index_usize as f64)
+                    .map(|char_index_usize| char_index_usize as i64)
             }),
     )
 }
@@ -34508,7 +34784,7 @@ pub fn string_indices<'a>(
     allocator: &'a bumpalo::Bump,
     needle: StringString,
     string: StringString<'a>,
-) -> ListList<'a, f64> {
+) -> ListList<'a, i64> {
     string_indexes(allocator, needle, string)
 }
 pub fn string_starts_with(prefix_to_check_for: StringString, string: StringString) -> bool {
@@ -34523,10 +34799,10 @@ pub fn string_to_float(string: StringString) -> Option<f64> {
         Result::Ok(float) => Option::Some(float),
     }
 }
-pub fn string_to_int(string: StringString) -> Option<f64> {
+pub fn string_to_int(string: StringString) -> Option<i64> {
     match rope_to_cow_str(string).parse::<i64>() {
         Result::Err(_) => Option::None,
-        Result::Ok(int) => Option::Some(int as f64),
+        Result::Ok(int) => Option::Some(int),
     }
 }
 pub fn string_to_upper<'a>(allocator: &'a bumpalo::Bump, string: StringString) -> StringString<'a> {
@@ -34537,25 +34813,25 @@ pub fn string_to_lower<'a>(allocator: &'a bumpalo::Bump, string: StringString) -
 }
 pub fn string_pad<'a>(
     allocator: &'a bumpalo::Bump,
-    minimum_full_char_count: f64,
+    minimum_full_char_count: i64,
     padding: char,
     string: StringString<'a>,
 ) -> StringString<'a> {
-    let half_to_pad: f64 = (minimum_full_char_count - string_length(string)) / 2_f64;
+    let half_to_pad: i64 = (minimum_full_char_count - string_length(string)) / 2_i64;
     let padding_str: &str = &padding.to_string();
     string_append(
         allocator,
-        string_to_rope(allocator, padding_str.repeat(half_to_pad.ceil() as usize)),
+        string_to_rope(allocator, padding_str.repeat(half_to_pad as usize + 1)),
         string_append(
             allocator,
             string,
-            string_to_rope(allocator, padding_str.repeat(half_to_pad.floor() as usize)),
+            string_to_rope(allocator, padding_str.repeat(half_to_pad as usize)),
         ),
     )
 }
 pub fn string_pad_left<'a>(
     allocator: &'a bumpalo::Bump,
-    minimum_length: f64,
+    minimum_length: i64,
     padding: char,
     string: StringString<'a>,
 ) -> StringString<'a> {
@@ -34572,7 +34848,7 @@ pub fn string_pad_left<'a>(
 }
 pub fn string_pad_right<'a>(
     allocator: &'a bumpalo::Bump,
-    minimum_length: f64,
+    minimum_length: i64,
     padding: char,
     string: StringString<'a>,
 ) -> StringString<'a> {
@@ -34826,8 +35102,8 @@ pub fn dict_remove<K: PartialOrd + Clone, V: Clone>(
 pub fn dict_is_empty<K: Clone, V: Clone>(dict: DictDict<K, V>) -> bool {
     dict.is_empty()
 }
-pub fn dict_size<K: Clone, V: Clone>(dict: DictDict<K, V>) -> f64 {
-    dict.len() as f64
+pub fn dict_size<K: Clone, V: Clone>(dict: DictDict<K, V>) -> i64 {
+    dict.len() as i64
 }
 pub fn dict_member<K: PartialOrd, V>(key: K, dict: DictDict<K, V>) -> bool {
     dict.contains_key(&PretendNotPartial(key))
@@ -35041,8 +35317,8 @@ pub fn set_remove<K: PartialOrd + Clone>(key: K, set: SetSet<K>) -> SetSet<K> {
 pub fn set_is_empty<K>(set: SetSet<K>) -> bool {
     set.is_empty()
 }
-pub fn set_size<K>(set: SetSet<K>) -> f64 {
-    set.len() as f64
+pub fn set_size<K>(set: SetSet<K>) -> i64 {
+    set.len() as i64
 }
 pub fn set_member<K: PartialOrd>(key: K, set: SetSet<K>) -> bool {
     set.contains(&PretendNotPartial(key))
@@ -35190,7 +35466,7 @@ pub enum JsonValue<'a> {
 }
 pub fn json_encode_encode<'a>(
     allocator: &'a bumpalo::Bump,
-    indent_size: f64,
+    indent_size: i64,
     json: JsonValue<'a>,
 ) -> StringString<'a> {
     string_to_rope(
@@ -35341,8 +35617,8 @@ pub fn json_encode_string<'a>(
 ) -> JsonValue<'a> {
     JsonValue::String(rope_to_str(allocator, string))
 }
-pub fn json_encode_int<'a>(int: f64) -> JsonValue<'a> {
-    JsonValue::Number(int)
+pub fn json_encode_int<'a>(int: i64) -> JsonValue<'a> {
+    JsonValue::Number(int as f64)
 }
 pub fn json_encode_float<'a>(float: f64) -> JsonValue<'a> {
     JsonValue::Number(float)
@@ -35432,7 +35708,7 @@ pub fn json_encode_dict<'a, K: Clone, V: Clone>(
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum JsonDecodeError<'a> {
     Field(StringString<'a>, &'a JsonDecodeError<'a>),
-    Index(f64, &'a JsonDecodeError<'a>),
+    Index(i64, &'a JsonDecodeError<'a>),
     OneOf(&'a ListList<'a, JsonDecodeError<'a>>),
     Failure(StringString<'a>, JsonValue<'a>),
 }
@@ -35537,7 +35813,7 @@ pub fn json_decode_error_to_string_help<'a>(
                 };
                 so_far.push_str(&indent_by(
                     indent + 4,
-                    json_encode_encode(allocator, 4_f64, json.clone()),
+                    json_encode_encode(allocator, 4_i64, json.clone()),
                 ));
                 so_far.push_str(linebreak_indented);
                 so_far.push_str(linebreak_indented);
@@ -35817,10 +36093,10 @@ pub fn json_decode_bool<'a>() -> JsonDecodeDecoder<'a, bool> {
         },
     }
 }
-pub fn json_decode_int<'a>() -> JsonDecodeDecoder<'a, f64> {
+pub fn json_decode_int<'a>() -> JsonDecodeDecoder<'a, i64> {
     JsonDecodeDecoder {
         decode: &|json| match json {
-            JsonValue::Number(decoded) if decoded.trunc() == decoded => Result::Ok(decoded),
+            JsonValue::Number(decoded) if decoded.trunc() == decoded => Result::Ok(decoded as i64),
             json_not_int => Result::Err(JsonDecodeError::Failure(
                 StringString::One("Expecting an INT"),
                 json_not_int,
@@ -35878,7 +36154,7 @@ pub fn json_decode_nullable<'a, A>(
 }
 pub fn json_decode_index<'a, A>(
     allocator: &'a bumpalo::Bump,
-    index: f64,
+    index: i64,
     element_decoder: JsonDecodeDecoder<'a, A>,
 ) -> JsonDecodeDecoder<'a, A> {
     JsonDecodeDecoder {
@@ -35909,7 +36185,7 @@ pub fn json_decode_array<'a, A: Clone>(
                     match (element_decoder.decode)(value_json) {
                         Result::Err(value_error) => {
                             return Result::Err(JsonDecodeError::Index(
-                                index as f64,
+                                index as i64,
                                 allocator.alloc(value_error),
                             ));
                         }
@@ -35937,7 +36213,7 @@ pub fn json_decode_list<'a, A>(
                     match (element_decoder.decode)(value_json) {
                         Result::Err(value_error) => {
                             return Result::Err(JsonDecodeError::Index(
-                                index as f64,
+                                index as i64,
                                 allocator.alloc(value_error),
                             ));
                         }
@@ -35968,7 +36244,7 @@ pub fn json_decode_one_or_more<'a, A: Clone, Combined>(
                     match (element_decoder.decode)(value_json) {
                         Result::Err(value_error) => {
                             return Result::Err(JsonDecodeError::Index(
-                                index as f64,
+                                index as i64,
                                 allocator.alloc(value_error),
                             ));
                         }
@@ -36599,8 +36875,8 @@ pub enum BytesEndianness {
     BE,
 }
 
-pub const fn bytes_width(bytes: BytesBytes) -> f64 {
-    bytes.len() as f64
+pub const fn bytes_width(bytes: BytesBytes) -> i64 {
+    bytes.len() as i64
 }
 
 #[derive(Clone, Copy)]
@@ -36620,28 +36896,28 @@ pub fn bytes_decode_bytes<'a>() -> BytesDecodeDecoder<'a, BytesBytes<'a>> {
         decode: &|_, bytes| Option::Some((bytes.len(), bytes)),
     }
 }
-pub fn bytes_decode_unsigned_int8<'a>() -> BytesDecodeDecoder<'a, f64> {
+pub fn bytes_decode_unsigned_int8<'a>() -> BytesDecodeDecoder<'a, i64> {
     BytesDecodeDecoder {
         decode: &|index, bytes| {
             bytes
                 .get(index)
-                .map(|&decoded_u8| (index + 1, decoded_u8 as f64))
+                .map(|&decoded_u8| (index + 1, decoded_u8 as i64))
         },
     }
 }
-pub fn bytes_decode_signed_int8<'a>() -> BytesDecodeDecoder<'a, f64> {
+pub fn bytes_decode_signed_int8<'a>() -> BytesDecodeDecoder<'a, i64> {
     BytesDecodeDecoder {
         decode: &|index, bytes| {
             bytes
                 .get(index)
-                .map(|&decoded_byte| (index + 1, decoded_byte as i8 as f64))
+                .map(|&decoded_byte| (index + 1, decoded_byte as i8 as i64))
         },
     }
 }
 pub fn bytes_decode_unsigned_int16<'a>(
     allocator: &'a bumpalo::Bump,
     endianness: BytesEndianness,
-) -> BytesDecodeDecoder<'a, f64> {
+) -> BytesDecodeDecoder<'a, i64> {
     BytesDecodeDecoder {
         decode: allocator.alloc(move |index, bytes: BytesBytes| {
             let index_after: usize = index + 2;
@@ -36655,7 +36931,7 @@ pub fn bytes_decode_unsigned_int16<'a>(
                         match endianness {
                             BytesEndianness::LE => u16::from_le_bytes(u16_bytes),
                             BytesEndianness::BE => u16::from_be_bytes(u16_bytes),
-                        } as f64,
+                        } as i64,
                     )),
                 }
             }
@@ -36665,7 +36941,7 @@ pub fn bytes_decode_unsigned_int16<'a>(
 pub fn bytes_decode_signed_int16<'a>(
     allocator: &'a bumpalo::Bump,
     endianness: BytesEndianness,
-) -> BytesDecodeDecoder<'a, f64> {
+) -> BytesDecodeDecoder<'a, i64> {
     BytesDecodeDecoder {
         decode: allocator.alloc(move |index, bytes: BytesBytes| {
             let index_after: usize = index + 2;
@@ -36679,7 +36955,7 @@ pub fn bytes_decode_signed_int16<'a>(
                         match endianness {
                             BytesEndianness::LE => i16::from_le_bytes(two_bytes),
                             BytesEndianness::BE => i16::from_be_bytes(two_bytes),
-                        } as f64,
+                        } as i64,
                     )),
                 }
             }
@@ -36689,7 +36965,7 @@ pub fn bytes_decode_signed_int16<'a>(
 pub fn bytes_decode_unsigned_int32<'a>(
     allocator: &'a bumpalo::Bump,
     endianness: BytesEndianness,
-) -> BytesDecodeDecoder<'a, f64> {
+) -> BytesDecodeDecoder<'a, i64> {
     BytesDecodeDecoder {
         decode: allocator.alloc(move |index, bytes: BytesBytes| {
             let index_after: usize = index + 4;
@@ -36703,7 +36979,7 @@ pub fn bytes_decode_unsigned_int32<'a>(
                         match endianness {
                             BytesEndianness::LE => u32::from_le_bytes(u32_bytes),
                             BytesEndianness::BE => u32::from_be_bytes(u32_bytes),
-                        } as f64,
+                        } as i64,
                     )),
                 }
             }
@@ -36713,7 +36989,7 @@ pub fn bytes_decode_unsigned_int32<'a>(
 pub fn bytes_decode_signed_int32<'a>(
     allocator: &'a bumpalo::Bump,
     endianness: BytesEndianness,
-) -> BytesDecodeDecoder<'a, f64> {
+) -> BytesDecodeDecoder<'a, i64> {
     BytesDecodeDecoder {
         decode: allocator.alloc(move |index, bytes: BytesBytes| {
             let index_after: usize = index + 4;
@@ -36727,7 +37003,7 @@ pub fn bytes_decode_signed_int32<'a>(
                         match endianness {
                             BytesEndianness::LE => i32::from_le_bytes(four_bytes),
                             BytesEndianness::BE => i32::from_be_bytes(four_bytes),
-                        } as f64,
+                        } as i64,
                     )),
                 }
             }
@@ -36783,7 +37059,7 @@ pub fn bytes_decode_float64<'a>(
     }
 }
 pub fn bytes_decode_string<'a>(
-    string_length: f64,
+    string_length: i64,
     allocator: &'a bumpalo::Bump,
 ) -> BytesDecodeDecoder<'a, StringString<'a>> {
     let string_length_usize = string_length as usize;
@@ -36965,33 +37241,33 @@ pub enum BytesEncodeEncoder<'a> {
     Utf8(&'a str),
     Bytes(BytesBytes<'a>),
 }
-pub fn bytes_encode_unsigned_int8<'a>(value: f64) -> BytesEncodeEncoder<'a> {
+pub fn bytes_encode_unsigned_int8<'a>(value: i64) -> BytesEncodeEncoder<'a> {
     BytesEncodeEncoder::U8(value as u8)
 }
 pub fn bytes_encode_unsigned_int16<'a>(
     endianness: BytesEndianness,
-    value: f64,
+    value: i64,
 ) -> BytesEncodeEncoder<'a> {
     BytesEncodeEncoder::U16(endianness, value as u16)
 }
 pub fn bytes_encode_unsigned_int32<'a>(
     endianness: BytesEndianness,
-    value: f64,
+    value: i64,
 ) -> BytesEncodeEncoder<'a> {
     BytesEncodeEncoder::U32(endianness, value as u32)
 }
-pub fn bytes_encode_signed_int8<'a>(value: f64) -> BytesEncodeEncoder<'a> {
+pub fn bytes_encode_signed_int8<'a>(value: i64) -> BytesEncodeEncoder<'a> {
     BytesEncodeEncoder::I8(value as i8)
 }
 pub fn bytes_encode_signed_int16<'a>(
     endianness: BytesEndianness,
-    value: f64,
+    value: i64,
 ) -> BytesEncodeEncoder<'a> {
     BytesEncodeEncoder::I16(endianness, value as i16)
 }
 pub fn bytes_encode_signed_int32<'a>(
     endianness: BytesEndianness,
-    value: f64,
+    value: i64,
 ) -> BytesEncodeEncoder<'a> {
     BytesEncodeEncoder::I32(endianness, value as i32)
 }
@@ -37137,7 +37413,7 @@ pub enum TimeWeekday {
     Wed,
 }
 
-pub type TimeEra = GeneratedOffsetStart<f64, f64>;
+pub type TimeEra = GeneratedOffsetStart<i64, i64>;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TimeZone<'a> {
     Zone(i64, ListList<'a, TimeEra>),
@@ -37146,26 +37422,22 @@ pub enum TimeZone<'a> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TimeZoneName<'a> {
     Name(StringString<'a>),
-    Offset(f64),
+    Offset(i64),
 }
 
 pub fn time_custom_zone<'a>(
-    default_offset_in_minutes: f64,
-    eras: ListList<'a, GeneratedOffsetStart<f64, f64>>,
+    default_offset_in_minutes: i64,
+    eras: ListList<'a, GeneratedOffsetStart<i64, i64>>,
 ) -> TimeZone<'a> {
     TimeZone::Zone(default_offset_in_minutes as i64, eras)
 }
 
-pub fn floored_div(numerator: i64, denominator: i64) -> i64 {
-    f64::floor(numerator as f64 / denominator as f64) as i64
+pub fn time_millis_to_posix(milliseconds: i64) -> TimePosix {
+    TimePosix::Posix(milliseconds)
 }
 
-pub fn time_millis_to_posix(milliseconds: f64) -> TimePosix {
-    TimePosix::Posix(milliseconds as i64)
-}
-
-pub fn time_posix_to_millis(TimePosix::Posix(millis): TimePosix) -> f64 {
-    millis as f64
+pub fn time_posix_to_millis(TimePosix::Posix(millis): TimePosix) -> i64 {
+    millis
 }
 
 pub fn time_posix_to_millis_i64(TimePosix::Posix(millis): TimePosix) -> i64 {
@@ -37178,7 +37450,7 @@ pub fn time_to_adjusted_minutes<'a>(
 ) -> i64 {
     time_to_adjusted_minutes_help(
         default_offset,
-        floored_div(time_posix_to_millis_i64(time), 60000_i64),
+        time_posix_to_millis_i64(time) / 60000_i64,
         eras,
     )
 }
@@ -37186,7 +37458,7 @@ pub fn time_to_adjusted_minutes<'a>(
 pub fn time_to_adjusted_minutes_help<'a>(
     default_offset: i64,
     posix_minutes: i64,
-    eras: ListList<'a, GeneratedOffsetStart<f64, f64>>,
+    eras: ListList<'a, GeneratedOffsetStart<i64, i64>>,
 ) -> i64 {
     match eras {
         ListList::Empty => posix_minutes + default_offset,
@@ -37201,7 +37473,7 @@ pub fn time_to_adjusted_minutes_help<'a>(
 }
 
 fn time_to_civil(minutes: i64) -> TimeCivil {
-    let raw_day: i64 = floored_div(minutes, 60_i64 * 24_i64) + 719468_i64;
+    let raw_day: i64 = (minutes / (60_i64 * 24_i64)) + 719468_i64;
     let era: i64 = if raw_day >= 0_i64 {
         raw_day
     } else {
@@ -37223,23 +37495,23 @@ fn time_to_civil(minutes: i64) -> TimeCivil {
     }
 }
 
-pub fn time_to_day<'a>(zone: TimeZone<'a>, time: TimePosix) -> f64 {
-    time_to_civil(time_to_adjusted_minutes(zone, time)).day as f64
+pub fn time_to_day(zone: TimeZone, time: TimePosix) -> i64 {
+    time_to_civil(time_to_adjusted_minutes(zone, time)).day
 }
 
-pub fn time_to_hour<'a>(zone: TimeZone<'a>, time: TimePosix) -> f64 {
-    (floored_div(time_to_adjusted_minutes(zone, time), 60_i64) % 24_i64) as f64
+pub fn time_to_hour(zone: TimeZone, time: TimePosix) -> i64 {
+    (time_to_adjusted_minutes(zone, time) / 60_i64) % 24_i64
 }
 
-pub fn time_to_millis<'a>(_: TimeZone<'a>, time: TimePosix) -> f64 {
-    (time_posix_to_millis_i64(time) % 1000_i64) as f64
+pub fn time_to_millis(_: TimeZone, time: TimePosix) -> i64 {
+    time_posix_to_millis_i64(time) % 1000_i64
 }
 
-pub fn time_to_minute<'a>(zone: TimeZone<'a>, time: TimePosix) -> f64 {
-    (time_to_adjusted_minutes(zone, time) % 60_i64) as f64
+pub fn time_to_minute(zone: TimeZone, time: TimePosix) -> i64 {
+    time_to_adjusted_minutes(zone, time) % 60_i64
 }
 
-pub fn time_to_month<'a>(zone: TimeZone<'a>, time: TimePosix) -> TimeMonth {
+pub fn time_to_month(zone: TimeZone, time: TimePosix) -> TimeMonth {
     match time_to_civil(time_to_adjusted_minutes(zone, time)).month {
         1_i64 => TimeMonth::Jan,
         2_i64 => TimeMonth::Feb,
@@ -37256,12 +37528,12 @@ pub fn time_to_month<'a>(zone: TimeZone<'a>, time: TimePosix) -> TimeMonth {
     }
 }
 
-pub fn time_to_second<'a>(_: TimeZone<'a>, time: TimePosix) -> f64 {
-    (floored_div(time_posix_to_millis_i64(time), 1000_i64) % 60_i64) as f64
+pub fn time_to_second<'a>(_: TimeZone<'a>, time: TimePosix) -> i64 {
+    (time_posix_to_millis_i64(time) / 1000_i64) % 60_i64
 }
 
 pub fn time_to_weekday<'a>(zone: TimeZone<'a>, time: TimePosix) -> TimeWeekday {
-    match floored_div(time_to_adjusted_minutes(zone, time), 60_i64 * 24_i64) % 7_i64 {
+    match (time_to_adjusted_minutes(zone, time) / (60_i64 * 24_i64)) % 7_i64 {
         0_i64 => TimeWeekday::Thu,
         1_i64 => TimeWeekday::Fri,
         2_i64 => TimeWeekday::Sat,
@@ -37272,8 +37544,8 @@ pub fn time_to_weekday<'a>(zone: TimeZone<'a>, time: TimePosix) -> TimeWeekday {
     }
 }
 
-pub fn time_to_year<'a>(zone: TimeZone<'a>, time: TimePosix) -> f64 {
-    time_to_civil(time_to_adjusted_minutes(zone, time)).year as f64
+pub fn time_to_year<'a>(zone: TimeZone<'a>, time: TimePosix) -> i64 {
+    time_to_civil(time_to_adjusted_minutes(zone, time)).year
 }
 
 pub fn time_utc<'a>() -> TimeZone<'a> {
@@ -37282,11 +37554,11 @@ pub fn time_utc<'a>() -> TimeZone<'a> {
 
 pub fn elm_kernel_parser_is_sub_string(
     small_string: StringString,
-    offset_original: f64,
-    row_original: f64,
-    col_original: f64,
+    offset_original: i64,
+    row_original: i64,
+    col_original: i64,
     big_string: StringString,
-) -> (f64, f64, f64) {
+) -> (i64, i64, i64) {
     let mut row: usize = row_original as usize;
     let mut col: usize = col_original as usize;
     let mut offset: usize = offset_original as usize;
@@ -37297,7 +37569,7 @@ pub fn elm_kernel_parser_is_sub_string(
         .skip(offset_original as usize)
     {
         if small_string_iterator.next() != Option::Some(*code) {
-            return (-1_f64, row as f64, col as f64);
+            return (-1_i64, row as i64, col as i64);
         }
         offset = offset + 1;
         if *code == '\\n' {
@@ -37307,41 +37579,41 @@ pub fn elm_kernel_parser_is_sub_string(
             col = col + 1;
         }
     }
-    (offset as f64, row as f64, col as f64)
+    (offset as i64, row as i64, col as i64)
 }
 
 pub fn elm_kernel_parser_is_sub_char(
     predicate: impl FnOnce(char) -> bool,
-    offset_original: f64,
+    offset_original: i64,
     string: StringString,
-) -> f64 {
+) -> i64 {
     match rope_to_cow_str(string)
         .chars()
         .nth(offset_original as usize)
     {
-        Option::None => -1_f64,
+        Option::None => -1_i64,
         Option::Some(char_at_offset) => {
             if predicate(char_at_offset) {
                 if char_at_offset == '\\n' {
-                    -2_f64
+                    -2_i64
                 } else {
-                    offset_original + 1_f64
+                    offset_original + 1_i64
                 }
             } else {
-                -1_f64
+                -1_i64
             }
         }
     }
 }
 
-pub fn elm_kernel_parser_is_ascii_code(code: f64, offset: f64, string: StringString) -> bool {
+pub fn elm_kernel_parser_is_ascii_code(code: i64, offset: i64, string: StringString) -> bool {
     match rope_to_cow_str(string).chars().nth(offset as usize) {
         Option::None => false,
         Option::Some(char_at_offset) => char_at_offset as usize == code as usize,
     }
 }
 
-pub fn elm_kernel_parser_chomp_base10(offset_original: f64, string: StringString) -> f64 {
+pub fn elm_kernel_parser_chomp_base10(offset_original: i64, string: StringString) -> i64 {
     let mut offset: usize = offset_original as usize;
     let cow_str: std::borrow::Cow<str> = rope_to_cow_str(string);
     let mut string_iterator_from_offset = cow_str.chars().skip(offset);
@@ -37357,15 +37629,14 @@ pub fn elm_kernel_parser_chomp_base10(offset_original: f64, string: StringString
             }
         }
     }
-    offset as f64
+    offset as i64
 }
 
 pub fn elm_kernel_parser_consume_base(
-    base_f64: f64,
-    offset_original: f64,
+    base: i64,
+    offset_original: i64,
     string: StringString,
-) -> (f64, f64) {
-    let base: i64 = base_f64 as i64;
+) -> (i64, i64) {
     let mut offset: usize = offset_original as usize;
     let cow_str: std::borrow::Cow<str> = rope_to_cow_str(string);
     let mut string_iterator_from_offset = cow_str.chars().skip(offset);
@@ -37384,10 +37655,10 @@ pub fn elm_kernel_parser_consume_base(
             }
         }
     }
-    (offset as f64, total as f64)
+    (offset as i64, total)
 }
 
-pub fn elm_kernel_parser_consume_base16(offset_original: f64, string: StringString) -> (f64, f64) {
+pub fn elm_kernel_parser_consume_base16(offset_original: i64, string: StringString) -> (i64, i64) {
     let mut offset: usize = offset_original as usize;
     let cow_str: std::borrow::Cow<str> = rope_to_cow_str(string);
     let mut string_iterator_from_offset = cow_str.chars().skip(offset);
@@ -37411,24 +37682,24 @@ pub fn elm_kernel_parser_consume_base16(offset_original: f64, string: StringStri
             }
         }
     }
-    (offset as f64, total as f64)
+    (offset as i64, total as i64)
 }
 
 pub fn elm_kernel_parser_find_sub_string(
     small_string: StringString,
-    offset_original_f64: f64,
-    row_original: f64,
-    col_original: f64,
+    offset_original_i64: i64,
+    row_original: i64,
+    col_original: i64,
     big_string: StringString,
-) -> (f64, f64, f64) {
-    let offset_original: usize = offset_original_f64 as usize;
+) -> (i64, i64, i64) {
+    let offset_original: usize = offset_original_i64 as usize;
     let big_string_cow: std::borrow::Cow<str> = rope_to_cow_str(big_string);
     match big_string_cow.char_indices().nth(offset_original) {
-        Option::None => (-1_f64, row_original, col_original),
+        Option::None => (-1_i64, row_original, col_original),
         Option::Some((offset_original_as_char_index, _)) => {
             let small_string_cow: std::borrow::Cow<str> = rope_to_cow_str(small_string);
             match big_string_cow[offset_original_as_char_index..].find(small_string_cow.as_ref()) {
-                Option::None => (-1_f64, row_original, col_original),
+                Option::None => (-1_i64, row_original, col_original),
                 Option::Some(found_start_offset_from_offset) => {
                     let small_string_char_count = small_string_cow.chars().count();
                     let mut row: usize = row_original as usize;
@@ -37445,9 +37716,9 @@ pub fn elm_kernel_parser_find_sub_string(
                         }
                     }
                     (
-                        (offset_original + found_start_offset_from_offset) as f64,
-                        row as f64,
-                        col as f64,
+                        (offset_original + found_start_offset_from_offset) as i64,
+                        row as i64,
+                        col as i64,
                     )
                 }
             }

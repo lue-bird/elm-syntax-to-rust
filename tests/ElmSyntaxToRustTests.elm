@@ -93,9 +93,9 @@ elmModuleSourceTranspileToRust source =
                     { errors : List String
                     , declarations :
                         { fns :
-                            FastDict.Dict
-                                String
-                                { parameters :
+                            List
+                                { name : String
+                                , parameters :
                                     List
                                         { pattern : ElmSyntaxToRust.RustPattern
                                         , type_ : ElmSyntaxToRust.RustType
@@ -105,22 +105,22 @@ elmModuleSourceTranspileToRust source =
                                 , lifetimeParameters : List String
                                 }
                         , consts :
-                            FastDict.Dict
-                                String
-                                { result : ElmSyntaxToRust.RustExpression
+                            List
+                                { name : String
+                                , result : ElmSyntaxToRust.RustExpression
                                 , resultType : ElmSyntaxToRust.RustType
                                 }
                         , typeAliases :
-                            FastDict.Dict
-                                String
-                                { lifetimeParameters : List String
+                            List
+                                { name : String
+                                , lifetimeParameters : List String
                                 , parameters : List String
                                 , type_ : ElmSyntaxToRust.RustType
                                 }
                         , enumTypes :
-                            FastDict.Dict
-                                String
-                                { parameters : List String
+                            List
+                                { name : String
+                                , parameters : List String
                                 , lifetimeParameters : List String
                                 , variants :
                                     FastDict.Dict
@@ -128,9 +128,9 @@ elmModuleSourceTranspileToRust source =
                                         (List ElmSyntaxToRust.RustType)
                                 }
                         , structs :
-                            FastDict.Dict
-                                String
-                                { parameters : List String
+                            List
+                                { name : String
+                                , parameters : List String
                                 , fields : FastDict.Dict String ElmSyntaxToRust.RustType
                                 }
                         }

@@ -10,7 +10,7 @@ import ElmSyntaxToRust
 
 plus2 : Int -> Int
 plus2 n =
-    n + ([ 2 ] |> List.sum)
+    n + ([ 2.0 ] |> List.sum)
 """
     |> Elm.Parser.parseToFile
     |> Result.mapError (\_ -> "failed to parse elm source code")
@@ -24,7 +24,7 @@ plus2 n =
 -->
 Ok """...
 pub fn sample_plus2<'a>(allocator: &'a Bump, n: f64) -> f64 {
-    basics_add(n, list_sum(list(allocator, [2_f64])))
+    std::ops::Add::add(n, elm::list_sum_float(elm::list(allocator, [2_f64])))
 }
 """
 ```
@@ -94,7 +94,8 @@ please [report an issue](https://github.com/lue-bird/elm-syntax-to-rust/issues/n
 In the transpiled code, you will find these types:
 
 - elm `Bool` (`True` or `False`) → rust `bool` (`true` or `false`), `Char` (`'a'`) → `char` (`'a'`), `( Bool, Char )` → `( bool, char )`
-- elm `Float`s, `Int`s and `number-` variable typed values will be of type `f64`. Create and match by appending `_f64` to any number literal or using `as f64`
+- elm `Int`s will be of type `i64`. Create and match by appending `_i64` to any number literal or using `as i64`
+- elm `Float`s will be of type `f64`. Create and match by appending `_f64` to any number literal or using `as f64`
 - elm `String`s (like `"a"`) will be of type `elm::StringString`.
   Create from literals or other string slices with (`elm::StringString::One("a")`). Match with `your_string if elm::string_equals_str(&your_string, "some string")`
 - elm `Array<a>`s (like `Array.fromList [ 'a' ]`) will be of type `Rc<Vec<A>>` (alias `elm::ArrayArray<A>`).
