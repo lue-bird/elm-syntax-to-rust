@@ -10994,6 +10994,13 @@ expression context expressionTypedNode =
                 )
 
         ElmSyntaxTypeInfer.ExpressionCaseOf caseOf ->
+            let
+                typeAliasesInModule : String -> Maybe (FastDict.Dict String { parameters : List String, recordFieldOrder : Maybe (List String), type_ : ElmSyntaxTypeInfer.Type })
+                typeAliasesInModule moduleNameToAccess =
+                    context.moduleInfo
+                        |> FastDict.get moduleNameToAccess
+                        |> Maybe.map .typeAliases
+            in
             Result.map2
                 (\matched cases ->
                     RustExpressionMatch
@@ -11034,11 +11041,7 @@ expression context expressionTypedNode =
                                         rustPattern =
                                             syntaxCase.pattern
                                                 |> pattern
-                                                    { typeAliasesInModule =
-                                                        \moduleNameToAccess ->
-                                                            context.moduleInfo
-                                                                |> FastDict.get moduleNameToAccess
-                                                                |> Maybe.map .typeAliases
+                                                    { typeAliasesInModule = typeAliasesInModule
                                                     , rustEnumTypes = context.rustEnumTypes
                                                     }
                                     in
