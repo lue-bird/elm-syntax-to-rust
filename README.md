@@ -33,7 +33,7 @@ pub fn sample_plus2<'a>(allocator: &'a Bump, n: f64) -> f64 {
 
 - not supported are
     - ports that use non-json values like `port sendMessage : String -> Cmd msg`, glsl, phantom types, `==` on a generic value
-    - `elm/file`, `elm/http`, `elm/browser`, `elm-explorations/markdown`, `elm-explorations/webgl`, `elm-explorations/benchmark`, `elm/regex` (nothing in `std`), `elm-explorations/linear-algebra` (`std::simd` only available in nightly) (currently also `elm/random`, `elm/virtual-dom` TODO)
+    - `elm/file`, `elm/http`, `elm/browser`, `elm-explorations/markdown`, `elm-explorations/webgl`, `elm-explorations/benchmark`, `elm/regex` (nothing in `std`), `elm-explorations/linear-algebra` (`std::simd` only available in nightly) (currently also `elm/random` TODO)
     - `Task`, `Process`, `Platform.Task`, `Platform.ProcessId`, `Platform.Router`, `Platform.sendToApp`, `Platform.sendToSelf`, `Random.generate`, `Time.now`, `Time.every`, `Time.here`, `Time.getZoneName`, `Bytes.getHostEndianness`
     - extensible record types outside of module-level value/function declarations. For example, these declarations might not work:
         ```elm
@@ -48,6 +48,7 @@ pub fn sample_plus2<'a>(allocator: &'a Bump, n: f64) -> f64 {
         ```
         In the non-allowed cases listed above, we assume that you intended to use a regular record type with only the extension fields which can lead to rust compile errors if you actually pass in additional fields.
     - elm's `toLocale[Case]` functions will just behave like `toCase`
+    - elm's `VirtualDom/Html/Svg.lazyN` functions will still exist for compatibility but they will behave just like constructing them eagerly
 - dependencies cannot internally use the same module names as the transpiled project
 - the resulting code might not be readable or even conventionally formatted and comments are not preserved
 

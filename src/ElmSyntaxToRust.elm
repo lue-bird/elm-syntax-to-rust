@@ -5955,25 +5955,25 @@ referenceToCoreRust reference =
         "Elm.Kernel.VirtualDom" ->
             case reference.name of
                 "property" ->
-                    Just { qualification = [], name = "virtual_dom_property", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_property", requiresAllocator = True }
 
                 "attribute" ->
-                    Just { qualification = [], name = "virtual_dom_attribute", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_attribute", requiresAllocator = True }
 
                 "attributeNS" ->
-                    Just { qualification = [], name = "virtual_dom_attributeNS", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_attribute_ns", requiresAllocator = True }
 
                 "node" ->
-                    Just { qualification = [], name = "virtual_dom_node", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_node", requiresAllocator = True }
 
                 "nodeNS" ->
-                    Just { qualification = [], name = "virtual_dom_nodeNS", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_node_ns", requiresAllocator = True }
 
                 "noJavaScriptOrHtmlUri" ->
-                    Just { qualification = [], name = "virtual_dom_no_java_script_or_html_uri", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_no_java_script_or_html_uri", requiresAllocator = False }
 
                 "noJavaScriptUri" ->
-                    Just { qualification = [], name = "virtual_dom_no_java_script_uri", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_no_java_script_uri", requiresAllocator = False }
 
                 _ ->
                     Nothing
@@ -5981,64 +5981,64 @@ referenceToCoreRust reference =
         "VirtualDom" ->
             case reference.name of
                 "text" ->
-                    Just { qualification = [], name = "virtual_dom_text", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_text", requiresAllocator = True }
 
                 "node" ->
-                    Just { qualification = [], name = "virtual_dom_node", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_node", requiresAllocator = True }
 
                 "nodeNS" ->
-                    Just { qualification = [], name = "virtual_dom_node_ns", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_node_ns", requiresAllocator = True }
 
                 "style" ->
-                    Just { qualification = [], name = "virtual_dom_style", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_style", requiresAllocator = True }
 
                 "property" ->
-                    Just { qualification = [], name = "virtual_dom_property", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_property", requiresAllocator = True }
 
                 "attribute" ->
-                    Just { qualification = [], name = "virtual_dom_attribute", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_attribute", requiresAllocator = True }
 
                 "attributeNS" ->
-                    Just { qualification = [], name = "virtual_dom_attribute_ns", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_attribute_ns", requiresAllocator = True }
 
                 "on" ->
-                    Just { qualification = [], name = "virtual_dom_on", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_on", requiresAllocator = True }
 
                 "map" ->
-                    Just { qualification = [], name = "virtual_dom_map", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_map", requiresAllocator = True }
 
                 "mapAttribute" ->
-                    Just { qualification = [], name = "virtual_dom_map_attribute", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_map_attribute", requiresAllocator = True }
 
                 "keyedNode" ->
-                    Just { qualification = [], name = "virtual_dom_keyed_node", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_keyed_node", requiresAllocator = True }
 
                 "keyedNodeNS" ->
-                    Just { qualification = [], name = "virtual_dom_keyed_node_ns", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_keyed_node_ns", requiresAllocator = True }
 
                 "lazy" ->
-                    Just { qualification = [], name = "virtual_dom_lazy", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_lazy", requiresAllocator = False }
 
                 "lazy2" ->
-                    Just { qualification = [], name = "virtual_dom_lazy2", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_lazy2", requiresAllocator = False }
 
                 "lazy3" ->
-                    Just { qualification = [], name = "virtual_dom_lazy3", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_lazy3", requiresAllocator = False }
 
                 "lazy4" ->
-                    Just { qualification = [], name = "virtual_dom_lazy4", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_lazy4", requiresAllocator = False }
 
                 "lazy5" ->
-                    Just { qualification = [], name = "virtual_dom_lazy5", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_lazy5", requiresAllocator = False }
 
                 "lazy6" ->
-                    Just { qualification = [], name = "virtual_dom_lazy6", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_lazy6", requiresAllocator = False }
 
                 "lazy7" ->
-                    Just { qualification = [], name = "virtual_dom_lazy7", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_lazy7", requiresAllocator = False }
 
                 "lazy8" ->
-                    Just { qualification = [], name = "virtual_dom_lazy8", requiresAllocator = Debug.todo "" }
+                    Just { qualification = [], name = "virtual_dom_lazy8", requiresAllocator = False }
 
                 _ ->
                     Nothing
@@ -37815,5 +37815,411 @@ pub fn platform_worker<'a, Flags, State, Event>(
     >,
 ) -> PlatformProgram<'a, Flags, State, Event> {
     config
+}
+
+fn str_remove_whitespace_and_ascii_lowercase(str: &str) -> String {
+    str.chars()
+        .filter(|char| !char.is_whitespace())
+        .map(|char| char.to_ascii_lowercase())
+        .collect::<String>()
+}
+pub fn virtual_dom_no_java_script_uri<'a>(uri: StringString<'a>) -> StringString<'a> {
+    if str_remove_whitespace_and_ascii_lowercase(&rope_to_cow_str(uri)).contains("javascript") {
+        string_rope_empty
+    } else {
+        uri
+    }
+}
+pub fn virtual_dom_no_java_script_or_html_uri<'a>(uri: StringString<'a>) -> StringString<'a> {
+    let uri_normal: String = str_remove_whitespace_and_ascii_lowercase(&rope_to_cow_str(uri));
+    if uri_normal.contains("javascript") || uri_normal.contains("data:text/html") {
+        string_rope_empty
+    } else {
+        uri
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GeneratedMessagePreventDefaultStopPropagation<Message, PreventDefault, StopPropagation> {
+    pub message: Message,
+    pub prevent_default: PreventDefault,
+    pub stop_propagation: StopPropagation,
+}
+pub type VirtualDomCustomHandledEvent<Event> =
+    GeneratedMessagePreventDefaultStopPropagation<Event, bool, bool>;
+#[derive(Clone, Copy)]
+pub enum VirtualDomHandler<'a, Event> {
+    Normal(JsonDecodeDecoder<'a, Event>),
+    MayStopPropagation(JsonDecodeDecoder<'a, (Event, bool)>),
+    MayPreventDefault(JsonDecodeDecoder<'a, (Event, bool)>),
+    Custom(JsonDecodeDecoder<'a, VirtualDomCustomHandledEvent<Event>>),
+}
+#[derive(Clone, Copy)]
+pub enum VirtualDomAttribute<'a, Event> {
+    ModifierAttribute {
+        namespace: Option<&'a str>,
+        key: &'a str,
+        value: &'a str,
+    },
+    ModifierStyle {
+        key: &'a str,
+        value: &'a str,
+    },
+    ModifierProperty {
+        key: &'a str,
+        value: JsonValue<'a>,
+    },
+    ModifierEventListener {
+        name: &'a str,
+        handler: VirtualDomHandler<'a, Event>,
+    },
+}
+#[derive(Clone, Copy)]
+pub enum VirtualDomNode<'a, Event> {
+    Text(&'a str),
+    Element {
+        tag: &'a str,
+        namespace: Option<&'a str>,
+        subs: &'a [VirtualDomNode<'a, Event>],
+        modifiers: &'a [VirtualDomAttribute<'a, Event>],
+    },
+    ElementKeyed {
+        tag: &'a str,
+        namespace: Option<&'a str>,
+        subs: &'a [(&'a str, VirtualDomNode<'a, Event>)],
+        modifiers: &'a [VirtualDomAttribute<'a, Event>],
+    },
+}
+
+pub fn virtual_dom_text<'a, Event>(
+    allocator: &'a bumpalo::Bump,
+    string: StringString<'a>,
+) -> VirtualDomNode<'a, Event> {
+    VirtualDomNode::Text(rope_to_str(allocator, string))
+}
+pub fn virtual_dom_node<'a, Event: Clone>(
+    allocator: &'a bumpalo::Bump,
+    tag: StringString<'a>,
+    modifiers: ListList<VirtualDomAttribute<'a, Event>>,
+    subs: ListList<VirtualDomNode<'a, Event>>,
+) -> VirtualDomNode<'a, Event> {
+    VirtualDomNode::Element {
+        tag: rope_to_str(allocator, tag),
+        namespace: Option::None,
+        subs: allocator.alloc(subs.into_iter().collect::<Vec<_>>()),
+        modifiers: allocator.alloc(modifiers.into_iter().collect::<Vec<_>>()),
+    }
+}
+pub fn virtual_dom_node_ns<'a, Event: Clone>(
+    allocator: &'a bumpalo::Bump,
+    namespace_: StringString<'a>,
+    tag: StringString<'a>,
+    modifiers: ListList<VirtualDomAttribute<'a, Event>>,
+    subs: ListList<VirtualDomNode<'a, Event>>,
+) -> VirtualDomNode<'a, Event> {
+    VirtualDomNode::Element {
+        tag: rope_to_str(allocator, tag),
+        namespace: Option::Some(rope_to_str(allocator, namespace_)),
+        subs: allocator.alloc(subs.into_iter().collect::<Vec<_>>()),
+        modifiers: allocator.alloc(modifiers.into_iter().collect::<Vec<_>>()),
+    }
+}
+pub fn virtual_dom_keyed_node<'a, Event: Clone>(
+    allocator: &'a bumpalo::Bump,
+    tag: StringString<'a>,
+    modifiers: ListList<VirtualDomAttribute<'a, Event>>,
+    subs: ListList<(StringString<'a>, VirtualDomNode<'a, Event>)>,
+) -> VirtualDomNode<'a, Event> {
+    VirtualDomNode::ElementKeyed {
+        tag: rope_to_str(allocator, tag),
+        namespace: Option::None,
+        subs: allocator.alloc(
+            subs.into_iter()
+                .map(|(key, node)| (rope_to_str(allocator, key), node))
+                .collect::<Vec<_>>(),
+        ),
+        modifiers: allocator.alloc(modifiers.into_iter().collect::<Vec<_>>()),
+    }
+}
+pub fn virtual_dom_keyed_node_ns<'a, Event: Clone>(
+    allocator: &'a bumpalo::Bump,
+    namespace_: StringString<'a>,
+    tag: StringString<'a>,
+    modifiers: ListList<VirtualDomAttribute<'a, Event>>,
+    subs: ListList<(StringString<'a>, VirtualDomNode<'a, Event>)>,
+) -> VirtualDomNode<'a, Event> {
+    VirtualDomNode::ElementKeyed {
+        tag: rope_to_str(allocator, tag),
+        namespace: Option::Some(rope_to_str(allocator, namespace_)),
+        subs: allocator.alloc(
+            subs.into_iter()
+                .map(|(key, node)| (rope_to_str(allocator, key), node))
+                .collect::<Vec<_>>(),
+        ),
+        modifiers: allocator.alloc(modifiers.into_iter().collect::<Vec<_>>()),
+    }
+}
+pub fn virtual_dom_lazy<'a, A, Event>(
+    construct: impl Fn(A) -> VirtualDomNode<'a, Event>,
+    a: A,
+) -> VirtualDomNode<'a, Event> {
+    construct(a)
+}
+pub fn virtual_dom_lazy2<'a, A, B, Event>(
+    construct: impl Fn(A, B) -> VirtualDomNode<'a, Event>,
+    a: A,
+    b: B,
+) -> VirtualDomNode<'a, Event> {
+    construct(a, b)
+}
+pub fn virtual_dom_lazy3<'a, A, B, C, Event>(
+    construct: impl Fn(A, B, C) -> VirtualDomNode<'a, Event>,
+    a: A,
+    b: B,
+    c: C,
+) -> VirtualDomNode<'a, Event> {
+    construct(a, b, c)
+}
+pub fn virtual_dom_lazy4<'a, A, B, C, D, Event>(
+    construct: impl Fn(A, B, C, D) -> VirtualDomNode<'a, Event>,
+    a: A,
+    b: B,
+    c: C,
+    d: D,
+) -> VirtualDomNode<'a, Event> {
+    construct(a, b, c, d)
+}
+pub fn virtual_dom_lazy5<'a, A, B, C, D, E, Event>(
+    construct: impl Fn(A, B, C, D, E) -> VirtualDomNode<'a, Event>,
+    a: A,
+    b: B,
+    c: C,
+    d: D,
+    e: E,
+) -> VirtualDomNode<'a, Event> {
+    construct(a, b, c, d, e)
+}
+pub fn virtual_dom_lazy6<'a, A, B, C, D, E, F, Event>(
+    construct: impl Fn(A, B, C, D, E, F) -> VirtualDomNode<'a, Event>,
+    a: A,
+    b: B,
+    c: C,
+    d: D,
+    e: E,
+    f: F,
+) -> VirtualDomNode<'a, Event> {
+    construct(a, b, c, d, e, f)
+}
+pub fn virtual_dom_lazy7<'a, A, B, C, D, E, F, G, Event>(
+    construct: impl Fn(A, B, C, D, E, F, G) -> VirtualDomNode<'a, Event>,
+    a: A,
+    b: B,
+    c: C,
+    d: D,
+    e: E,
+    f: F,
+    g: G,
+) -> VirtualDomNode<'a, Event> {
+    construct(a, b, c, d, e, f, g)
+}
+pub fn virtual_dom_lazy8<'a, A, B, C, D, E, F, G, H, Event>(
+    construct: impl Fn(A, B, C, D, E, F, G, H) -> VirtualDomNode<'a, Event>,
+    a: A,
+    b: B,
+    c: C,
+    d: D,
+    e: E,
+    f: F,
+    g: G,
+    h: H,
+) -> VirtualDomNode<'a, Event> {
+    construct(a, b, c, d, e, f, g, h)
+}
+
+pub fn virtual_dom_style<'a, Event>(
+    allocator: &'a bumpalo::Bump,
+    key: StringString<'a>,
+    value: StringString<'a>,
+) -> VirtualDomAttribute<'a, Event> {
+    VirtualDomAttribute::ModifierStyle {
+        key: rope_to_str(allocator, key),
+        value: rope_to_str(allocator, value),
+    }
+}
+pub fn virtual_dom_property<'a, Event>(
+    allocator: &'a bumpalo::Bump,
+    key: StringString<'a>,
+    value: JsonValue<'a>,
+) -> VirtualDomAttribute<'a, Event> {
+    VirtualDomAttribute::ModifierProperty {
+        key: rope_to_str(allocator, key),
+        value: value,
+    }
+}
+pub fn virtual_dom_attribute<'a, Event>(
+    allocator: &'a bumpalo::Bump,
+    key: StringString<'a>,
+    value: StringString<'a>,
+) -> VirtualDomAttribute<'a, Event> {
+    VirtualDomAttribute::ModifierAttribute {
+        namespace: Option::None,
+        key: rope_to_str(allocator, key),
+        value: rope_to_str(allocator, value),
+    }
+}
+pub fn virtual_dom_attribute_ns<'a, Event>(
+    allocator: &'a bumpalo::Bump,
+    namespace_: StringString<'a>,
+    key: StringString<'a>,
+    value: StringString<'a>,
+) -> VirtualDomAttribute<'a, Event> {
+    VirtualDomAttribute::ModifierAttribute {
+        namespace: Option::Some(rope_to_str(allocator, namespace_)),
+        key: rope_to_str(allocator, key),
+        value: rope_to_str(allocator, value),
+    }
+}
+pub fn virtual_dom_on<'a, Event>(
+    allocator: &'a bumpalo::Bump,
+    name: StringString<'a>,
+    handler: VirtualDomHandler<'a, Event>,
+) -> VirtualDomAttribute<'a, Event> {
+    VirtualDomAttribute::ModifierEventListener {
+        name: rope_to_str(allocator, name),
+        handler: handler,
+    }
+}
+
+pub fn virtual_dom_map_attribute<'a, Event, EventMapped>(
+    allocator: &'a bumpalo::Bump,
+    event_change: impl Fn(Event) -> EventMapped + Clone + 'a,
+    modifier: VirtualDomAttribute<'a, Event>,
+) -> VirtualDomAttribute<'a, EventMapped> {
+    match modifier {
+        VirtualDomAttribute::ModifierAttribute {
+            namespace: namespace,
+            key: key,
+            value: value,
+        } => VirtualDomAttribute::ModifierAttribute {
+            namespace: namespace,
+            key: key,
+            value: value,
+        },
+        VirtualDomAttribute::ModifierStyle {
+            key: key,
+            value: value,
+        } => VirtualDomAttribute::ModifierStyle {
+            key: key,
+            value: value,
+        },
+        VirtualDomAttribute::ModifierProperty {
+            key: key,
+            value: value,
+        } => VirtualDomAttribute::ModifierProperty {
+            key: key,
+            value: value,
+        },
+        VirtualDomAttribute::ModifierEventListener {
+            name: name,
+            handler: handler,
+        } => VirtualDomAttribute::ModifierEventListener {
+            name: name,
+            handler: virtual_dom_handler_map(allocator, event_change, handler),
+        },
+    }
+}
+pub fn virtual_dom_handler_map<'a, Event, EventMapped>(
+    allocator: &'a bumpalo::Bump,
+    event_change: impl Fn(Event) -> EventMapped + Clone + 'a,
+    handler: VirtualDomHandler<'a, Event>,
+) -> VirtualDomHandler<'a, EventMapped> {
+    match handler {
+        VirtualDomHandler::Normal(decoder) => {
+            VirtualDomHandler::Normal(json_decode_map(allocator, event_change, decoder))
+        }
+        VirtualDomHandler::MayStopPropagation(decoder) => {
+            VirtualDomHandler::MayStopPropagation(json_decode_map(
+                allocator,
+                move |decoded| (event_change(decoded.0), decoded.1),
+                decoder,
+            ))
+        }
+        VirtualDomHandler::MayPreventDefault(decoder) => {
+            VirtualDomHandler::MayPreventDefault(json_decode_map(
+                allocator,
+                move |decoded| (event_change(decoded.0), decoded.1),
+                decoder,
+            ))
+        }
+        VirtualDomHandler::Custom(decoder) => VirtualDomHandler::Custom(json_decode_map(
+            allocator,
+            move |custom| GeneratedMessagePreventDefaultStopPropagation {
+                message: event_change(custom.message),
+                prevent_default: custom.prevent_default,
+                stop_propagation: custom.stop_propagation,
+            },
+            decoder,
+        )),
+    }
+}
+pub fn virtual_dom_map<'a, Event: Clone, EventMapped>(
+    allocator: &'a bumpalo::Bump,
+    event_change: impl Fn(Event) -> EventMapped + Clone + 'a,
+    node: VirtualDomNode<'a, Event>,
+) -> VirtualDomNode<'a, EventMapped> {
+    match node {
+        VirtualDomNode::Text(text) => VirtualDomNode::Text(text),
+        VirtualDomNode::Element {
+            tag: tag,
+            namespace: namespace,
+            subs: subs,
+            modifiers: modifiers,
+        } => VirtualDomNode::Element {
+            tag: tag,
+            namespace: namespace,
+            subs: allocator.alloc(
+                subs.into_iter()
+                    .map(|sub| virtual_dom_map(allocator, event_change.clone(), sub.clone()))
+                    .collect::<Vec<_>>(),
+            ),
+            modifiers: allocator.alloc(
+                modifiers
+                    .into_iter()
+                    .map(|modifier| {
+                        virtual_dom_map_attribute(allocator, event_change.clone(), modifier.clone())
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+        },
+        VirtualDomNode::ElementKeyed {
+            tag: tag,
+            namespace: namespace,
+            subs: subs,
+            modifiers: modifiers,
+        } => VirtualDomNode::ElementKeyed {
+            tag: tag,
+            namespace: namespace,
+            subs: allocator
+                .alloc(
+                    subs.into_iter()
+                        .map(|(key, sub)| {
+                            (
+                                *key,
+                                virtual_dom_map(allocator, event_change.clone(), sub.clone()),
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .as_slice(),
+            modifiers: allocator.alloc(
+                modifiers
+                    .into_iter()
+                    .map(|modifier| {
+                        virtual_dom_map_attribute(allocator, event_change.clone(), modifier.clone())
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+        },
+    }
 }
 """
