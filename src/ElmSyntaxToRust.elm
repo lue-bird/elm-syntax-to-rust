@@ -4171,8 +4171,8 @@ referenceToCoreRust reference =
 
                 "xor" ->
                     Just
-                        { qualification = []
-                        , name = "basics_neq"
+                        { qualification = [ "std", "ops", "BitXor" ]
+                        , name = "bitxor"
                         , requiresAllocator = False
                         }
 
@@ -8736,16 +8736,7 @@ rustExpressionIsConst context rustExpression =
                 ( [], "basics_or" ) ->
                     True
 
-                ( [], "basics_xor" ) ->
-                    True
-
                 ( [], "basics_clamp_float" ) ->
-                    True
-
-                ( [], "basics_idiv" ) ->
-                    True
-
-                ( [], "basics_fdiv" ) ->
                     True
 
                 ( [ "f64" ], "to_radians" ) ->
@@ -16006,8 +15997,8 @@ okReferenceIdiv :
         }
 okReferenceIdiv =
     Ok
-        { qualification = []
-        , name = "basics_idiv"
+        { qualification = [ "std", "ops", "Div" ]
+        , name = "div"
         , requiresAllocator = False
         }
 
@@ -16021,8 +16012,8 @@ okReferenceFdiv :
         }
 okReferenceFdiv =
     Ok
-        { qualification = []
-        , name = "basics_fdiv"
+        { qualification = [ "std", "ops", "Div" ]
+        , name = "div"
         , requiresAllocator = False
         }
 
@@ -33489,9 +33480,6 @@ pub const fn basics_and(a: bool, b: bool) -> bool {
 pub const fn basics_or(a: bool, b: bool) -> bool {
     a || b
 }
-pub const fn basics_xor(a: bool, b: bool) -> bool {
-    a ^ b
-}
 pub const fn basics_to_float(int: i64) -> f64 {
     int as f64
 }
@@ -33506,12 +33494,6 @@ pub const fn basics_clamp_float(min: f64, max: f64, n: f64) -> f64 {
 }
 pub fn basics_log_base(base: f64, n: f64) -> f64 {
     n.log(base)
-}
-pub const fn basics_fdiv(base: f64, by: f64) -> f64 {
-    base / by
-}
-pub const fn basics_idiv(base: i64, by: i64) -> i64 {
-    base / by
 }
 pub fn basics_pow_int(base: i64, by: i64) -> i64 {
     base.pow(by as u32)
@@ -33566,7 +33548,11 @@ pub fn bitwise_shift_right_by(positions: i64, n: i64) -> i64 {
     std::ops::Shr::shr(n as i32, positions as i32) as i64
 }
 pub fn bitwise_shift_right_zf_by(positions: i64, n: i64) -> i64 {
-    std::ops::Shr::shr(n as u32, positions as u32) as i64
+    // elm (or rather js) "reinterprets" the first 32 bits of the signed int as unsigned
+    std::ops::Shr::shr(
+        u32::from_ne_bytes(i32::to_ne_bytes(n as i32)),
+        u32::from_ne_bytes(i32::to_ne_bytes(positions as i32)),
+    ) as i64
 }
 
 pub fn list_is_empty<A>(list: ListList<A>) -> bool {
@@ -37432,8 +37418,8 @@ pub fn time_posix_to_millis_i64(TimePosix::Posix(millis): TimePosix) -> i64 {
     millis
 }
 
-pub fn time_to_adjusted_minutes<'a>(
-    TimeZone::Zone(default_offset, eras): TimeZone<'a>,
+pub fn time_to_adjusted_minutes(
+    TimeZone::Zone(default_offset, eras): TimeZone,
     time: TimePosix,
 ) -> i64 {
     time_to_adjusted_minutes_help(
@@ -37443,10 +37429,10 @@ pub fn time_to_adjusted_minutes<'a>(
     )
 }
 
-pub fn time_to_adjusted_minutes_help<'a>(
+pub fn time_to_adjusted_minutes_help(
     default_offset: i64,
     posix_minutes: i64,
-    eras: ListList<'a, GeneratedOffsetStart<i64, i64>>,
+    eras: ListList<GeneratedOffsetStart<i64, i64>>,
 ) -> i64 {
     match eras {
         ListList::Empty => posix_minutes + default_offset,
@@ -37516,11 +37502,11 @@ pub fn time_to_month(zone: TimeZone, time: TimePosix) -> TimeMonth {
     }
 }
 
-pub fn time_to_second<'a>(_: TimeZone<'a>, time: TimePosix) -> i64 {
+pub fn time_to_second(_: TimeZone, time: TimePosix) -> i64 {
     (time_posix_to_millis_i64(time) / 1000_i64) % 60_i64
 }
 
-pub fn time_to_weekday<'a>(zone: TimeZone<'a>, time: TimePosix) -> TimeWeekday {
+pub fn time_to_weekday(zone: TimeZone, time: TimePosix) -> TimeWeekday {
     match (time_to_adjusted_minutes(zone, time) / (60_i64 * 24_i64)) % 7_i64 {
         0_i64 => TimeWeekday::Thu,
         1_i64 => TimeWeekday::Fri,
@@ -37532,7 +37518,7 @@ pub fn time_to_weekday<'a>(zone: TimeZone<'a>, time: TimePosix) -> TimeWeekday {
     }
 }
 
-pub fn time_to_year<'a>(zone: TimeZone<'a>, time: TimePosix) -> i64 {
+pub fn time_to_year(zone: TimeZone, time: TimePosix) -> i64 {
     time_to_civil(time_to_adjusted_minutes(zone, time)).year
 }
 
