@@ -4164,8 +4164,8 @@ referenceToCoreRust reference =
 
                 "not" ->
                     Just
-                        { qualification = []
-                        , name = "basics_not"
+                        { qualification = [ "std", "ops", "Not" ]
+                        , name = "not"
                         , requiresAllocator = False
                         }
 
@@ -4352,8 +4352,8 @@ referenceToCoreRust reference =
 
                 "degrees" ->
                     Just
-                        { qualification = []
-                        , name = "basics_degrees"
+                        { qualification = [ "f64" ]
+                        , name = "to_radians"
                         , requiresAllocator = False
                         }
 
@@ -8739,9 +8739,6 @@ rustExpressionIsConst context rustExpression =
                 ( [], "basics_xor" ) ->
                     True
 
-                ( [], "basics_not" ) ->
-                    True
-
                 ( [], "basics_clamp_float" ) ->
                     True
 
@@ -8751,7 +8748,7 @@ rustExpressionIsConst context rustExpression =
                 ( [], "basics_fdiv" ) ->
                     True
 
-                ( [], "basics_degrees" ) ->
+                ( [ "f64" ], "to_radians" ) ->
                     True
 
                 ( [], "basics_turns" ) ->
@@ -15784,8 +15781,8 @@ expressionOperatorToRustFunctionReference operator =
                             IntNotFloat
                  of
                     FloatNotInt ->
-                        { qualification = []
-                        , name = "basics_pow_float"
+                        { qualification = [ "f64" ]
+                        , name = "powf"
                         , requiresAllocator = False
                         }
 
@@ -33484,20 +33481,17 @@ pub fn basics_compare<A: PartialOrd>(a: A, b: A) -> std::cmp::Ordering {
         Option::Some(order) => order,
     }
 }
-
+#[inline(always)] // because && is lazy and function calls are not
 pub const fn basics_and(a: bool, b: bool) -> bool {
     a && b
 }
+#[inline(always)] // because || is lazy and function calls are not
 pub const fn basics_or(a: bool, b: bool) -> bool {
     a || b
 }
 pub const fn basics_xor(a: bool, b: bool) -> bool {
     a ^ b
 }
-pub const fn basics_not(bool: bool) -> bool {
-    !bool
-}
-
 pub const fn basics_to_float(int: i64) -> f64 {
     int as f64
 }
@@ -33522,9 +33516,6 @@ pub const fn basics_idiv(base: i64, by: i64) -> i64 {
 pub fn basics_pow_int(base: i64, by: i64) -> i64 {
     base.pow(by as u32)
 }
-pub fn basics_pow_float(base: f64, by: f64) -> f64 {
-    base.powf(by)
-}
 pub fn basics_remainder_by(by: i64, base: i64) -> i64 {
     std::ops::Rem::rem(base, by)
 }
@@ -33541,9 +33532,6 @@ pub fn basics_mod_by(by: i64, base: i64) -> i64 {
             remainder
         }
     }
-}
-pub const fn basics_degrees(degrees: f64) -> f64 {
-    degrees.to_radians()
 }
 pub const fn basics_turns(turns: f64) -> f64 {
     turns * 2_f64 * std::f64::consts::PI

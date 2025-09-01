@@ -16,3 +16,4 @@ example-worker-blocking
 # for experimentation
 /src/main.rs
 example-experiments
+perf.data
