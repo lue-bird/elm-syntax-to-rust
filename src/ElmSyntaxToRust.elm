@@ -7913,18 +7913,6 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                     [ "offset", "start" ] ->
                                         soFar
 
-                                    -- record used by Math.Vector2 functions
-                                    [ "x", "y" ] ->
-                                        soFar
-
-                                    -- record used by Math.Vector3 functions
-                                    [ "x", "y", "z" ] ->
-                                        soFar
-
-                                    -- record used by Math.Vector4 functions
-                                    [ "w", "x", "y", "z" ] ->
-                                        soFar
-
                                     -- used by VirtualDom.Handler
                                     [ "message", "preventDefault", "stopPropagation" ] ->
                                         soFar
