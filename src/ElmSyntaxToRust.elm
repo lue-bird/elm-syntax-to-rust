@@ -7925,6 +7925,10 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                     [ "w", "x", "y", "z" ] ->
                                         soFar
 
+                                    -- used by VirtualDom.Handler
+                                    [ "message", "preventDefault", "stopPropagation" ] ->
+                                        soFar
+
                                     elmRecordFieldsNotAlreadyInDefaultDeclarations ->
                                         { name = generatedRecordStructTypeName elmRecordFieldsNotAlreadyInDefaultDeclarations
                                         , parameters =
@@ -36330,7 +36334,7 @@ pub fn json_decode_field<'a, A>(
         }),
     }
 }
-pub fn at<'a, A>(
+pub fn json_decode_at<'a, A>(
     allocator: &'a bumpalo::Bump,
     path: ListList<'a, StringString>,
     inner_decoder: JsonDecodeDecoder<'a, A>,

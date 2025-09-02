@@ -2978,7 +2978,7 @@ pub fn json_decode_field<'a, A>(
         }),
     }
 }
-pub fn at<'a, A>(
+pub fn json_decode_at<'a, A>(
     allocator: &'a bumpalo::Bump,
     path: ListList<'a, StringString>,
     inner_decoder: JsonDecodeDecoder<'a, A>,
