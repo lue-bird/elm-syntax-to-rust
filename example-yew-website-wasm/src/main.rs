@@ -5,11 +5,54 @@ fn main() {
     yew::Renderer::<App>::new().render();
 }
 
+/// This is mostly a mirror of elm::MainState<'a>
+/// except that what is references is replaced by persistent alternatives like Box, Vec, String etc.
+///
+/// While it might be a bit inconvenient to try to keep these
+/// 2 representations in sync, rust's (record and enum) exhaustiveness checking
+/// will at least remind you when they do :)
+///
+/// If you plan to only use persistent structures in your elm model
+/// (that means no strings, lists or recursive choice `type`s)
+/// you can replace all uses of ElmStatePersistent with elm::MainState
+/// and remove the conversions
+struct ElmStatePersistent {
+    count: i64,
+    mouse_x: i64,
+    mouse_y: i64,
+    mouse_trail: Vec<elm::GeneratedXY<i64, i64>>,
+}
+fn elm_state_to_persistent(temporary: elm::MainState) -> ElmStatePersistent {
+    ElmStatePersistent {
+        count: temporary.count,
+        mouse_x: temporary.mouse_x,
+        mouse_y: temporary.mouse_y,
+        mouse_trail: temporary.mouse_trail.into_iter().collect::<Vec<_>>(),
+    }
+}
+fn elm_state_from_persistent<'a>(
+    allocator: &'a bumpalo::Bump,
+    persistent: &ElmStatePersistent,
+) -> elm::MainState<'a> {
+    let ElmStatePersistent {
+        count: count,
+        mouse_x: mouse_x,
+        mouse_y: mouse_y,
+        mouse_trail: mouse_trail,
+    } = persistent;
+    elm::GeneratedCountMouseTrailMouseXMouseY {
+        count: *count,
+        mouse_x: *mouse_x,
+        mouse_y: *mouse_y,
+        mouse_trail: elm::double_ended_iterator_to_list(allocator, mouse_trail.iter().cloned()),
+    }
+}
+
 pub struct App {
-    elm_state: elm::MainState,
+    elm_state: ElmStatePersistent,
 }
 pub enum AppEvent {
-    EventFired {
+    DomEventFired {
         name: String,
         dom_path: Vec<usize>,
         web_sys_event: web_sys::Event,
@@ -22,13 +65,13 @@ impl yew::Component for App {
 
     fn create(_context: &yew::Context<Self>) -> Self {
         App {
-            elm_state: elm::main_initial_state(()),
+            elm_state: elm_state_to_persistent(elm::main_initial_state(())),
         }
     }
 
     fn update(&mut self, _context: &yew::Context<Self>, event: Self::Message) -> bool {
         match event {
-            AppEvent::EventFired {
+            AppEvent::DomEventFired {
                 name: fired_event_name,
                 dom_path: fire_target_dom_path,
                 web_sys_event: web_sys_event,
@@ -37,7 +80,10 @@ impl yew::Component for App {
                 // lookup same dom path
                 // then call its event handler
                 // with the then-created event, create the new state
-                let current_interface = elm::main_view(&allocator, self.elm_state.clone());
+                let current_interface = elm::main_view(
+                    &allocator,
+                    elm_state_from_persistent(&allocator, &self.elm_state),
+                );
 
                 let maybe_target_modifiers = match elm_virtual_dom_lookup_dom_node_at_path(
                     &current_interface,
@@ -170,10 +216,16 @@ impl yew::Component for App {
                                                 );
                                             }
                                             Result::Ok(new_elm_event) => {
-                                                self.elm_state = elm::main_update(
-                                                    new_elm_event,
-                                                    self.elm_state.clone(),
-                                                );
+                                                let update_allocator = bumpalo::Bump::new();
+                                                self.elm_state =
+                                                    elm_state_to_persistent(elm::main_update(
+                                                        &update_allocator,
+                                                        new_elm_event,
+                                                        elm_state_from_persistent(
+                                                            &allocator,
+                                                            &self.elm_state,
+                                                        ),
+                                                    ));
                                                 // uncomment to debug
                                                 // web_sys::console::log_1(
                                                 //     &web_sys::js_sys::JsString::from(format!(
@@ -204,7 +256,10 @@ impl yew::Component for App {
             context.link(),
             Vec::new(),
             Option::None,
-            &elm::main_view(&allocator, self.elm_state.clone()),
+            &elm::main_view(
+                &allocator,
+                elm_state_from_persistent(&allocator, &self.elm_state),
+            ),
         )
     }
 }
@@ -219,19 +274,25 @@ fn elm_dom_node_to_yew<Event>(
         elm::VirtualDomNode::Text(text) => yew::Html::VText(yew::virtual_dom::VText::from(text)),
         &elm::VirtualDomNode::Element {
             tag: tag,
-            namespace: namespace,
+            namespace: maybe_namespace,
             subs: subs,
             modifiers: modifiers,
         } => {
-            let mut vtag: yew::virtual_dom::VTag =
-                yew::virtual_dom::VTag::new(namespaced(namespace, tag));
+            let mut vtag: yew::virtual_dom::VTag = yew::virtual_dom::VTag::new(tag.to_string());
+            match maybe_namespace {
+                Option::None => {}
+                Option::Some(namespace) => {
+                    vtag.add_attribute("xmlns", yew::AttrValue::from(namespace.to_string()));
+                }
+            }
             match maybe_key {
                 Option::None => {}
-                Option::Some(key) => vtag.key = Option::Some(key.into()),
+                Option::Some(key) => vtag.key = Option::Some(yew::virtual_dom::Key::from(key)),
             }
             vtag.add_children(subs.into_iter().enumerate().map(|(sub_index, sub)| {
                 let mut sub_dom_path =
-                    // inefficient
+                    // inefficient. Instead: use for 
+                    // and give ownership and take it back afterwards and pop the sub index
                     dom_path.clone();
                 sub_dom_path.push(sub_index);
                 elm_dom_node_to_yew(yew_scope, sub_dom_path, Option::None, sub)
@@ -240,13 +301,12 @@ fn elm_dom_node_to_yew<Event>(
             yew::Html::VTag(Box::new(vtag))
         }
         &elm::VirtualDomNode::ElementKeyed {
-            tag,
-            namespace,
-            subs,
-            modifiers,
+            tag: tag,
+            namespace: _handled_by_yew,
+            subs: subs,
+            modifiers: modifiers,
         } => {
-            let mut vtag: yew::virtual_dom::VTag =
-                yew::virtual_dom::VTag::new(namespaced(namespace, tag));
+            let mut vtag: yew::virtual_dom::VTag = yew::virtual_dom::VTag::new(tag.to_string());
             match maybe_key {
                 Option::None => {}
                 Option::Some(key) => vtag.key = Option::Some(key.into()),
@@ -295,7 +355,7 @@ fn yew_vtag_add_elm_virtual_dom_modifiers<Event>(
     for modifier in elm_virtual_dom_modifiers.into_iter() {
         yew_vtag_add_elm_virtual_dom_modifier_except_style(
             yew_scope,
-            // inefficient
+            // inefficient. Instead: give ownership and take it back afterwards
             dom_path.clone(),
             yew_vtag,
             modifier,
@@ -311,15 +371,15 @@ fn yew_vtag_add_elm_virtual_dom_modifier_except_style<Event>(
     match elm_virtual_dom_modifier {
         elm::VirtualDomAttribute::ModifierStyle { .. } => {}
         elm::VirtualDomAttribute::ModifierAttribute {
-            namespace,
-            key,
-            value,
+            namespace: _handled_by_yew,
+            key: key,
+            value: value,
         } => {
             yew_vtag.attributes.get_mut_index_map().insert(
-                yew::AttrValue::from(namespaced(*namespace, key)),
+                yew::AttrValue::from(key.to_string()),
                 (
                     yew::AttrValue::from(value.to_string()),
-                    yew::virtual_dom::ApplyAttributeAs::Property,
+                    yew::virtual_dom::ApplyAttributeAs::Attribute,
                 ),
             );
         }
@@ -330,14 +390,17 @@ fn yew_vtag_add_elm_virtual_dom_modifier_except_style<Event>(
             yew_vtag.attributes.get_mut_index_map().insert(
                 yew::AttrValue::from(key.to_string()),
                 (
-                    yew::AttrValue::from(match value {
-                        elm::JsonValue::Null => "null".to_string(),
-                        elm::JsonValue::Bool(bool) => bool.to_string(),
-                        elm::JsonValue::Number(number) => number.to_string(),
-                        elm::JsonValue::String(str) => str.to_string(),
+                    match value {
+                        elm::JsonValue::Null => yew::AttrValue::from("null"),
+                        elm::JsonValue::Bool(bool) => yew::AttrValue::from(match bool {
+                            true => "true",
+                            false => "false",
+                        }),
+                        elm::JsonValue::Number(number) => yew::AttrValue::from(number.to_string()),
+                        elm::JsonValue::String(str) => yew::AttrValue::from(str.to_string()),
                         elm::JsonValue::Array(_) => unimplemented!(),
                         elm::JsonValue::Object(_) => unimplemented!(),
-                    }),
+                    },
                     yew::virtual_dom::ApplyAttributeAs::Property,
                 ),
             );
@@ -377,7 +440,7 @@ impl yew::virtual_dom::Listener for YewRegisteredEventListener {
         let name_owned = self.name.clone();
         let dom_path_owned = self.dom_path.clone();
         self.yew_scope
-            .callback(move |()| AppEvent::EventFired {
+            .callback(move |()| AppEvent::DomEventFired {
                 dom_path: dom_path_owned.clone(),
                 name: name_owned.clone(),
                 web_sys_event: event.clone(),
@@ -397,18 +460,17 @@ fn elm_virtual_dom_lookup_dom_node_at_path<'a, Event: Clone>(
         Option::None => Option::Some(elm_virtual_dom_node),
         Option::Some(sub_index) => match elm_virtual_dom_node {
             elm::VirtualDomNode::Text(_) => Option::None,
-            elm::VirtualDomNode::Element { subs: subs, .. } => subs.get(sub_index),
-            elm::VirtualDomNode::ElementKeyed { subs: subs, .. } => {
-                subs.get(sub_index).map(|(_sub_key, sub_node)| sub_node)
-            }
+            elm::VirtualDomNode::Element { subs: subs, .. } => match subs.get(sub_index) {
+                Option::None => Option::None,
+                Option::Some(sub_node) => elm_virtual_dom_lookup_dom_node_at_path(sub_node, path),
+            },
+            elm::VirtualDomNode::ElementKeyed { subs: subs, .. } => match subs.get(sub_index) {
+                Option::None => Option::None,
+                Option::Some((_sub_key, sub_node)) => {
+                    elm_virtual_dom_lookup_dom_node_at_path(sub_node, path)
+                }
+            },
         },
-    }
-}
-
-fn namespaced(namespace: Option<&str>, name: &str) -> String {
-    match namespace {
-        Option::None => name.to_string(),
-        Option::Some(namespace) => format!("{namespace}:{name}"),
     }
 }
 fn web_sys_js_value_to_elm_json<'a>(
