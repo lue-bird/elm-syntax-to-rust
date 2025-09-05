@@ -120,4 +120,4 @@ Use it for classic arena-friendly loop steps like state â†’ interface, request â
 ### improvement ideas
 
 - if lambda is called with a function, always inline that function
-- improve performance of elm_kernel_parer functions (and string_slice etc) to work with utf8 offsets instead of chars
+- improve performance of elm_kernel_parser functions to work with utf8 offsets instead of char count
