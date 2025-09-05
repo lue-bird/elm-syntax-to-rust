@@ -22,7 +22,7 @@ impl yew::Component for App {
 
     fn create(_context: &yew::Context<Self>) -> Self {
         App {
-            elm_state: elm::main_initial_state,
+            elm_state: elm::main_initial_state(()),
         }
     }
 
@@ -170,8 +170,10 @@ impl yew::Component for App {
                                                 );
                                             }
                                             Result::Ok(new_elm_event) => {
-                                                self.elm_state =
-                                                    elm::main_update(new_elm_event, self.elm_state);
+                                                self.elm_state = elm::main_update(
+                                                    new_elm_event,
+                                                    self.elm_state.clone(),
+                                                );
                                                 // uncomment to debug
                                                 // web_sys::console::log_1(
                                                 //     &web_sys::js_sys::JsString::from(format!(

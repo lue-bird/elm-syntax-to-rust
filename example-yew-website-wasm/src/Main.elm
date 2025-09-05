@@ -18,8 +18,8 @@ type Event
     | MouseMoved { x : Int, y : Int }
 
 
-initialState : State
-initialState =
+initialState : () -> State
+initialState () =
     { count = 0
     , mouseX = 0
     , mouseY = 0
