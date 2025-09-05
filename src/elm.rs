@@ -2079,7 +2079,7 @@ pub fn set_diff<K: PartialOrd + Clone>(a_set: SetSet<K>, b_set: SetSet<K>) -> Se
         }
     })
 }
-
+/// TODO make lazy at field values and Array level
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum JsonValue<'a> {
     Null,
@@ -2346,11 +2346,10 @@ pub fn json_decode_error_to_string<'a>(
     error: JsonDecodeError<'a>,
 ) -> StringString<'a> {
     let mut builder = String::new();
-    json_decode_error_to_string_help(allocator, &error, String::new(), &mut builder, 0);
+    json_decode_error_to_string_help(&error, String::new(), &mut builder, 0);
     string_to_rope(allocator, builder)
 }
 pub fn json_decode_error_to_string_help<'a>(
-    allocator: &'a bumpalo::Bump,
     error: &JsonDecodeError,
     mut context: String,
     so_far: &mut String,
@@ -2411,13 +2410,7 @@ pub fn json_decode_error_to_string_help<'a>(
                         so_far.push_str(linebreak_indented);
                         so_far.push_str(&(i as usize + 1).to_string());
                         so_far.push(' ');
-                        json_decode_error_to_string_help(
-                            allocator,
-                            error,
-                            String::new(),
-                            so_far,
-                            indent + 4,
-                        );
+                        json_decode_error_to_string_help(error, String::new(), so_far, indent + 4);
                     }
                     break 'the_loop;
                 }
@@ -2436,9 +2429,11 @@ pub fn json_decode_error_to_string_help<'a>(
                     so_far.push_str(linebreak_indented);
                     so_far.push_str("    ");
                 };
-                so_far.push_str(&indent_by(
+                so_far.push_str(&json_encode_encode_from(
+                    4,
                     indent + 4,
-                    json_encode_encode(allocator, 4_i64, json.clone()),
+                    String::new(),
+                    json.clone(),
                 ));
                 so_far.push_str(linebreak_indented);
                 so_far.push_str(linebreak_indented);
