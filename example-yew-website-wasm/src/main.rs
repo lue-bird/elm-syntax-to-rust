@@ -254,7 +254,7 @@ impl yew::Component for App {
         let allocator: bumpalo::Bump = bumpalo::Bump::new();
         elm_dom_node_to_yew(
             context.link(),
-            Vec::new(),
+            &mut Vec::new(),
             Option::None,
             &elm::main_view(
                 &allocator,
@@ -266,7 +266,7 @@ impl yew::Component for App {
 
 fn elm_dom_node_to_yew<Event>(
     yew_scope: &yew::html::Scope<App>,
-    dom_path: Vec<usize>,
+    dom_path: &mut Vec<usize>,
     maybe_key: Option<&str>,
     elm_dom_node: &elm::VirtualDomNode<Event>,
 ) -> yew::Html {
@@ -290,12 +290,10 @@ fn elm_dom_node_to_yew<Event>(
                 Option::Some(key) => vtag.key = Option::Some(yew::virtual_dom::Key::from(key)),
             }
             vtag.add_children(subs.into_iter().enumerate().map(|(sub_index, sub)| {
-                let mut sub_dom_path =
-                    // inefficient. Instead: use for 
-                    // and give ownership and take it back afterwards and pop the sub index
-                    dom_path.clone();
-                sub_dom_path.push(sub_index);
-                elm_dom_node_to_yew(yew_scope, sub_dom_path, Option::None, sub)
+                dom_path.push(sub_index);
+                let sub_yew_node = elm_dom_node_to_yew(yew_scope, dom_path, Option::None, sub);
+                dom_path.pop();
+                sub_yew_node
             }));
             yew_vtag_add_elm_virtual_dom_modifiers(yew_scope, dom_path, &mut vtag, modifiers);
             yew::Html::VTag(Box::new(vtag))
@@ -315,19 +313,14 @@ fn elm_dom_node_to_yew<Event>(
                 subs.into_iter()
                     .enumerate()
                     .map(|(sub_index, (sub_key, sub))| {
-                        let mut sub_dom_path =
-                            // inefficient
-                            dom_path.clone();
-                        sub_dom_path.push(sub_index);
-                        elm_dom_node_to_yew(yew_scope, sub_dom_path, Option::Some(sub_key), sub)
+                        dom_path.push(sub_index);
+                        let sub_yew_node =
+                            elm_dom_node_to_yew(yew_scope, dom_path, Option::Some(sub_key), sub);
+                        dom_path.pop();
+                        sub_yew_node
                     }),
             );
-            yew_vtag_add_elm_virtual_dom_modifiers(
-                yew_scope,
-                dom_path.clone(),
-                &mut vtag,
-                modifiers,
-            );
+            yew_vtag_add_elm_virtual_dom_modifiers(yew_scope, dom_path, &mut vtag, modifiers);
             yew::Html::VTag(Box::new(vtag))
         }
     }
@@ -335,7 +328,7 @@ fn elm_dom_node_to_yew<Event>(
 
 fn yew_vtag_add_elm_virtual_dom_modifiers<Event>(
     yew_scope: &yew::html::Scope<App>,
-    dom_path: Vec<usize>,
+    dom_path: &Vec<usize>,
     yew_vtag: &mut yew::virtual_dom::VTag,
     elm_virtual_dom_modifiers: &[elm::VirtualDomAttribute<Event>],
 ) {
@@ -353,18 +346,12 @@ fn yew_vtag_add_elm_virtual_dom_modifiers<Event>(
         yew_vtag.add_attribute("style", styles.join(";"));
     }
     for modifier in elm_virtual_dom_modifiers.into_iter() {
-        yew_vtag_add_elm_virtual_dom_modifier_except_style(
-            yew_scope,
-            // inefficient. Instead: give ownership and take it back afterwards
-            dom_path.clone(),
-            yew_vtag,
-            modifier,
-        )
+        yew_vtag_add_elm_virtual_dom_modifier_except_style(yew_scope, dom_path, yew_vtag, modifier)
     }
 }
 fn yew_vtag_add_elm_virtual_dom_modifier_except_style<Event>(
     yew_scope: &yew::html::Scope<App>,
-    dom_path: Vec<usize>,
+    dom_path: &Vec<usize>,
     yew_vtag: &mut yew::virtual_dom::VTag,
     elm_virtual_dom_modifier: &elm::VirtualDomAttribute<Event>,
 ) {
@@ -418,7 +405,7 @@ fn yew_vtag_add_elm_virtual_dom_modifier_except_style<Event>(
                         elm::VirtualDomHandler::MayPreventDefault(_) => true,
                         elm::VirtualDomHandler::Normal(_) => true,
                     },
-                    dom_path: dom_path,
+                    dom_path: dom_path.clone(),
                     yew_scope: yew_scope.clone(),
                 });
             yew_vtag.add_listener(listener);
@@ -426,9 +413,9 @@ fn yew_vtag_add_elm_virtual_dom_modifier_except_style<Event>(
     }
 }
 struct YewRegisteredEventListener {
-    name: String, // consider Rc<String>
+    name: String,
     is_passive: bool,
-    dom_path: Vec<usize>, // consider Rc<Vec<usize>>
+    dom_path: Vec<usize>,
     yew_scope: yew::html::Scope<App>,
 }
 
