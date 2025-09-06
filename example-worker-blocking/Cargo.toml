@@ -1,5 +1,5 @@
 [package]
-name = "example-hello-world"
-edition = "2024"             # not lower
+name = "example-worker-blocking"
+edition = "2024"
 [dependencies]
 bumpalo = "3.19.0"
