@@ -56,7 +56,7 @@ fn elm_watch_sub<'a, Event>(
                 }
             }
             unknown_elm_port_name => {
-                println!("unknown inoming elm port name {unknown_elm_port_name}");
+                println!("unknown incoming elm port name {unknown_elm_port_name}");
                 Option::None
             }
         },
