@@ -117,7 +117,7 @@ So overall, if you intend to let the transpiled code handle a memory-hungry long
 Use it for classic arena-friendly loop steps like state → interface, request → response etc.
 
 If you want elm to control the application state,
-I recommend taking a look at [/example-yew-website-wasm/](https://github.com/lue-bird/elm-syntax-to-rust/tree/main/example-yew-website-wasm),
+I recommend taking a look at [/example-worker-blocking/](https://github.com/lue-bird/elm-syntax-to-rust/tree/main/example-worker-blocking),
 specifically the `struct ElmStatePersistent` in `src/main.rs`.
 You will typically have the transpiled type for the elm state which has a temporary lifetime bound to a given allocator _and_ a separate custom "persistent" rust type
 which only contains owned types – and conversion functions between the two.

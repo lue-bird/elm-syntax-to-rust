@@ -10,9 +10,6 @@ elmMain.js
 
 zombie
 
-# not ready for release
-example-worker-blocking
-
 # for experimentation
 /src/main.rs
 example-experiments
