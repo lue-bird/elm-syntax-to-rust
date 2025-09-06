@@ -84,7 +84,6 @@ print(elm::your_module_your_function("yourInput"))
 where `elm::your_module_your_function(firstArgument, secondArgument)` is the transpiled elm function `Your.Module.yourFunction firstArgument secondArgument`. (If the value/function contains extensible records, search for `elm::your_module_your_function_` with the underscore to see the different specialized options)
 
 Run with
-
 ```bash
 cargo run
 ```
@@ -98,9 +97,9 @@ In the transpiled code, you will find these types:
 - elm `Int`s will be of type `i64`. Create and match by appending `_i64` to any number literal or using `as i64`
 - elm `Float`s will be of type `f64`. Create and match by appending `_f64` to any number literal or using `as f64`
 - elm `String`s (like `"a"`) will be of type `elm::StringString`.
-  Create from literals or other string slices with (`elm::StringString::One("a")`). Match with `your_string if elm::string_equals_str(&your_string, "some string")`
+  Create from literals or other string slices with (`elm::StringString::One("a")`). Match with `your_string if elm::string_equals_str(your_string, "some string")`
 - elm `Array<a>`s (like `Array.fromList [ 'a' ]`) will be of type `Rc<Vec<A>>` (alias `elm::ArrayArray<A>`).
-  Create new values with (`std::rc::Rc::new(vec!['a'])`). Too match, use e.g. `match array.as_slice() { [] => ..., [_, ..] => ... etc }`
+  Create new values with (`std::rc::Rc::new(vec!['a'])`). To match, use e.g. `match array.as_slice() { [] => ..., [_, ..] => ... etc }`
 - elm records like `{ y : Float, x : Float }` will be of type `elm::GeneratedXY<f64, f64>` with the fields sorted and can be constructed and matched with `elm::GeneratedXY { x: _, y: _ }`. `record.x` access also works
 - a transpiled elm app does not run itself.
   An elm main `Platform.worker` program type will literally just consist of fields `init`, `update` and `subscriptions` where
