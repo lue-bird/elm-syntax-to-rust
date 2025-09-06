@@ -3150,7 +3150,7 @@ fn json_parse_to_end<'a>(
 }
 
 #[derive(Debug)]
-pub struct JsonParseError {
+struct JsonParseError {
     msg: String, // maybe better as &str
     line: usize,
     col: usize,
@@ -4348,9 +4348,9 @@ pub fn elm_kernel_parser_find_sub_string(
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlatformCmdCmd<'a, Event> {
-    tree: PlatformCmdTree<'a>,
+    pub tree: PlatformCmdTree<'a>,
     // elm cmds can return stuff, we do not
-    phantom_data: std::marker::PhantomData<Event>,
+    pub phantom_data: std::marker::PhantomData<Event>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -4389,10 +4389,10 @@ pub fn platform_cmd_map<'a, A: Clone, B>(
         phantom_data: std::marker::PhantomData,
     }
 }
-pub fn platform_cmd_port_outgoing<'a, A: Clone, B>(
+pub fn platform_cmd_port_outgoing<'a, A>(
     name: &'a str,
     data: JsonValue<'a>,
-) -> PlatformCmdCmd<'a, B> {
+) -> PlatformCmdCmd<'a, A> {
     PlatformCmdCmd {
         tree: PlatformCmdTree::PortOutgoing(name, data),
         phantom_data: std::marker::PhantomData,
@@ -4437,24 +4437,31 @@ pub fn platform_sub_map<'a, A: Clone, B>(
         ),
     }
 }
+pub fn platform_sub_port_incoming<'a, Event>(
+    allocator: &'a bumpalo::Bump,
+    name: &'a str,
+    on_event: impl Fn(JsonValue<'a>) -> Event + 'a,
+) -> PlatformSubSub<'a, Event> {
+    PlatformSubSub::PortIncoming(name, allocator.alloc(on_event))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct GeneratedInitUpdateSubscriptions<Init, Update, Subscriptions> {
+pub struct GeneratedInitSubscriptionsUpdate<Init, Subscriptions, Update> {
     pub init: Init,
     pub update: Update,
-    pub start: Subscriptions,
+    pub subscriptions: Subscriptions,
 }
-pub type PlatformProgram<'a, Flags, State, Event> = GeneratedInitUpdateSubscriptions<
+pub type PlatformProgram<'a, Flags, State, Event> = GeneratedInitSubscriptionsUpdate<
     &'a dyn Fn(Flags) -> (State, PlatformCmdCmd<'a, Event>),
-    &'a dyn Fn(Event) -> &'a dyn Fn(State) -> (State, PlatformCmdCmd<'a, Event>),
     &'a dyn Fn(State) -> PlatformSubSub<'a, Event>,
+    &'a dyn Fn(Event) -> &'a dyn Fn(State) -> (State, PlatformCmdCmd<'a, Event>),
 >;
 
 pub fn platform_worker<'a, Flags, State, Event>(
-    config: GeneratedInitUpdateSubscriptions<
+    config: GeneratedInitSubscriptionsUpdate<
         &'a dyn Fn(Flags) -> (State, PlatformCmdCmd<'a, Event>),
-        &'a dyn Fn(Event) -> &'a dyn Fn(State) -> (State, PlatformCmdCmd<'a, Event>),
         &'a dyn Fn(State) -> PlatformSubSub<'a, Event>,
+        &'a dyn Fn(Event) -> &'a dyn Fn(State) -> (State, PlatformCmdCmd<'a, Event>),
     >,
 ) -> PlatformProgram<'a, Flags, State, Event> {
     config
