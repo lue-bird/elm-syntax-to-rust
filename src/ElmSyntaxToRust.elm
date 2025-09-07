@@ -37696,7 +37696,7 @@ pub struct PlatformCmdCmd<'a, Event> {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PlatformCmdTree<'a> {
-    PortOutgoing(&'a str, JsonValue<'a>),
+    PortOutgoing(&'static str, JsonValue<'a>),
     Batch(&'a [PlatformCmdTree<'a>]),
 }
 
@@ -37731,7 +37731,7 @@ pub fn platform_cmd_map<'a, A: Clone, B>(
     }
 }
 pub fn platform_cmd_port_outgoing<'a, A>(
-    name: &'a str,
+    name: &'static str,
     data: JsonValue<'a>,
 ) -> PlatformCmdCmd<'a, A> {
     PlatformCmdCmd {
@@ -37742,7 +37742,7 @@ pub fn platform_cmd_port_outgoing<'a, A>(
 
 #[derive(Clone, Copy)]
 pub enum PlatformSubSub<'a, Event> {
-    PortIncoming(&'a str, &'a dyn Fn(JsonValue<'a>) -> Event),
+    PortIncoming(&'static str, &'a dyn Fn(JsonValue<'a>) -> Event),
     Batch(&'a [PlatformSubSub<'a, Event>]),
 }
 
@@ -37780,7 +37780,7 @@ pub fn platform_sub_map<'a, A: Clone, B>(
 }
 pub fn platform_sub_port_incoming<'a, Event>(
     allocator: &'a bumpalo::Bump,
-    name: &'a str,
+    name: &'static str,
     on_event: impl Fn(JsonValue<'a>) -> Event + 'a,
 ) -> PlatformSubSub<'a, Event> {
     PlatformSubSub::PortIncoming(name, allocator.alloc(on_event))
