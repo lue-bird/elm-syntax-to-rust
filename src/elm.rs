@@ -4181,25 +4181,24 @@ pub fn elm_kernel_parser_is_sub_string(
 ) -> (i64, i64, i64) {
     let mut row: usize = row_original as usize;
     let mut col: usize = col_original as usize;
-    let mut offset: usize = offset_original as usize;
     let small_string_cow_str: std::borrow::Cow<str> = rope_to_cow_str(small_string);
     let mut small_string_iterator: std::str::Chars = small_string_cow_str.chars();
-    for ref code in rope_to_cow_str(big_string)
-        .chars()
-        .skip(offset_original as usize)
-    {
-        if small_string_iterator.next() != Option::Some(*code) {
+    for code in rope_to_cow_str(big_string)[(offset_original as usize)..].chars() {
+        if small_string_iterator.next() != Option::Some(code) {
             return (-1_i64, row as i64, col as i64);
         }
-        offset = offset + 1;
-        if *code == '\n' {
+        if code == '\n' {
             row = row + 1;
             col = 1
         } else {
             col = col + 1;
         }
     }
-    (offset as i64, row as i64, col as i64)
+    (
+        (offset_original as usize + small_string_cow_str.len()) as i64,
+        row as i64,
+        col as i64,
+    )
 }
 
 pub fn elm_kernel_parser_is_sub_char(
@@ -4207,9 +4206,9 @@ pub fn elm_kernel_parser_is_sub_char(
     offset_original: i64,
     string: StringString,
 ) -> i64 {
-    match rope_to_cow_str(string)
+    match rope_to_cow_str(string)[(offset_original as usize)..]
         .chars()
-        .nth(offset_original as usize)
+        .next()
     {
         Option::None => -1_i64,
         Option::Some(char_at_offset) => {
@@ -4217,7 +4216,7 @@ pub fn elm_kernel_parser_is_sub_char(
                 if char_at_offset == '\n' {
                     -2_i64
                 } else {
-                    offset_original + 1_i64
+                    offset_original + char_at_offset.len_utf8() as i64
                 }
             } else {
                 -1_i64
@@ -4227,7 +4226,7 @@ pub fn elm_kernel_parser_is_sub_char(
 }
 
 pub fn elm_kernel_parser_is_ascii_code(code: i64, offset: i64, string: StringString) -> bool {
-    match rope_to_cow_str(string).chars().nth(offset as usize) {
+    match rope_to_cow_str(string)[(offset as usize)..].chars().next() {
         Option::None => false,
         Option::Some(char_at_offset) => char_at_offset as usize == code as usize,
     }
@@ -4236,7 +4235,7 @@ pub fn elm_kernel_parser_is_ascii_code(code: i64, offset: i64, string: StringStr
 pub fn elm_kernel_parser_chomp_base10(offset_original: i64, string: StringString) -> i64 {
     let mut offset: usize = offset_original as usize;
     let cow_str: std::borrow::Cow<str> = rope_to_cow_str(string);
-    let mut string_iterator_from_offset = cow_str.chars().skip(offset);
+    let mut string_iterator_from_offset = cow_str[offset..].chars();
     'the_loop: loop {
         match string_iterator_from_offset.next() {
             Option::None => break 'the_loop,
@@ -4244,7 +4243,7 @@ pub fn elm_kernel_parser_chomp_base10(offset_original: i64, string: StringString
                 if char_at_offset < '0' || char_at_offset > '9' {
                     break 'the_loop;
                 } else {
-                    offset = offset + 1
+                    offset = offset + char_at_offset.len_utf8()
                 }
             }
         }
@@ -4259,7 +4258,7 @@ pub fn elm_kernel_parser_consume_base(
 ) -> (i64, i64) {
     let mut offset: usize = offset_original as usize;
     let cow_str: std::borrow::Cow<str> = rope_to_cow_str(string);
-    let mut string_iterator_from_offset = cow_str.chars().skip(offset);
+    let mut string_iterator_from_offset = cow_str[offset..].chars();
     let mut total: i64 = 0;
     'the_loop: loop {
         match string_iterator_from_offset.next() {
@@ -4270,7 +4269,7 @@ pub fn elm_kernel_parser_consume_base(
                     break 'the_loop;
                 } else {
                     total = base * total + digit;
-                    offset = offset + 1
+                    offset = offset + char_at_offset.len_utf8()
                 }
             }
         }
@@ -4281,7 +4280,7 @@ pub fn elm_kernel_parser_consume_base(
 pub fn elm_kernel_parser_consume_base16(offset_original: i64, string: StringString) -> (i64, i64) {
     let mut offset: usize = offset_original as usize;
     let cow_str: std::borrow::Cow<str> = rope_to_cow_str(string);
-    let mut string_iterator_from_offset = cow_str.chars().skip(offset);
+    let mut string_iterator_from_offset = cow_str[offset..].chars();
     let mut total: usize = 0;
     'the_loop: loop {
         match string_iterator_from_offset.next() {
@@ -4289,13 +4288,13 @@ pub fn elm_kernel_parser_consume_base16(offset_original: i64, string: StringStri
             Option::Some(char_at_offset) => {
                 if char_at_offset >= '0' && char_at_offset <= '9' {
                     total = 16 * total + char_at_offset as usize - '0' as usize;
-                    offset = offset + 1;
+                    offset = offset + char_at_offset.len_utf8();
                 } else if char_at_offset >= 'A' && char_at_offset <= 'F' {
                     total = 16 * total + 10 + char_at_offset as usize - ('A' as usize);
-                    offset = offset + 1;
+                    offset = offset + char_at_offset.len_utf8();
                 } else if char_at_offset >= 'a' && char_at_offset <= 'f' {
                     total = 16 * total + 10 + char_at_offset as usize - ('a' as usize);
-                    offset = offset + 1;
+                    offset = offset + char_at_offset.len_utf8();
                 } else {
                     break 'the_loop;
                 }
@@ -4314,34 +4313,27 @@ pub fn elm_kernel_parser_find_sub_string(
 ) -> (i64, i64, i64) {
     let offset_original: usize = offset_original_i64 as usize;
     let big_string_cow: std::borrow::Cow<str> = rope_to_cow_str(big_string);
-    match big_string_cow.char_indices().nth(offset_original) {
+    let small_string_cow: std::borrow::Cow<str> = rope_to_cow_str(small_string);
+    match big_string_cow[offset_original..].find(small_string_cow.as_ref()) {
         Option::None => (-1_i64, row_original, col_original),
-        Option::Some((offset_original_as_char_index, _)) => {
-            let small_string_cow: std::borrow::Cow<str> = rope_to_cow_str(small_string);
-            match big_string_cow[offset_original_as_char_index..].find(small_string_cow.as_ref()) {
-                Option::None => (-1_i64, row_original, col_original),
-                Option::Some(found_start_offset_from_offset) => {
-                    let small_string_char_count = small_string_cow.chars().count();
-                    let mut row: usize = row_original as usize;
-                    let mut col: usize = col_original as usize;
-                    for char_at_offset in big_string_cow[offset_original_as_char_index..]
-                        .chars()
-                        .take(small_string_char_count)
-                    {
-                        if char_at_offset == '\n' {
-                            col = 1;
-                            row = row + 1
-                        } else {
-                            col = col + 1;
-                        }
-                    }
-                    (
-                        (offset_original + found_start_offset_from_offset) as i64,
-                        row as i64,
-                        col as i64,
-                    )
+        Option::Some(found_start_offset_from_offset) => {
+            let mut row: usize = row_original as usize;
+            let mut col: usize = col_original as usize;
+            let found_start_index_in_big_string: usize =
+                offset_original + found_start_offset_from_offset;
+            for char in big_string_cow[offset_original..found_start_index_in_big_string].chars() {
+                if char == '\n' {
+                    col = 1;
+                    row = row + 1
+                } else {
+                    col = col + 1;
                 }
             }
+            (
+                found_start_index_in_big_string as i64,
+                row as i64,
+                col as i64,
+            )
         }
     }
 }

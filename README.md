@@ -125,4 +125,4 @@ which only contains owned types – and conversion functions between the two.
 ### improvement ideas
 
 - if lambda is called with a function, always inline that function
-- improve performance of elm_kernel_parser functions to work with utf8 offsets instead of char count
+- your idea 👀
