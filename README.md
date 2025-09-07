@@ -33,7 +33,7 @@ pub fn sample_plus2<'a>(allocator: &'a Bump, n: f64) -> f64 {
 
 - not supported are
     - ports that use non-json values like `port sendMessage : String -> Cmd msg`, glsl, phantom types, `==` on a generic value
-    - `elm/file`, `elm/http`, `elm/browser`, `elm-explorations/markdown`, `elm-explorations/webgl`, `elm-explorations/benchmark`, `elm/regex` (nothing in `std`), `elm-explorations/linear-algebra` (`std::simd` only available in nightly) (currently also `elm/random` TODO)
+    - `elm/file`, `elm/http`, `elm/browser`, `elm-explorations/markdown`, `elm-explorations/webgl`, `elm-explorations/benchmark`, `elm/regex` (nothing in `std`), `elm-explorations/linear-algebra` (`std::simd` only available in nightly)
     - `Task`, `Process`, `Platform.Task`, `Platform.ProcessId`, `Platform.Router`, `Platform.sendToApp`, `Platform.sendToSelf`, `Random.generate`, `Time.now`, `Time.every`, `Time.here`, `Time.getZoneName`, `Bytes.getHostEndianness`
     - extensible record types outside of module-level value/function declarations. For example, these declarations might not work:
         ```elm
@@ -124,5 +124,6 @@ which only contains owned types – and conversion functions between the two.
 
 ### improvement ideas
 
+- avoid captured context variables clones before lambda if it's the outermost lambda
 - if lambda is called with a function, always inline that function
 - your idea 👀

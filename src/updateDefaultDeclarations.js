@@ -20,14 +20,14 @@ const elmString =
     "\"\"\"\n"
     + defaultDeclarationsRustFile
         .slice(
-            defaultDeclarationsRustFile.indexOf("pub type"),
+            defaultDeclarationsRustFile.indexOf("/*"),
             defaultDeclarationsRustFile.length
         )
         .replaceAll("\\", "\\\\")
         .trim()
     + "\n\"\"\""
 const defaultDeclarationsDeclarationStartIndex =
-    elmSyntaxToRustElmFile.indexOf(`"""\npub type`)
+    elmSyntaxToRustElmFile.indexOf(`"""\n/*`)
 const defaultDeclarationsDeclarationToReplace =
     elmSyntaxToRustElmFile.slice(
         defaultDeclarationsDeclarationStartIndex,
