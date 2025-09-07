@@ -104,7 +104,7 @@ In the transpiled code, you will find these types:
 - a transpiled elm app does not run itself.
   An elm main `Platform.worker` program type will literally just consist of fields `init`, `update` and `subscriptions` where
   subscriptions/commands are returned as a list of `elm::PlatformSubSingle`/`elm::PlatformCmdSingle` with possible elm subscriptions/commands in a choice type.
-  It's then your responsibility as "the platform" to perform effects, create events and manage the state. For an example see [example-worker-blocking/](https://github.com/lue-bird/elm-syntax-to-rust/tree/main/example-worker-blocking) & [example-worker-async/](https://github.com/lue-bird/elm-syntax-to-rust/tree/main/example-worker-async) TODO
+  It's then your responsibility as "the platform" to perform effects, create events and manage the state. For an example see [example-worker-blocking/](https://github.com/lue-bird/elm-syntax-to-rust/tree/main/example-worker-blocking) & [example-worker-concurrent/](https://github.com/lue-bird/elm-syntax-to-rust/tree/main/example-worker-concurrent)
 
 ### how does the transpiled code handle memory?
 
