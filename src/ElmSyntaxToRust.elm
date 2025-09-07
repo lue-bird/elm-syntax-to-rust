@@ -7945,19 +7945,19 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
             }
 
 
-listToUniqueSortedDescendingBy : (a -> comparable) -> List a -> List a
+listToUniqueSortedDescendingBy : (a -> comparable_) -> List a -> List a
 listToUniqueSortedDescendingBy elementToKey list =
     list
         |> List.sortBy elementToKey
         |> listReverseDeduplicateNeighboringElementsBy elementToKey
 
 
-listReverseDeduplicateNeighboringElementsBy : (a -> comparable) -> List a -> List a
+listReverseDeduplicateNeighboringElementsBy : (a -> comparable_) -> List a -> List a
 listReverseDeduplicateNeighboringElementsBy elementToKey list =
     listReverseDeduplicateNeighboringElementsIntoBy [] elementToKey list
 
 
-listReverseDeduplicateNeighboringElementsIntoBy : List a -> (a -> comparable) -> List a -> List a
+listReverseDeduplicateNeighboringElementsIntoBy : List a -> (a -> comparable_) -> List a -> List a
 listReverseDeduplicateNeighboringElementsIntoBy soFar elementToKey list =
     -- can be optimized
     case list of
@@ -12667,7 +12667,6 @@ rustExpressionIsConstant rustExpression =
             False
 
         RustExpressionBorrow _ ->
-            -- TODO yes if in borrow is constant?
             False
 
         RustExpressionDeref _ ->
@@ -19738,30 +19737,6 @@ rustDeclarationsToModuleString :
     }
     -> String
 rustDeclarationsToModuleString rustDeclarations =
-    let
-        rustEnumDeclarationList :
-            List
-                { name : String
-                , parameters : List String
-                , lifetimeParameters : List String
-                , variants :
-                    FastDict.Dict String (List RustType)
-                }
-        rustEnumDeclarationList =
-            -- TODO inline
-            rustDeclarations.enumTypes
-
-        rustTypeAliasDeclarationList :
-            List
-                { name : String
-                , lifetimeParameters : List String
-                , parameters : List String
-                , type_ : RustType
-                }
-        rustTypeAliasDeclarationList =
-            -- TODO inline
-            rustDeclarations.typeAliases
-    in
     """#![allow(dead_code)]
 #![allow(non_shorthand_field_patterns)]
 #![allow(non_upper_case_globals)]
@@ -19780,7 +19755,7 @@ rustDeclarationsToModuleString rustDeclarations =
         ++ """
 
 """
-        ++ (rustEnumDeclarationList
+        ++ (rustDeclarations.enumTypes
                 |> Print.listMapAndIntersperseAndFlatten
                     printRustEnumDeclaration
                     printLinebreakLinebreakIndented
@@ -19789,7 +19764,7 @@ rustDeclarationsToModuleString rustDeclarations =
         ++ """
 
 """
-        ++ (rustTypeAliasDeclarationList
+        ++ (rustDeclarations.typeAliases
                 |> Print.listMapAndIntersperseAndFlatten
                     printRustTypeAliasDeclaration
                     printLinebreakLinebreakIndented
@@ -19813,7 +19788,7 @@ rustDeclarationsToModuleString rustDeclarations =
                     Print.empty
                 |> Print.toString
                 |> -- TODO hacky way to make stil4m/elm-syntax compile
-                   -- because we have no way to know which type variable is equatable
+                   -- because we have no way to find out which type variable is equatable
                    String.replace
                     "list_extra_unique_help<'a, A: Clone + 'a>"
                     "list_extra_unique_help<'a, A: Clone + PartialEq + 'a>"
@@ -19822,20 +19797,6 @@ rustDeclarationsToModuleString rustDeclarations =
                     "list_extra_unique<'a, A: Clone + PartialEq + 'a>"
            )
         ++ "\n"
-
-
-fastDictMapAndToList :
-    (key -> value -> element)
-    -> FastDict.Dict key value
-    -> List element
-fastDictMapAndToList keyValueToElement fastDict =
-    fastDict
-        |> FastDict.foldr
-            (\key value soFar ->
-                keyValueToElement key value
-                    :: soFar
-            )
-            []
 
 
 listMapAndCombineJust : (a -> Maybe ok) -> List a -> Maybe (List ok)
@@ -20043,20 +20004,6 @@ inferredTypeBasicsInt =
 
 typeNotVariableBasicsInt : ElmSyntaxTypeInfer.TypeNotVariable
 typeNotVariableBasicsInt =
-    ElmSyntaxTypeInfer.TypeConstruct
-        { moduleOrigin = "Basics"
-        , name = "Int"
-        , arguments = []
-        }
-
-
-inferredTypeBasicsFloat : ElmSyntaxTypeInfer.Type
-inferredTypeBasicsFloat =
-    ElmSyntaxTypeInfer.TypeNotVariable typeNotVariableBasicsFloat
-
-
-typeNotVariableBasicsFloat : ElmSyntaxTypeInfer.TypeNotVariable
-typeNotVariableBasicsFloat =
     ElmSyntaxTypeInfer.TypeConstruct
         { moduleOrigin = "Basics"
         , name = "Int"
