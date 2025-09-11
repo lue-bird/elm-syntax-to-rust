@@ -2751,6 +2751,14 @@ pattern context patternInferred =
                 }
 
 
+rustExpressionReferenceBasicsEq : RustExpression
+rustExpressionReferenceBasicsEq =
+    RustExpressionReference
+        { qualification = []
+        , name = "basics_eq"
+        }
+
+
 rustExpressionReferenceStringEqualsStr : RustExpression
 rustExpressionReferenceStringEqualsStr =
     RustExpressionReference
@@ -9822,6 +9830,63 @@ expression context expressionTypedNode =
                                 }
                         )
 
+                "==" ->
+                    Result.map2
+                        (\left right ->
+                            -- small "optimization": if one side is a literal in elm,
+                            -- use string_equals_str instead of wrapping in StringString::One
+                            case left |> rustExpressionStringStringOneToLiteral of
+                                Just leftStringLiteral ->
+                                    RustExpressionCall
+                                        { called = rustExpressionReferenceStringEqualsStr
+                                        , arguments = [ right, leftStringLiteral ]
+                                        }
+
+                                Nothing ->
+                                    case right |> rustExpressionStringStringOneToLiteral of
+                                        Just rightStringLiteral ->
+                                            RustExpressionCall
+                                                { called = rustExpressionReferenceStringEqualsStr
+                                                , arguments = [ left, rightStringLiteral ]
+                                                }
+
+                                        Nothing ->
+                                            RustExpressionCall
+                                                { called = rustExpressionReferenceBasicsEq
+                                                , arguments = [ left, right ]
+                                                }
+                        )
+                        (infixOperation.left
+                            |> expression
+                                { moduleInfo = context.moduleInfo
+                                , localElmBindingsInScope =
+                                    context.localElmBindingsInScope
+                                , functionDeclaredRustParameterEquivalentBindings =
+                                    context.functionDeclaredRustParameterEquivalentBindings
+                                , letDeclaredValueAndFunctionTypes =
+                                    context.letDeclaredValueAndFunctionTypes
+                                , rustEnumTypes = context.rustEnumTypes
+                                , rustConsts = context.rustConsts
+                                , rustFns = context.rustFns
+                                , path = "left" :: context.path
+                                }
+                        )
+                        (infixOperation.right
+                            |> expression
+                                { moduleInfo = context.moduleInfo
+                                , localElmBindingsInScope =
+                                    context.localElmBindingsInScope
+                                , functionDeclaredRustParameterEquivalentBindings =
+                                    context.functionDeclaredRustParameterEquivalentBindings
+                                , letDeclaredValueAndFunctionTypes =
+                                    context.letDeclaredValueAndFunctionTypes
+                                , rustEnumTypes = context.rustEnumTypes
+                                , rustConsts = context.rustConsts
+                                , rustFns = context.rustFns
+                                , path = "right" :: context.path
+                                }
+                        )
+
                 _ ->
                     Result.map3
                         (\operationFunctionReference left right ->
@@ -11907,6 +11972,31 @@ inferredReferenceToInfoString reference =
             moduleOriginNotEmpty
                 ++ "."
                 ++ reference.name
+
+
+rustExpressionStringStringOneToLiteral : RustExpression -> Maybe RustExpression
+rustExpressionStringStringOneToLiteral rustExpression =
+    case rustExpression of
+        RustExpressionCall call ->
+            case call.called of
+                RustExpressionReferenceVariant variant ->
+                    case variant.originTypeName of
+                        [ "StringString" ] ->
+                            case variant.name of
+                                "One" ->
+                                    call.arguments |> List.head
+
+                                _ ->
+                                    Nothing
+
+                        _ ->
+                            Nothing
+
+                _ ->
+                    Nothing
+
+        _ ->
+            Nothing
 
 
 rustExpressionIsEmptyStringString : RustExpression -> Bool
