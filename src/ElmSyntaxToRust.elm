@@ -183,7 +183,7 @@ type RustExpression
 
 {-| The sub-set of rust statement syntax used in generated rust code
 
-TODO remove the unused ones like let mut, assignment, uninitialized, if-else, match
+TODO remove the unused ones like assignment, uninitialized
 
 -}
 type RustStatement
@@ -208,27 +208,9 @@ type RustStatement
         { name : String
         , type_ : RustType
         }
-    | RustStatementLetMutDeclaration
-        { name : String
-        , value : RustExpression
-        }
     | RustStatementBindingAssignment
         { name : String
         , assignedValue : RustExpression
-        }
-    | RustStatementIfElse
-        { condition : RustExpression
-        , onTrue : List RustStatement
-        , onFalse : List RustStatement
-        }
-    | RustStatementMatch
-        { matched : RustExpression
-        , cases :
-            List
-                { pattern : RustPattern
-                , guardConditions : List RustExpression
-                , statements : List RustStatement
-                }
         }
 
 
@@ -8903,19 +8885,7 @@ rustStatementIsConst context rustStatement =
             -- for now
             False
 
-        RustStatementLetMutDeclaration _ ->
-            -- for now
-            False
-
         RustStatementBindingAssignment _ ->
-            -- for now
-            False
-
-        RustStatementIfElse _ ->
-            -- for now
-            False
-
-        RustStatementMatch _ ->
             -- for now
             False
 
@@ -12680,10 +12650,6 @@ rustStatementUsesReferenceInLambdaOrFnDeclaration referenceToCheck rustStatement
             rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                 destructuring.expression
 
-        RustStatementLetMutDeclaration var ->
-            rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
-                var.value
-
         RustStatementBindingAssignment assignment ->
             rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                 assignment.assignedValue
@@ -12691,37 +12657,6 @@ rustStatementUsesReferenceInLambdaOrFnDeclaration referenceToCheck rustStatement
         RustStatementLetDeclaration rustStatementLetDeclaration ->
             rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck
                 rustStatementLetDeclaration.result
-
-        RustStatementIfElse ifElse ->
-            (ifElse.condition |> rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck)
-                || (ifElse.onTrue
-                        |> List.any
-                            (\statement ->
-                                statement
-                                    |> rustStatementUsesReferenceInLambdaOrFnDeclaration referenceToCheck
-                            )
-                   )
-                || (ifElse.onFalse
-                        |> List.any
-                            (\statement ->
-                                statement
-                                    |> rustStatementUsesReferenceInLambdaOrFnDeclaration referenceToCheck
-                            )
-                   )
-
-        RustStatementMatch match ->
-            (match.matched |> rustExpressionUsesReferenceInLambdaOrFnDeclaration referenceToCheck)
-                || (match.cases
-                        |> List.any
-                            (\matchCase ->
-                                matchCase.statements
-                                    |> List.any
-                                        (\statement ->
-                                            statement
-                                                |> rustStatementUsesReferenceInLambdaOrFnDeclaration referenceToCheck
-                                        )
-                            )
-                   )
 
 
 {-| Does not require computation, not to be confused with `rustExpressionIsConst`
@@ -12964,45 +12899,9 @@ rustStatementCountUsesOfReference referenceToCountUsesOf rustStatement =
             fnDeclaration.result
                 |> rustExpressionCountUsesOfReference referenceToCountUsesOf
 
-        RustStatementLetMutDeclaration var ->
-            rustExpressionCountUsesOfReference referenceToCountUsesOf
-                var.value
-
         RustStatementBindingAssignment assignment ->
             rustExpressionCountUsesOfReference referenceToCountUsesOf
                 assignment.assignedValue
-
-        RustStatementIfElse ifElse ->
-            (ifElse.condition
-                |> rustExpressionCountUsesOfReference referenceToCountUsesOf
-            )
-                + (ifElse.onTrue
-                    |> listMapAndSum
-                        (\statement ->
-                            statement |> rustStatementCountUsesOfReference referenceToCountUsesOf
-                        )
-                  )
-                + (ifElse.onFalse
-                    |> listMapAndSum
-                        (\statement ->
-                            statement |> rustStatementCountUsesOfReference referenceToCountUsesOf
-                        )
-                  )
-
-        RustStatementMatch match ->
-            (match.matched
-                |> rustExpressionCountUsesOfReference referenceToCountUsesOf
-            )
-                + (match.cases
-                    |> listMapAndSum
-                        (\matchCase ->
-                            matchCase.statements
-                                |> listMapAndSum
-                                    (\statement ->
-                                        statement |> rustStatementCountUsesOfReference referenceToCountUsesOf
-                                    )
-                        )
-                  )
 
 
 listMapAndSum : (a -> Int) -> List a -> Int
@@ -13349,14 +13248,6 @@ rustStatementCloneWhereNecessary context rustStatement =
                         |> rustExpressionCloneWhereNecessary context
                 }
 
-        RustStatementLetMutDeclaration letMutDeclaration ->
-            RustStatementLetMutDeclaration
-                { name = letMutDeclaration.name
-                , value =
-                    letMutDeclaration.value
-                        |> rustExpressionCloneWhereNecessary context
-                }
-
         RustStatementBindingAssignment bindingAssignment ->
             RustStatementBindingAssignment
                 { name = bindingAssignment.name
@@ -13371,56 +13262,6 @@ rustStatementCloneWhereNecessary context rustStatement =
                 , expression =
                     letDestructuring.expression
                         |> rustExpressionCloneWhereNecessary context
-                }
-
-        RustStatementIfElse ifElse ->
-            RustStatementIfElse
-                { condition =
-                    ifElse.condition
-                        |> rustExpressionCloneWhereNecessary context
-                , onTrue =
-                    ifElse.onTrue
-                        |> rustStatementsCloneWhereNecessary context
-                , onFalse =
-                    ifElse.onFalse
-                        |> rustStatementsCloneWhereNecessary context
-                }
-
-        RustStatementMatch match ->
-            RustStatementMatch
-                { matched =
-                    match.matched
-                        |> rustExpressionCloneWhereNecessary context
-                , cases =
-                    match.cases
-                        |> List.map
-                            (\matchCase ->
-                                let
-                                    casePatternIntroducedBindings : List { name : String, type_ : RustType }
-                                    casePatternIntroducedBindings =
-                                        matchCase.pattern
-                                            |> rustPatternIntroducedBindings
-                                            |> rustTypedBindingsKeepThoseRequiringClone
-                                in
-                                { pattern = matchCase.pattern
-                                , guardConditions = matchCase.guardConditions
-                                , statements =
-                                    casePatternIntroducedBindings
-                                        |> List.foldl
-                                            (\casePatternIntroducedBinding statements ->
-                                                statements
-                                                    |> rustStatementsInOrderCloneBindingUsesBeforeLast
-                                                        casePatternIntroducedBinding.name
-                                                    |> .withClones
-                                            )
-                                            matchCase.statements
-                                        |> rustStatementsCloneWhereNecessary
-                                            { variablesInScope =
-                                                casePatternIntroducedBindings
-                                                    ++ context.variablesInScope
-                                            }
-                                }
-                            )
                 }
 
         RustStatementFnDeclaration fnDeclaration ->
@@ -13450,38 +13291,6 @@ rustStatementCloneWhereNecessary context rustStatement =
                         |> rustExpressionCloneMultipleBindingUsesBeforeLast
                             (parametersIntroducedBindings |> List.map .name)
                 }
-
-
-rustStatementsCloneWhereNecessary :
-    { variablesInScope : List { name : String, type_ : RustType } }
-    -> List RustStatement
-    -> List RustStatement
-rustStatementsCloneWhereNecessary context rustStatements =
-    rustStatements
-        |> List.foldl
-            (\statement soFar ->
-                let
-                    statementIntroducedVariables : List { name : String, type_ : RustType }
-                    statementIntroducedVariables =
-                        statement
-                            |> rustStatementIntroducedVariables
-                            |> rustTypedBindingsKeepThoseRequiringClone
-                in
-                { context =
-                    { variablesInScope =
-                        statementIntroducedVariables
-                            ++ soFar.context.variablesInScope
-                    }
-                , statementsClonedWhereNecessaryReverse =
-                    (statement |> rustStatementCloneWhereNecessary soFar.context)
-                        :: soFar.statementsClonedWhereNecessaryReverse
-                }
-            )
-            { context = context
-            , statementsClonedWhereNecessaryReverse = []
-            }
-        |> .statementsClonedWhereNecessaryReverse
-        |> List.reverse
 
 
 rustExpressionCloneVariables :
@@ -13748,14 +13557,6 @@ rustStatementCloneVariables variableShouldBeCloned rustStatement =
                         |> rustExpressionCloneVariables variableShouldBeCloned
                 }
 
-        RustStatementLetMutDeclaration varDeclaration ->
-            RustStatementLetMutDeclaration
-                { name = varDeclaration.name
-                , value =
-                    varDeclaration.value
-                        |> rustExpressionCloneVariables variableShouldBeCloned
-                }
-
         RustStatementBindingAssignment assignment ->
             RustStatementBindingAssignment
                 { name = assignment.name
@@ -13785,46 +13586,6 @@ rustStatementCloneVariables variableShouldBeCloned rustStatement =
                         |> rustExpressionCloneVariables variableShouldBeCloned
                 }
 
-        RustStatementIfElse rustStatementIfElse ->
-            RustStatementIfElse
-                { condition =
-                    rustStatementIfElse.condition
-                        |> rustExpressionCloneVariables variableShouldBeCloned
-                , onTrue =
-                    rustStatementIfElse.onTrue
-                        |> List.map
-                            (\statement ->
-                                statement |> rustStatementCloneVariables variableShouldBeCloned
-                            )
-                , onFalse =
-                    rustStatementIfElse.onFalse
-                        |> List.map
-                            (\statement ->
-                                statement |> rustStatementCloneVariables variableShouldBeCloned
-                            )
-                }
-
-        RustStatementMatch match ->
-            RustStatementMatch
-                { matched =
-                    match.matched
-                        |> rustExpressionCloneVariables variableShouldBeCloned
-                , cases =
-                    match.cases
-                        |> List.map
-                            (\matchCase ->
-                                { pattern = matchCase.pattern
-                                , guardConditions = matchCase.guardConditions
-                                , statements =
-                                    matchCase.statements
-                                        |> List.map
-                                            (\statement ->
-                                                statement |> rustStatementCloneVariables variableShouldBeCloned
-                                            )
-                                }
-                            )
-                }
-
 
 {-| Not including fn declared names
 -}
@@ -13832,12 +13593,6 @@ rustStatementIntroducedVariables : RustStatement -> List { name : String, type_ 
 rustStatementIntroducedVariables rustStatement =
     case rustStatement of
         RustStatementFnDeclaration _ ->
-            []
-
-        RustStatementIfElse _ ->
-            []
-
-        RustStatementMatch _ ->
             []
 
         RustStatementLetDeclaration rustLetDeclaration ->
@@ -13850,12 +13605,6 @@ rustStatementIntroducedVariables rustStatement =
 
         RustStatementLetDeclarationUninitialized letDeclarationUninitialized ->
             [ letDeclarationUninitialized ]
-
-        RustStatementLetMutDeclaration letMutDeclaration ->
-            [ { name = letMutDeclaration.name
-              , type_ = RustTypeInfer
-              }
-            ]
 
         RustStatementBindingAssignment _ ->
             []
@@ -14365,21 +14114,6 @@ rustStatementCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustStatement =
                     }
             }
 
-        RustStatementLetMutDeclaration statementLetDeclaration ->
-            let
-                forValue : { withClones : RustExpression, bindingWasUsed : Bool }
-                forValue =
-                    statementLetDeclaration.value
-                        |> rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast
-            in
-            { bindingWasUsed = forValue.bindingWasUsed
-            , withClones =
-                RustStatementLetMutDeclaration
-                    { name = statementLetDeclaration.name
-                    , value = forValue.withClones
-                    }
-            }
-
         RustStatementBindingAssignment bindingAssignment ->
             let
                 forAssignedValue : { withClones : RustExpression, bindingWasUsed : Bool }
@@ -14400,104 +14134,6 @@ rustStatementCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustStatement =
             { bindingWasUsed = False
             , withClones = rustStatement
             }
-
-        RustStatementIfElse ifElse ->
-            let
-                forOnTrue : { withClones : List RustStatement, bindingWasUsed : Bool }
-                forOnTrue =
-                    ifElse.onTrue
-                        |> rustStatementsInOrderCloneBindingUsesBeforeLast bindingToCloneBeforeLast
-
-                forOnFalse : { withClones : List RustStatement, bindingWasUsed : Bool }
-                forOnFalse =
-                    ifElse.onFalse
-                        |> rustStatementsInOrderCloneBindingUsesBeforeLast bindingToCloneBeforeLast
-            in
-            if forOnTrue.bindingWasUsed || forOnFalse.bindingWasUsed then
-                { bindingWasUsed = True
-                , withClones =
-                    RustStatementIfElse
-                        { condition =
-                            ifElse.condition
-                                |> rustExpressionCloneBindingUses bindingToCloneBeforeLast
-                        , onTrue = forOnTrue.withClones
-                        , onFalse = forOnFalse.withClones
-                        }
-                }
-
-            else
-                let
-                    forCondition : { withClones : RustExpression, bindingWasUsed : Bool }
-                    forCondition =
-                        ifElse.condition
-                            |> rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast
-                in
-                { bindingWasUsed = forCondition.bindingWasUsed
-                , withClones =
-                    RustStatementIfElse
-                        { condition = forCondition.withClones
-                        , onTrue = forOnTrue.withClones
-                        , onFalse = forOnFalse.withClones
-                        }
-                }
-
-        RustStatementMatch match ->
-            let
-                forCases :
-                    { withClones :
-                        List
-                            { pattern : RustPattern
-                            , guardConditions : List RustExpression
-                            , statements : List RustStatement
-                            }
-                    , bindingWasUsed : Bool
-                    }
-                forCases =
-                    match.cases
-                        |> List.foldr
-                            (\matchCase soFar ->
-                                let
-                                    forStatementsResult : { withClones : List RustStatement, bindingWasUsed : Bool }
-                                    forStatementsResult =
-                                        matchCase.statements
-                                            |> rustStatementsInOrderCloneBindingUsesBeforeLast bindingToCloneBeforeLast
-                                in
-                                { bindingWasUsed = soFar.bindingWasUsed || forStatementsResult.bindingWasUsed
-                                , withClones =
-                                    { pattern = matchCase.pattern
-                                    , guardConditions = matchCase.guardConditions
-                                    , statements = forStatementsResult.withClones
-                                    }
-                                        :: soFar.withClones
-                                }
-                            )
-                            { bindingWasUsed = False, withClones = [] }
-            in
-            if forCases.bindingWasUsed then
-                { bindingWasUsed = True
-                , withClones =
-                    RustStatementMatch
-                        { matched =
-                            match.matched
-                                |> rustExpressionCloneBindingUses bindingToCloneBeforeLast
-                        , cases = forCases.withClones
-                        }
-                }
-
-            else
-                let
-                    forMatched : { withClones : RustExpression, bindingWasUsed : Bool }
-                    forMatched =
-                        match.matched
-                            |> rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast
-                in
-                { bindingWasUsed = forMatched.bindingWasUsed
-                , withClones =
-                    RustStatementMatch
-                        { matched = forMatched.withClones
-                        , cases = forCases.withClones
-                        }
-                }
 
 
 rustExpressionsInOrderCloneBindingUsesBeforeLast :
@@ -14524,38 +14160,6 @@ rustExpressionsInOrderCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustEx
                         forPart =
                             part
                                 |> rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast
-                    in
-                    { bindingWasUsed = forPart.bindingWasUsed
-                    , withClones = forPart.withClones :: soFar.withClones
-                    }
-            )
-            { bindingWasUsed = False, withClones = [] }
-
-
-rustStatementsInOrderCloneBindingUsesBeforeLast :
-    String
-    -> List RustStatement
-    ->
-        { withClones : List RustStatement
-        , bindingWasUsed : Bool
-        }
-rustStatementsInOrderCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustStatements =
-    rustStatements
-        |> List.foldr
-            (\part soFar ->
-                if soFar.bindingWasUsed then
-                    { bindingWasUsed = True
-                    , withClones =
-                        (part |> rustStatementCloneBindingUses bindingToCloneBeforeLast)
-                            :: soFar.withClones
-                    }
-
-                else
-                    let
-                        forPart : { withClones : RustStatement, bindingWasUsed : Bool }
-                        forPart =
-                            part
-                                |> rustStatementCloneBindingUsesBeforeLast bindingToCloneBeforeLast
                     in
                     { bindingWasUsed = forPart.bindingWasUsed
                     , withClones = forPart.withClones :: soFar.withClones
@@ -14757,40 +14361,9 @@ rustStatementUsedLocalBindingsOutsideOfFnsAndClosures rustStatement =
             rustExpressionUsedLocalBindings
                 statementLetDeclaration.result
 
-        RustStatementLetMutDeclaration letMutDeclaration ->
-            rustExpressionUsedLocalBindings
-                letMutDeclaration.value
-
         RustStatementBindingAssignment assignment ->
             rustExpressionUsedLocalBindings
                 assignment.assignedValue
-
-        RustStatementIfElse ifElse ->
-            ifElse.condition
-                |> rustExpressionUsedLocalBindings
-                |> FastSet.union
-                    (ifElse.onTrue
-                        |> listMapToFastSetsAndUnify
-                            rustStatementUsedLocalBindingsOutsideOfFnsAndClosures
-                    )
-                |> FastSet.union
-                    (ifElse.onFalse
-                        |> listMapToFastSetsAndUnify
-                            rustStatementUsedLocalBindingsOutsideOfFnsAndClosures
-                    )
-
-        RustStatementMatch match ->
-            match.matched
-                |> rustExpressionUsedLocalBindings
-                |> FastSet.union
-                    (match.cases
-                        |> listMapToFastSetsAndUnify
-                            (\matchCase ->
-                                matchCase.statements
-                                    |> listMapToFastSetsAndUnify
-                                        rustStatementUsedLocalBindingsOutsideOfFnsAndClosures
-                            )
-                    )
 
 
 rustExpressionSubstituteReferences :
@@ -14996,14 +14569,6 @@ rustStatementSubstituteReferences referenceToExpression rustStatement =
                         |> rustExpressionSubstituteReferences referenceToExpression
                 }
 
-        RustStatementLetMutDeclaration varDeclaration ->
-            RustStatementLetMutDeclaration
-                { name = varDeclaration.name
-                , value =
-                    varDeclaration.value
-                        |> rustExpressionSubstituteReferences referenceToExpression
-                }
-
         RustStatementBindingAssignment assignment ->
             RustStatementBindingAssignment
                 { name = assignment.name
@@ -15031,46 +14596,6 @@ rustStatementSubstituteReferences referenceToExpression rustStatement =
                 , result =
                     fnDeclaration.result
                         |> rustExpressionSubstituteReferences referenceToExpression
-                }
-
-        RustStatementIfElse rustStatementIfElse ->
-            RustStatementIfElse
-                { condition =
-                    rustStatementIfElse.condition
-                        |> rustExpressionSubstituteReferences referenceToExpression
-                , onTrue =
-                    rustStatementIfElse.onTrue
-                        |> List.map
-                            (\statement ->
-                                statement |> rustStatementSubstituteReferences referenceToExpression
-                            )
-                , onFalse =
-                    rustStatementIfElse.onFalse
-                        |> List.map
-                            (\statement ->
-                                statement |> rustStatementSubstituteReferences referenceToExpression
-                            )
-                }
-
-        RustStatementMatch match ->
-            RustStatementMatch
-                { matched =
-                    match.matched
-                        |> rustExpressionSubstituteReferences referenceToExpression
-                , cases =
-                    match.cases
-                        |> List.map
-                            (\matchCase ->
-                                { pattern = matchCase.pattern
-                                , guardConditions = matchCase.guardConditions
-                                , statements =
-                                    matchCase.statements
-                                        |> List.map
-                                            (\statement ->
-                                                statement |> rustStatementSubstituteReferences referenceToExpression
-                                            )
-                                }
-                            )
                 }
 
 
@@ -19435,130 +18960,14 @@ printExactlyIf =
     Print.exactly "if"
 
 
-printRustStatementIfElse :
-    { condition : RustExpression
-    , onTrue : List RustStatement
-    , onFalse : List RustStatement
-    }
-    -> Print
-printRustStatementIfElse ifElse =
-    let
-        conditionPrint : Print
-        conditionPrint =
-            printRustExpressionNotParenthesizedCurlyEmbracedIfAfterStatement
-                ifElse.condition
-
-        conditionLineSpread : Print.LineSpread
-        conditionLineSpread =
-            conditionPrint |> Print.lineSpread
-    in
-    printExactlyIf
-        |> Print.followedBy
-            (Print.withIndentAtNextMultipleOf4
-                (Print.spaceOrLinebreakIndented conditionLineSpread
-                    |> Print.followedBy conditionPrint
-                )
-            )
-        |> Print.followedBy
-            (Print.spaceOrLinebreakIndented conditionLineSpread)
-        |> Print.followedBy printExactlyCurlyOpening
-        |> Print.followedBy
-            (Print.withIndentAtNextMultipleOf4
-                (Print.linebreakIndented
-                    |> Print.followedBy
-                        (printRustStatements ifElse.onTrue)
-                )
-            )
-        |> Print.followedBy Print.linebreakIndented
-        |> Print.followedBy printExactlyCurlyClosingSpaceElseSpaceCurlyOpening
-        |> Print.followedBy
-            (Print.withIndentAtNextMultipleOf4
-                (Print.linebreakIndented
-                    |> Print.followedBy
-                        (printRustStatements ifElse.onFalse)
-                )
-            )
-        |> Print.followedBy Print.linebreakIndented
-        |> Print.followedBy printExactlyCurlyClosing
-
-
 printExactlyCurlyClosingSpaceElseSpaceCurlyOpening : Print
 printExactlyCurlyClosingSpaceElseSpaceCurlyOpening =
     Print.exactly "} else {"
 
 
-printRustStatementMatch :
-    { matched : RustExpression
-    , cases :
-        List
-            { pattern : RustPattern
-            , guardConditions : List RustExpression
-            , statements : List RustStatement
-            }
-    }
-    -> Print
-printRustStatementMatch rustMatch =
-    let
-        matchedPrint : Print
-        matchedPrint =
-            printRustExpressionNotParenthesizedCurlyEmbracedIfAfterStatement
-                rustMatch.matched
-
-        matchedPrintLineSpread : Print.LineSpread
-        matchedPrintLineSpread =
-            matchedPrint |> Print.lineSpread
-    in
-    printExactlyMatch
-        |> Print.followedBy
-            (Print.withIndentAtNextMultipleOf4
-                (Print.spaceOrLinebreakIndented matchedPrintLineSpread
-                    |> Print.followedBy matchedPrint
-                )
-            )
-        |> Print.followedBy printExactlySpaceCurlyOpening
-        |> Print.followedBy
-            (Print.linebreakIndented
-                |> Print.followedBy
-                    (rustMatch.cases
-                        |> Print.listMapAndIntersperseAndFlatten
-                            printRustStatementMatchCase
-                            printExactlyCommaLinebreakIndented
-                    )
-            )
-        |> Print.followedBy Print.linebreakIndented
-        |> Print.followedBy printExactlyCurlyClosing
-
-
 printExactlyMatch : Print
 printExactlyMatch =
     Print.exactly "match"
-
-
-printRustStatementMatchCase :
-    { pattern : RustPattern
-    , guardConditions : List RustExpression
-    , statements : List RustStatement
-    }
-    -> Print
-printRustStatementMatchCase arm =
-    let
-        patternPrint : Print
-        patternPrint =
-            printRustPattern arm.pattern
-    in
-    Print.withIndentIncreasedBy 2
-        (patternPrint
-            |> Print.followedBy
-                (printWithRustGuardConditions arm.guardConditions)
-        )
-        |> Print.followedBy printExactlyColon
-        |> Print.followedBy
-            (Print.withIndentAtNextMultipleOf4
-                (Print.linebreakIndented
-                    |> Print.followedBy
-                        (printRustStatements arm.statements)
-                )
-            )
 
 
 printRustExpressionMatch :
@@ -19657,14 +19066,6 @@ printWithRustGuardConditions guardConditions =
                     )
 
 
-printRustStatements : List RustStatement -> Print
-printRustStatements rustStatements =
-    rustStatements
-        |> Print.listMapAndIntersperseAndFlatten
-            printRustStatement
-            Print.linebreakIndented
-
-
 printRustStatement : RustStatement -> Print
 printRustStatement rustStatement =
     case rustStatement of
@@ -19680,23 +19081,6 @@ printRustStatement rustStatement =
         RustStatementLetDeclarationUninitialized letDeclarationUnassigned ->
             printRustStatementLetDeclarationUninitialized letDeclarationUnassigned
 
-        RustStatementLetMutDeclaration varDeclarationInitialized ->
-            let
-                assignedValuePrint : Print
-                assignedValuePrint =
-                    printRustExpressionNotParenthesizedCurlyEmbracedIfAfterStatement
-                        varDeclarationInitialized.value
-            in
-            Print.exactly ("let mut " ++ varDeclarationInitialized.name ++ " =")
-                |> Print.followedBy
-                    (Print.withIndentAtNextMultipleOf4
-                        (Print.spaceOrLinebreakIndented
-                            (assignedValuePrint |> Print.lineSpread)
-                            |> Print.followedBy
-                                assignedValuePrint
-                        )
-                    )
-
         RustStatementBindingAssignment assignment ->
             Print.exactly (assignment.name ++ " =")
                 |> Print.followedBy
@@ -19708,12 +19092,6 @@ printRustStatement rustStatement =
                                 )
                         )
                     )
-
-        RustStatementIfElse ifElse ->
-            printRustStatementIfElse ifElse
-
-        RustStatementMatch syntaxMatch ->
-            printRustStatementMatch syntaxMatch
 
 
 printRustStatementLetDeclarationUninitialized :
