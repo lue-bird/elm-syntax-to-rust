@@ -124,6 +124,7 @@ which only contains owned types – and conversion functions between the two.
 
 ### improvement ideas
 
+- use `string_equals_str` when one argument of `==` is string literal
 - avoid captured context variables clones before lambda if it's the outermost lambda
 - try and benchmark switching `String` representation from `One &str | Append String String` to `Rc<Vec<&str>>` to avoid massive nesting = indirection = expensive memory lookup (+ alloc and dealloc but lesser so)
 - if lambda is called with a function, always inline that function
