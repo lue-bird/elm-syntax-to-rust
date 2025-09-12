@@ -45,6 +45,11 @@ type RustType
         , isPartialEq : Bool
         , isDebug : Bool
         }
+    | -- technically a subset of RustTypeConstruct but with extra metadata
+      RustTypeRecordStruct
+        { name : String
+        , fields : FastDict.Dict String RustType
+        }
     | RustTypeTuple
         { part0 : RustType
         , part1 : RustType
@@ -621,6 +626,13 @@ rustTypeUsedLifetimeVariables rustType =
         RustTypeUnit ->
             FastSet.empty
 
+        RustTypeRecordStruct recordStruct ->
+            recordStruct.fields
+                |> fastDictMapToFastSetsAndUnify
+                    (\_ fieldValue ->
+                        fieldValue |> rustTypeUsedLifetimeVariables
+                    )
+
         RustTypeConstruct typeConstruct ->
             (typeConstruct.lifetimeArguments |> FastSet.fromList)
                 |> FastSet.union
@@ -778,7 +790,6 @@ rustTypeIsDebug context rustType =
     -- IGNORE TCO
     case rustType of
         RustTypeInfer ->
-            -- not decide-able
             False
 
         RustTypeUnit ->
@@ -802,6 +813,13 @@ rustTypeIsDebug context rustType =
                                 part |> rustTypeIsDebug context
                             )
                    )
+
+        RustTypeRecordStruct recordStruct ->
+            recordStruct.fields
+                |> fastDictAll
+                    (\_ fieldValue ->
+                        fieldValue |> rustTypeIsDebug context
+                    )
 
         RustTypeConstruct typeConstruct ->
             typeConstruct.isDebug
@@ -844,6 +862,13 @@ rustTypeIsCopy context rustType =
                             )
                    )
 
+        RustTypeRecordStruct recordStruct ->
+            recordStruct.fields
+                |> fastDictAll
+                    (\_ fieldValue ->
+                        fieldValue |> rustTypeIsCopy context
+                    )
+
         RustTypeConstruct typeConstruct ->
             typeConstruct.isCopy
                 && (typeConstruct.arguments
@@ -883,6 +908,13 @@ rustTypeIsPartialEq context rustType =
                                 part |> rustTypeIsPartialEq context
                             )
                    )
+
+        RustTypeRecordStruct recordStruct ->
+            recordStruct.fields
+                |> fastDictAll
+                    (\_ fieldValue ->
+                        fieldValue |> rustTypeIsPartialEq context
+                    )
 
         RustTypeConstruct typeConstruct ->
             typeConstruct.isPartialEq
@@ -1290,22 +1322,20 @@ typeNotVariable context inferredTypeNotVariable =
                 }
 
         ElmSyntaxTypeInfer.TypeRecord recordFields ->
-            RustTypeConstruct
-                { qualification = []
-                , name =
+            RustTypeRecordStruct
+                { name =
                     generatedRecordStructTypeName
                         (recordFields |> FastDict.keys)
-                , arguments =
+                , fields =
                     recordFields
                         |> FastDict.foldr
-                            (\_ valueType soFar ->
-                                (valueType |> type_ context) :: soFar
+                            (\elmFieldName valueType soFar ->
+                                soFar
+                                    |> FastDict.insert
+                                        (elmFieldName |> toSnakeCaseRustName)
+                                        (valueType |> type_ context)
                             )
-                            []
-                , lifetimeArguments = []
-                , isCopy = True
-                , isDebug = True
-                , isPartialEq = True
+                            FastDict.empty
                 }
 
         ElmSyntaxTypeInfer.TypeFunction typeFunction ->
@@ -1319,22 +1349,22 @@ typeNotVariable context inferredTypeNotVariable =
             --     ((typeRange |> rangeToInfoString)
             --         ++ " extensible record types are not supported"
             --     )
-            RustTypeConstruct
-                { qualification = []
-                , name =
+            RustTypeRecordStruct
+                { name =
                     generatedRecordStructTypeName
-                        (typeRecordExtension.fields |> FastDict.keys)
-                , arguments =
+                        (typeRecordExtension.fields
+                            |> FastDict.keys
+                        )
+                , fields =
                     typeRecordExtension.fields
                         |> FastDict.foldr
-                            (\_ valueType soFar ->
-                                (valueType |> type_ context) :: soFar
+                            (\elmFieldName valueType soFar ->
+                                soFar
+                                    |> FastDict.insert
+                                        (elmFieldName |> toSnakeCaseRustName)
+                                        (valueType |> type_ context)
                             )
-                            []
-                , lifetimeArguments = []
-                , isCopy = True
-                , isDebug = True
-                , isPartialEq = True
+                            FastDict.empty
                 }
 
 
@@ -1380,7 +1410,20 @@ printRustTypeNotParenthesized rustType =
                     )
 
         RustTypeConstruct typeConstruct ->
-            printRustTypeConstruct typeConstruct
+            printRustTypeConstruct
+                { qualification = typeConstruct.qualification
+                , name = typeConstruct.name
+                , lifetimeArguments = typeConstruct.lifetimeArguments
+                , arguments = typeConstruct.arguments
+                }
+
+        RustTypeRecordStruct recordStruct ->
+            printRustTypeConstruct
+                { qualification = []
+                , name = recordStruct.name
+                , lifetimeArguments = []
+                , arguments = recordStruct.fields |> FastDict.values
+                }
 
         RustTypeTuple parts ->
             printRustTypeTuple parts
@@ -1498,6 +1541,11 @@ rustTypeExpandFunctionIntoReverse soFarReverse rustType =
             }
 
         RustTypeConstruct _ ->
+            { inputs = soFarReverse |> List.reverse
+            , output = rustType
+            }
+
+        RustTypeRecordStruct _ ->
             { inputs = soFarReverse |> List.reverse
             , output = rustType
             }
@@ -1731,9 +1779,6 @@ printRustTypeConstruct :
     { qualification : List String
     , name : String
     , arguments : List RustType
-    , isCopy : Bool
-    , isDebug : Bool
-    , isPartialEq : Bool
     , lifetimeArguments : List String
     }
     -> Print
@@ -1817,6 +1862,9 @@ rustTypeIsSpaceSeparated rustType =
             False
 
         RustTypeConstruct _ ->
+            False
+
+        RustTypeRecordStruct _ ->
             False
 
         RustTypeTuple _ ->
@@ -7571,7 +7619,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                 rustTypeIncludesCycleMember : RustType -> Bool
                                                                 rustTypeIncludesCycleMember rustType =
                                                                     rustType
-                                                                        |> rustTypeIncludesAnyLocalTypeConstruct
+                                                                        |> rustTypeIncludesAnyLocalEnumOrTypeAliasConstruct
                                                                             cycleMemberNames
                                                             in
                                                             inferredTypeDeclarationCycle
@@ -7970,8 +8018,8 @@ listReverseDeduplicateNeighboringElementsIntoBy soFar elementToKey list =
                     (element1 :: element2Up)
 
 
-rustTypeIncludesAnyLocalTypeConstruct : FastSet.Set String -> RustType -> Bool
-rustTypeIncludesAnyLocalTypeConstruct needleTypeConstructs rustType =
+rustTypeIncludesAnyLocalEnumOrTypeAliasConstruct : FastSet.Set String -> RustType -> Bool
+rustTypeIncludesAnyLocalEnumOrTypeAliasConstruct needleTypeConstructs rustType =
     -- IGNORE TCO
     case rustType of
         RustTypeUnit ->
@@ -7987,21 +8035,28 @@ rustTypeIncludesAnyLocalTypeConstruct needleTypeConstructs rustType =
                 || (typeConstruct.arguments
                         |> List.any
                             (\argument ->
-                                argument |> rustTypeIncludesAnyLocalTypeConstruct needleTypeConstructs
+                                argument |> rustTypeIncludesAnyLocalEnumOrTypeAliasConstruct needleTypeConstructs
                             )
                    )
 
+        RustTypeRecordStruct recordStruct ->
+            recordStruct.fields
+                |> fastDictAny
+                    (\_ fieldValue ->
+                        fieldValue |> rustTypeIncludesAnyLocalEnumOrTypeAliasConstruct needleTypeConstructs
+                    )
+
         RustTypeTuple parts ->
             (parts.part0
-                |> rustTypeIncludesAnyLocalTypeConstruct needleTypeConstructs
+                |> rustTypeIncludesAnyLocalEnumOrTypeAliasConstruct needleTypeConstructs
             )
                 || (parts.part1
-                        |> rustTypeIncludesAnyLocalTypeConstruct needleTypeConstructs
+                        |> rustTypeIncludesAnyLocalEnumOrTypeAliasConstruct needleTypeConstructs
                    )
                 || (parts.part2Up
                         |> List.any
                             (\part ->
-                                part |> rustTypeIncludesAnyLocalTypeConstruct needleTypeConstructs
+                                part |> rustTypeIncludesAnyLocalEnumOrTypeAliasConstruct needleTypeConstructs
                             )
                    )
 
@@ -8012,15 +8067,15 @@ rustTypeIncludesAnyLocalTypeConstruct needleTypeConstructs rustType =
             (function.input
                 |> List.any
                     (\input ->
-                        input |> rustTypeIncludesAnyLocalTypeConstruct needleTypeConstructs
+                        input |> rustTypeIncludesAnyLocalEnumOrTypeAliasConstruct needleTypeConstructs
                     )
             )
                 || (function.output
-                        |> rustTypeIncludesAnyLocalTypeConstruct needleTypeConstructs
+                        |> rustTypeIncludesAnyLocalEnumOrTypeAliasConstruct needleTypeConstructs
                    )
 
         RustTypeBorrow inBorrow ->
-            rustTypeIncludesAnyLocalTypeConstruct needleTypeConstructs
+            rustTypeIncludesAnyLocalEnumOrTypeAliasConstruct needleTypeConstructs
                 inBorrow.type_
 
 
@@ -8518,9 +8573,7 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
                             , cloneCapturesBeforeClosure = False
                             }
                         |> rustExpressionCloneMultipleBindingUsesBeforeLast
-                            (allRustParameterIntroducedBindings
-                                |> List.map .name
-                            )
+                            allRustParameterIntroducedBindings
                 , lifetimeParameters = [ generatedLifetimeVariableName ]
                 }
         )
@@ -11170,16 +11223,29 @@ expression context expressionTypedNode =
                                                 )
                             )
                             context.letDeclaredValueAndFunctionTypes
+
+                typeAliasesInModule : String -> Maybe (FastDict.Dict String { parameters : List String, recordFieldOrder : Maybe (List String), type_ : ElmSyntaxTypeInfer.Type })
+                typeAliasesInModule moduleNameToAccess =
+                    context.moduleInfo
+                        |> FastDict.get moduleNameToAccess
+                        |> Maybe.map .typeAliases
             in
             Result.map2
                 (\declarations result ->
                     let
-                        rustLetIntroducedVariables : List String
+                        rustLetIntroducedVariables : List { name : String, type_ : RustType }
                         rustLetIntroducedVariables =
                             letIntroducedBindings
                                 |> FastDict.foldl
-                                    (\letIntroducedBinding _ soFar ->
-                                        (letIntroducedBinding |> toSnakeCaseRustName)
+                                    (\letIntroducedBinding letIntroducedBindingType soFar ->
+                                        { name = letIntroducedBinding |> toSnakeCaseRustName
+                                        , type_ =
+                                            letIntroducedBindingType
+                                                |> type_
+                                                    { rustEnumTypes = context.rustEnumTypes
+                                                    , typeAliasesInModule = typeAliasesInModule
+                                                    }
+                                        }
                                             :: soFar
                                     )
                                     []
@@ -13171,9 +13237,7 @@ rustExpressionCloneWhereNecessary context rustExpression =
                                 , cloneCapturesBeforeClosure = True
                                 }
                             |> rustExpressionCloneMultipleBindingUsesBeforeLast
-                                (closureParameterIntroducedBindings
-                                    |> List.map .name
-                                )
+                                closureParameterIntroducedBindings
                     }
                 )
 
@@ -13205,9 +13269,7 @@ rustExpressionCloneWhereNecessary context rustExpression =
                                                 context.cloneCapturesBeforeClosure
                                             }
                                         |> rustExpressionCloneMultipleBindingUsesBeforeLast
-                                            (casePatternIntroducedBindings
-                                                |> List.map .name
-                                            )
+                                            casePatternIntroducedBindings
                                 }
                             )
                 }
@@ -13233,7 +13295,7 @@ rustExpressionCloneWhereNecessary context rustExpression =
                             , cloneCapturesBeforeClosure = False
                             }
                         |> rustExpressionCloneMultipleBindingUsesBeforeLast
-                            (statementIntroducedVariables |> List.map .name)
+                            statementIntroducedVariables
                 }
 
 
@@ -13303,15 +13365,18 @@ rustStatementCloneWhereNecessary context rustStatement =
                             , cloneCapturesBeforeClosure = False
                             }
                         |> rustExpressionCloneMultipleBindingUsesBeforeLast
-                            (parametersIntroducedBindings |> List.map .name)
+                            parametersIntroducedBindings
                 }
 
 
-rustExpressionCloneVariables :
-    (String -> Bool)
+{-| Always prefer `rustExpressionCloneBindingUsesUnlessIsCopy`
+if there is a chance the given binding does not need to be cloned
+-}
+rustExpressionCloneBindingUses :
+    { name : String, type_ : RustType }
     -> RustExpression
     -> RustExpression
-rustExpressionCloneVariables variableShouldBeCloned rustExpression =
+rustExpressionCloneBindingUses binding rustExpression =
     -- IGNORE TCO
     case rustExpression of
         RustExpressionUnit ->
@@ -13344,7 +13409,7 @@ rustExpressionCloneVariables variableShouldBeCloned rustExpression =
                     if reference.name == generatedAllocatorVariableName then
                         rustExpression
 
-                    else if reference.name |> variableShouldBeCloned then
+                    else if reference.name == binding.name then
                         rustExpressionClone rustExpression
 
                     else
@@ -13353,27 +13418,25 @@ rustExpressionCloneVariables variableShouldBeCloned rustExpression =
         RustExpressionNegateOperation inNegation ->
             RustExpressionNegateOperation
                 (inNegation
-                    |> rustExpressionCloneVariables variableShouldBeCloned
+                    |> rustExpressionCloneBindingUses binding
                 )
 
         RustExpressionBorrow inBorrow ->
             RustExpressionBorrow
                 (inBorrow
-                    |> rustExpressionCloneVariables variableShouldBeCloned
+                    |> rustExpressionCloneBindingUses binding
                 )
 
         RustExpressionDeref inDeref ->
             RustExpressionDeref
                 (inDeref
-                    |> rustExpressionCloneVariables variableShouldBeCloned
+                    |> rustExpressionCloneBindingUses binding
                 )
 
         RustExpressionStructAccess recordAccess ->
-            -- _hand-wave_ optimization possibility:
-            -- do not clone anything if field value type of is copy (e.g. a shared reference)
             let
-                canCloneOnlyFieldValue : Bool
-                canCloneOnlyFieldValue =
+                structIsReferenceToClone : Bool
+                structIsReferenceToClone =
                     case recordAccess.struct of
                         RustExpressionReference reference ->
                             case reference.qualification of
@@ -13381,19 +13444,42 @@ rustExpressionCloneVariables variableShouldBeCloned rustExpression =
                                     False
 
                                 [] ->
-                                    reference.name |> variableShouldBeCloned
+                                    reference.name == binding.name
 
                         _ ->
                             False
             in
-            if canCloneOnlyFieldValue then
-                rustExpressionClone rustExpression
+            if structIsReferenceToClone then
+                -- can clone only field value
+                if
+                    case binding.type_ of
+                        RustTypeRecordStruct bindingTypeRecord ->
+                            case
+                                bindingTypeRecord.fields
+                                    |> FastDict.get recordAccess.field
+                            of
+                                Just bindingTypeRecordAccessedFieldValue ->
+                                    bindingTypeRecordAccessedFieldValue
+                                        |> rustTypeIsCopy { variablesAreCopy = False }
+
+                                Nothing ->
+                                    False
+
+                        _ ->
+                            False
+                then
+                    -- _hand-wave_ optimization:
+                    -- no clone if field value type is Copy (e.g. a shared reference)
+                    rustExpression
+
+                else
+                    rustExpressionClone rustExpression
 
             else
                 RustExpressionStructAccess
                     { struct =
                         recordAccess.struct
-                            |> rustExpressionCloneVariables variableShouldBeCloned
+                            |> rustExpressionCloneBindingUses binding
                     , field = recordAccess.field
                     }
 
@@ -13402,7 +13488,7 @@ rustExpressionCloneVariables variableShouldBeCloned rustExpression =
                 { method = reference.method
                 , subject =
                     reference.subject
-                        |> rustExpressionCloneVariables variableShouldBeCloned
+                        |> rustExpressionCloneBindingUses binding
                 }
 
         RustExpressionAs rustExpressionAs ->
@@ -13410,91 +13496,90 @@ rustExpressionCloneVariables variableShouldBeCloned rustExpression =
                 { type_ = rustExpressionAs.type_
                 , expression =
                     rustExpressionAs.expression
-                        |> rustExpressionCloneVariables variableShouldBeCloned
+                        |> rustExpressionCloneBindingUses binding
                 }
 
         RustExpressionClosure lambda ->
-            -- TODO prepend let x = x
-            -- for every captured variable before
             let
+                closureWithClonedVariables : RustExpression
                 closureWithClonedVariables =
                     RustExpressionClosure
                         { parameters = lambda.parameters
                         , resultType = lambda.resultType
                         , result =
                             lambda.result
-                                |> rustExpressionCloneVariables variableShouldBeCloned
+                                |> rustExpressionCloneBindingUses binding
                         }
-
-                resultUsedVariablesToClone =
-                    lambda.result
-                        |> rustExpressionUsedLocalBindings
-                        |> FastSet.filter variableShouldBeCloned
             in
-            if resultUsedVariablesToClone |> FastSet.isEmpty then
-                closureWithClonedVariables
+            if
+                lambda.result
+                    |> rustExpressionUsedLocalBindings
+                    |> FastSet.member binding.name
+            then
+                RustExpressionAfterStatement
+                    { statement =
+                        RustStatementLetDeclaration
+                            { name = binding.name
+                            , resultType =
+                                case binding.type_ of
+                                    -- let cannot be typed with impl, only type inference can
+                                    -- see https://github.com/rust-lang/rust/issues/63065
+                                    RustTypeFunction _ ->
+                                        Nothing
+
+                                    _ ->
+                                        Just binding.type_
+                            , result =
+                                rustExpressionClone
+                                    (RustExpressionReference
+                                        { qualification = []
+                                        , name = binding.name
+                                        }
+                                    )
+                            }
+                    , result = closureWithClonedVariables
+                    }
 
             else
-                resultUsedVariablesToClone
-                    |> FastSet.foldr
-                        (\variableToClone resultSoFar ->
-                            RustExpressionAfterStatement
-                                { statement =
-                                    RustStatementLetDeclaration
-                                        { name = variableToClone
-                                        , resultType =
-                                            -- TODO get from context (to add)
-                                            Nothing
-                                        , result =
-                                            rustExpressionClone
-                                                (RustExpressionReference
-                                                    { qualification = []
-                                                    , name = variableToClone
-                                                    }
-                                                )
-                                        }
-                                , result = resultSoFar
-                                }
-                        )
-                        closureWithClonedVariables
+                closureWithClonedVariables
 
         RustExpressionBinaryOperation binaryOperation ->
             RustExpressionBinaryOperation
                 { operator = binaryOperation.operator
                 , left =
                     binaryOperation.left
-                        |> rustExpressionCloneVariables variableShouldBeCloned
+                        |> rustExpressionCloneBindingUses binding
                 , right =
                     binaryOperation.right
-                        |> rustExpressionCloneVariables variableShouldBeCloned
+                        |> rustExpressionCloneBindingUses binding
                 }
 
         RustExpressionIfElse ifElse ->
             RustExpressionIfElse
                 { condition =
                     ifElse.condition
-                        |> rustExpressionCloneVariables variableShouldBeCloned
+                        |> rustExpressionCloneBindingUses binding
                 , onTrue =
                     ifElse.onTrue
-                        |> rustExpressionCloneVariables variableShouldBeCloned
+                        |> rustExpressionCloneBindingUses binding
                 , onFalse =
                     ifElse.onFalse
-                        |> rustExpressionCloneVariables variableShouldBeCloned
+                        |> rustExpressionCloneBindingUses binding
                 }
 
         RustExpressionTuple parts ->
             RustExpressionTuple
                 { part0 =
                     parts.part0
-                        |> rustExpressionCloneVariables variableShouldBeCloned
+                        |> rustExpressionCloneBindingUses binding
                 , part1 =
                     parts.part1
-                        |> rustExpressionCloneVariables variableShouldBeCloned
+                        |> rustExpressionCloneBindingUses binding
                 , part2Up =
                     parts.part2Up
                         |> List.map
                             (\part ->
-                                part |> rustExpressionCloneVariables variableShouldBeCloned
+                                part |> rustExpressionCloneBindingUses binding
                             )
                 }
 
@@ -13503,7 +13588,7 @@ rustExpressionCloneVariables variableShouldBeCloned rustExpression =
                 (elements
                     |> List.map
                         (\element ->
-                            element |> rustExpressionCloneVariables variableShouldBeCloned
+                            element |> rustExpressionCloneBindingUses binding
                         )
                 )
 
@@ -13514,7 +13599,7 @@ rustExpressionCloneVariables variableShouldBeCloned rustExpression =
                     rustExpressionStruct.fields
                         |> FastDict.map
                             (\_ fieldValue ->
-                                fieldValue |> rustExpressionCloneVariables variableShouldBeCloned
+                                fieldValue |> rustExpressionCloneBindingUses binding
                             )
                 }
 
@@ -13547,7 +13632,7 @@ rustExpressionCloneVariables variableShouldBeCloned rustExpression =
                     calledWithClones : RustExpression
                     calledWithClones =
                         call.called
-                            |> rustExpressionCloneVariables variableShouldBeCloned
+                            |> rustExpressionCloneBindingUses binding
                 in
                 RustExpressionCall
                     { called = calledWithClones
@@ -13556,7 +13641,7 @@ rustExpressionCloneVariables variableShouldBeCloned rustExpression =
                             |> List.map
                                 (\argument ->
                                     argument
-                                        |> rustExpressionCloneVariables variableShouldBeCloned
+                                        |> rustExpressionCloneBindingUses binding
                                 )
                     }
 
@@ -13564,7 +13649,7 @@ rustExpressionCloneVariables variableShouldBeCloned rustExpression =
             RustExpressionMatch
                 { matched =
                     match.matched
-                        |> rustExpressionCloneVariables variableShouldBeCloned
+                        |> rustExpressionCloneBindingUses binding
                 , cases =
                     match.cases
                         |> List.map
@@ -13573,7 +13658,7 @@ rustExpressionCloneVariables variableShouldBeCloned rustExpression =
                                 , guardConditions = matchCase.guardConditions
                                 , result =
                                     matchCase.result
-                                        |> rustExpressionCloneVariables variableShouldBeCloned
+                                        |> rustExpressionCloneBindingUses binding
                                 }
                             )
                 }
@@ -13582,18 +13667,18 @@ rustExpressionCloneVariables variableShouldBeCloned rustExpression =
             RustExpressionAfterStatement
                 { statement =
                     rustExpressionAfterStatement.statement
-                        |> rustStatementCloneVariables variableShouldBeCloned
+                        |> rustStatementCloneVariables binding
                 , result =
                     rustExpressionAfterStatement.result
-                        |> rustExpressionCloneVariables variableShouldBeCloned
+                        |> rustExpressionCloneBindingUses binding
                 }
 
 
 rustStatementCloneVariables :
-    (String -> Bool)
+    { name : String, type_ : RustType }
     -> RustStatement
     -> RustStatement
-rustStatementCloneVariables variableShouldBeCloned rustStatement =
+rustStatementCloneVariables context rustStatement =
     -- IGNORE TCO
     case rustStatement of
         RustStatementLetDeclarationUninitialized _ ->
@@ -13604,7 +13689,7 @@ rustStatementCloneVariables variableShouldBeCloned rustStatement =
                 { pattern = letDestructuring.pattern
                 , expression =
                     letDestructuring.expression
-                        |> rustExpressionCloneVariables variableShouldBeCloned
+                        |> rustExpressionCloneBindingUses context
                 }
 
         RustStatementBindingAssignment assignment ->
@@ -13612,7 +13697,7 @@ rustStatementCloneVariables variableShouldBeCloned rustStatement =
                 { name = assignment.name
                 , assignedValue =
                     assignment.assignedValue
-                        |> rustExpressionCloneVariables variableShouldBeCloned
+                        |> rustExpressionCloneBindingUses context
                 }
 
         RustStatementLetDeclaration rustStatementLetDeclaration ->
@@ -13621,7 +13706,7 @@ rustStatementCloneVariables variableShouldBeCloned rustStatement =
                 , resultType = rustStatementLetDeclaration.resultType
                 , result =
                     rustStatementLetDeclaration.result
-                        |> rustExpressionCloneVariables variableShouldBeCloned
+                        |> rustExpressionCloneBindingUses context
                 }
 
         RustStatementFnDeclaration fnDeclaration ->
@@ -13633,7 +13718,7 @@ rustStatementCloneVariables variableShouldBeCloned rustStatement =
                 , typeParameters = fnDeclaration.typeParameters
                 , result =
                     fnDeclaration.result
-                        |> rustExpressionCloneVariables variableShouldBeCloned
+                        |> rustExpressionCloneBindingUses context
                 }
 
 
@@ -13664,33 +13749,34 @@ rustStatementIntroducedVariables rustStatement =
 
 
 rustExpressionCloneMultipleBindingUsesBeforeLast :
-    List String
+    List { name : String, type_ : RustType }
     -> RustExpression
     -> RustExpression
-rustExpressionCloneMultipleBindingUsesBeforeLast bindingsToCloneBeforeLast rustExpression =
+rustExpressionCloneMultipleBindingUsesBeforeLast bindings rustExpression =
     -- SLOW because multiple passes
-    bindingsToCloneBeforeLast
+    bindings
         |> List.foldl
             (\bindingToCloneBeforeLastUse rustExpressionSoFar ->
-                if bindingToCloneBeforeLastUse == generatedAllocatorVariableName then
+                if bindingToCloneBeforeLastUse.name == generatedAllocatorVariableName then
                     rustExpressionSoFar
 
                 else
                     rustExpressionSoFar
-                        |> rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLastUse
+                        |> rustExpressionCloneBindingUsesBeforeLast
+                            bindingToCloneBeforeLastUse
                         |> .withClones
             )
             rustExpression
 
 
 rustExpressionCloneBindingUsesBeforeLast :
-    String
+    { name : String, type_ : RustType }
     -> RustExpression
     ->
         { withClones : RustExpression
         , bindingWasUsed : Bool
         }
-rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression =
+rustExpressionCloneBindingUsesBeforeLast binding rustExpression =
     case rustExpression of
         RustExpressionUnit ->
             { withClones = RustExpressionUnit, bindingWasUsed = False }
@@ -13717,7 +13803,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
             { withClones = rustExpression
             , bindingWasUsed =
                 (reference.qualification |> List.isEmpty)
-                    && (reference.name == bindingToCloneBeforeLast)
+                    && (reference.name == binding.name)
             }
 
         RustExpressionReferenceMethod method ->
@@ -13725,7 +13811,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                 forSubject : { withClones : RustExpression, bindingWasUsed : Bool }
                 forSubject =
                     method.subject
-                        |> rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast
+                        |> rustExpressionCloneBindingUsesBeforeLast binding
             in
             { bindingWasUsed = forSubject.bindingWasUsed
             , withClones =
@@ -13740,7 +13826,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                 forInNegation : { withClones : RustExpression, bindingWasUsed : Bool }
                 forInNegation =
                     inNegation
-                        |> rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast
+                        |> rustExpressionCloneBindingUsesBeforeLast binding
             in
             { bindingWasUsed = forInNegation.bindingWasUsed
             , withClones =
@@ -13752,7 +13838,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                 forInBorrow : { withClones : RustExpression, bindingWasUsed : Bool }
                 forInBorrow =
                     inBorrow
-                        |> rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast
+                        |> rustExpressionCloneBindingUsesBeforeLast binding
             in
             { bindingWasUsed = forInBorrow.bindingWasUsed
             , withClones =
@@ -13764,7 +13850,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                 forInDeref : { withClones : RustExpression, bindingWasUsed : Bool }
                 forInDeref =
                     inDeref
-                        |> rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast
+                        |> rustExpressionCloneBindingUsesBeforeLast binding
             in
             { bindingWasUsed = forInDeref.bindingWasUsed
             , withClones =
@@ -13776,7 +13862,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                 forStruct : { withClones : RustExpression, bindingWasUsed : Bool }
                 forStruct =
                     structAccess.struct
-                        |> rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast
+                        |> rustExpressionCloneBindingUsesBeforeLast binding
             in
             { bindingWasUsed = forStruct.bindingWasUsed
             , withClones =
@@ -13791,7 +13877,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                 forExpression : { withClones : RustExpression, bindingWasUsed : Bool }
                 forExpression =
                     rustExpressionAs.expression
-                        |> rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast
+                        |> rustExpressionCloneBindingUsesBeforeLast binding
             in
             { bindingWasUsed = forExpression.bindingWasUsed
             , withClones =
@@ -13810,8 +13896,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                     closure.result
                         |> -- can be optimized by only checking for bindingToCloneBeforeLast
                            rustExpressionUsedLocalBindings
-                        |> FastSet.member
-                            bindingToCloneBeforeLast
+                        |> FastSet.member binding.name
             in
             { bindingWasUsed = bindingWasUsed
             , withClones =
@@ -13821,7 +13906,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                     , result =
                         -- having the closure own the value would make it FnOnce
                         closure.result
-                            |> rustExpressionCloneBindingUses bindingToCloneBeforeLast
+                            |> rustExpressionCloneBindingUsesUnlessIsCopy binding
                     }
             }
 
@@ -13830,7 +13915,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                 forRight : { withClones : RustExpression, bindingWasUsed : Bool }
                 forRight =
                     binaryOperation.right
-                        |> rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast
+                        |> rustExpressionCloneBindingUsesBeforeLast binding
             in
             if forRight.bindingWasUsed then
                 { bindingWasUsed = True
@@ -13839,7 +13924,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                         { operator = binaryOperation.operator
                         , left =
                             binaryOperation.left
-                                |> rustExpressionCloneBindingUses bindingToCloneBeforeLast
+                                |> rustExpressionCloneBindingUsesUnlessIsCopy binding
                         , right = forRight.withClones
                         }
                 }
@@ -13849,7 +13934,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                     forLeft : { withClones : RustExpression, bindingWasUsed : Bool }
                     forLeft =
                         binaryOperation.left
-                            |> rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast
+                            |> rustExpressionCloneBindingUsesBeforeLast binding
                 in
                 { bindingWasUsed = forLeft.bindingWasUsed
                 , withClones =
@@ -13865,7 +13950,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                 forPart2Up : { bindingWasUsed : Bool, withClones : List RustExpression }
                 forPart2Up =
                     parts.part2Up
-                        |> rustExpressionsInOrderCloneBindingUsesBeforeLast bindingToCloneBeforeLast
+                        |> rustExpressionsInOrderCloneBindingUsesBeforeLast binding
             in
             if forPart2Up.bindingWasUsed then
                 { bindingWasUsed = True
@@ -13873,10 +13958,10 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                     RustExpressionTuple
                         { part0 =
                             parts.part0
-                                |> rustExpressionCloneBindingUses bindingToCloneBeforeLast
+                                |> rustExpressionCloneBindingUsesUnlessIsCopy binding
                         , part1 =
                             parts.part1
-                                |> rustExpressionCloneBindingUses bindingToCloneBeforeLast
+                                |> rustExpressionCloneBindingUsesUnlessIsCopy binding
                         , part2Up = forPart2Up.withClones
                         }
                 }
@@ -13886,7 +13971,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                     forPart1 : { withClones : RustExpression, bindingWasUsed : Bool }
                     forPart1 =
                         parts.part1
-                            |> rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast
+                            |> rustExpressionCloneBindingUsesBeforeLast binding
                 in
                 if forPart1.bindingWasUsed then
                     { bindingWasUsed = True
@@ -13894,7 +13979,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                         RustExpressionTuple
                             { part0 =
                                 parts.part0
-                                    |> rustExpressionCloneBindingUses bindingToCloneBeforeLast
+                                    |> rustExpressionCloneBindingUsesUnlessIsCopy binding
                             , part1 = forPart1.withClones
                             , part2Up = forPart2Up.withClones
                             }
@@ -13905,7 +13990,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                         forPart0 : { withClones : RustExpression, bindingWasUsed : Bool }
                         forPart0 =
                             parts.part0
-                                |> rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast
+                                |> rustExpressionCloneBindingUsesBeforeLast binding
                     in
                     { bindingWasUsed = forPart0.bindingWasUsed
                     , withClones =
@@ -13921,7 +14006,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                 forElements : { withClones : List RustExpression, bindingWasUsed : Bool }
                 forElements =
                     elements
-                        |> rustExpressionsInOrderCloneBindingUsesBeforeLast bindingToCloneBeforeLast
+                        |> rustExpressionsInOrderCloneBindingUsesBeforeLast binding
             in
             { bindingWasUsed = forElements.bindingWasUsed
             , withClones = RustExpressionArrayLiteral forElements.withClones
@@ -13939,7 +14024,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                                     , withClones =
                                         soFar.withClones
                                             |> FastDict.insert fieldName
-                                                (part |> rustExpressionCloneBindingUses bindingToCloneBeforeLast)
+                                                (part |> rustExpressionCloneBindingUsesUnlessIsCopy binding)
                                     }
 
                                 else
@@ -13947,7 +14032,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                                         forPart : { withClones : RustExpression, bindingWasUsed : Bool }
                                         forPart =
                                             part
-                                                |> rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast
+                                                |> rustExpressionCloneBindingUsesBeforeLast binding
                                     in
                                     { bindingWasUsed = forPart.bindingWasUsed
                                     , withClones =
@@ -13970,7 +14055,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                 forArguments : { bindingWasUsed : Bool, withClones : List RustExpression }
                 forArguments =
                     call.arguments
-                        |> rustExpressionsInOrderCloneBindingUsesBeforeLast bindingToCloneBeforeLast
+                        |> rustExpressionsInOrderCloneBindingUsesBeforeLast binding
             in
             if forArguments.bindingWasUsed then
                 { bindingWasUsed = True
@@ -13978,7 +14063,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                     RustExpressionCall
                         { called =
                             call.called
-                                |> rustExpressionCloneBindingUses bindingToCloneBeforeLast
+                                |> rustExpressionCloneBindingUsesUnlessIsCopy binding
                         , arguments = forArguments.withClones
                         }
                 }
@@ -13988,7 +14073,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                     forCalled : { withClones : RustExpression, bindingWasUsed : Bool }
                     forCalled =
                         call.called
-                            |> rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast
+                            |> rustExpressionCloneBindingUsesBeforeLast binding
                 in
                 { bindingWasUsed = forCalled.bindingWasUsed
                 , withClones =
@@ -14003,12 +14088,12 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                 forOnTrue : { withClones : RustExpression, bindingWasUsed : Bool }
                 forOnTrue =
                     ifElse.onTrue
-                        |> rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast
+                        |> rustExpressionCloneBindingUsesBeforeLast binding
 
                 forOnFalse : { withClones : RustExpression, bindingWasUsed : Bool }
                 forOnFalse =
                     ifElse.onFalse
-                        |> rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast
+                        |> rustExpressionCloneBindingUsesBeforeLast binding
             in
             if forOnTrue.bindingWasUsed || forOnFalse.bindingWasUsed then
                 { bindingWasUsed = True
@@ -14016,7 +14101,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                     RustExpressionIfElse
                         { condition =
                             ifElse.condition
-                                |> rustExpressionCloneBindingUses bindingToCloneBeforeLast
+                                |> rustExpressionCloneBindingUsesUnlessIsCopy binding
                         , onTrue = forOnTrue.withClones
                         , onFalse = forOnFalse.withClones
                         }
@@ -14027,7 +14112,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                     forCondition : { withClones : RustExpression, bindingWasUsed : Bool }
                     forCondition =
                         ifElse.condition
-                            |> rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast
+                            |> rustExpressionCloneBindingUsesBeforeLast binding
                 in
                 { bindingWasUsed = forCondition.bindingWasUsed
                 , withClones =
@@ -14057,7 +14142,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                                     forCaseResult : { withClones : RustExpression, bindingWasUsed : Bool }
                                     forCaseResult =
                                         matchCase.result
-                                            |> rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast
+                                            |> rustExpressionCloneBindingUsesBeforeLast binding
                                 in
                                 { bindingWasUsed = soFar.bindingWasUsed || forCaseResult.bindingWasUsed
                                 , withClones =
@@ -14076,7 +14161,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                     RustExpressionMatch
                         { matched =
                             match.matched
-                                |> rustExpressionCloneBindingUses bindingToCloneBeforeLast
+                                |> rustExpressionCloneBindingUsesUnlessIsCopy binding
                         , cases = forCases.withClones
                         }
                 }
@@ -14086,7 +14171,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                     forMatched : { withClones : RustExpression, bindingWasUsed : Bool }
                     forMatched =
                         match.matched
-                            |> rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast
+                            |> rustExpressionCloneBindingUsesBeforeLast binding
                 in
                 { bindingWasUsed = forMatched.bindingWasUsed
                 , withClones =
@@ -14101,7 +14186,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                 forResult : { withClones : RustExpression, bindingWasUsed : Bool }
                 forResult =
                     rustExpressionAfterStatement.result
-                        |> rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast
+                        |> rustExpressionCloneBindingUsesBeforeLast binding
             in
             if forResult.bindingWasUsed then
                 { bindingWasUsed = True
@@ -14109,7 +14194,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                     RustExpressionAfterStatement
                         { statement =
                             rustExpressionAfterStatement.statement
-                                |> rustStatementCloneBindingUses bindingToCloneBeforeLast
+                                |> rustStatementCloneBindingUses binding
                         , result = forResult.withClones
                         }
                 }
@@ -14119,7 +14204,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
                     forStatement : { withClones : RustStatement, bindingWasUsed : Bool }
                     forStatement =
                         rustExpressionAfterStatement.statement
-                            |> rustStatementCloneBindingUsesBeforeLast bindingToCloneBeforeLast
+                            |> rustStatementCloneBindingUsesBeforeLast binding
                 in
                 { bindingWasUsed = forStatement.bindingWasUsed
                 , withClones =
@@ -14131,7 +14216,7 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
 
 
 rustStatementCloneBindingUsesBeforeLast :
-    String
+    { name : String, type_ : RustType }
     -> RustStatement
     ->
         { withClones : RustStatement
@@ -14198,20 +14283,20 @@ rustStatementCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustStatement =
 
 
 rustExpressionsInOrderCloneBindingUsesBeforeLast :
-    String
+    { name : String, type_ : RustType }
     -> List RustExpression
     ->
         { withClones : List RustExpression
         , bindingWasUsed : Bool
         }
-rustExpressionsInOrderCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpressions =
+rustExpressionsInOrderCloneBindingUsesBeforeLast binding rustExpressions =
     rustExpressions
         |> List.foldr
             (\part soFar ->
                 if soFar.bindingWasUsed then
                     { bindingWasUsed = True
                     , withClones =
-                        (part |> rustExpressionCloneBindingUses bindingToCloneBeforeLast)
+                        (part |> rustExpressionCloneBindingUsesUnlessIsCopy binding)
                             :: soFar.withClones
                     }
 
@@ -14220,7 +14305,7 @@ rustExpressionsInOrderCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustEx
                         forPart : { withClones : RustExpression, bindingWasUsed : Bool }
                         forPart =
                             part
-                                |> rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast
+                                |> rustExpressionCloneBindingUsesBeforeLast binding
                     in
                     { bindingWasUsed = forPart.bindingWasUsed
                     , withClones = forPart.withClones :: soFar.withClones
@@ -14229,15 +14314,20 @@ rustExpressionsInOrderCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustEx
             { bindingWasUsed = False, withClones = [] }
 
 
-rustExpressionCloneBindingUses : String -> RustExpression -> RustExpression
-rustExpressionCloneBindingUses binding rustExpression =
-    if binding == generatedAllocatorVariableName then
+rustExpressionCloneBindingUsesUnlessIsCopy :
+    { name : String, type_ : RustType }
+    -> RustExpression
+    -> RustExpression
+rustExpressionCloneBindingUsesUnlessIsCopy binding rustExpression =
+    if binding.name == generatedAllocatorVariableName then
+        rustExpression
+
+    else if binding.type_ |> rustTypeIsCopy { variablesAreCopy = False } then
         rustExpression
 
     else
         rustExpression
-            |> rustExpressionCloneVariables
-                (\variableName -> variableName == binding)
+            |> rustExpressionCloneBindingUses binding
 
 
 rustTypedBindingsKeepThoseRequiringClone :
@@ -14255,15 +14345,17 @@ rustTypedBindingsKeepThoseRequiringClone rustTypedBindings =
             )
 
 
-rustStatementCloneBindingUses : String -> RustStatement -> RustStatement
+rustStatementCloneBindingUses :
+    { name : String, type_ : RustType }
+    -> RustStatement
+    -> RustStatement
 rustStatementCloneBindingUses binding rustStatement =
-    if binding == generatedAllocatorVariableName then
+    if binding.name == generatedAllocatorVariableName then
         rustStatement
 
     else
         rustStatement
-            |> rustStatementCloneVariables
-                (\variableName -> variableName == binding)
+            |> rustStatementCloneVariables binding
 
 
 rustExpressionClone : RustExpression -> RustExpression
@@ -16175,12 +16267,34 @@ rustTypeContainedVariables rustType =
             typeConstruct.arguments
                 |> listMapToFastSetsAndUnify rustTypeContainedVariables
 
+        RustTypeRecordStruct recordStruct ->
+            recordStruct.fields
+                |> fastDictMapToFastSetsAndUnify
+                    (\_ fieldValue ->
+                        fieldValue |> rustTypeContainedVariables
+                    )
+
         RustTypeFunction typeFunction ->
             FastSet.union
                 (typeFunction.input
                     |> listMapToFastSetsAndUnify rustTypeContainedVariables
                 )
                 (typeFunction.output |> rustTypeContainedVariables)
+
+
+fastDictMapToFastSetsAndUnify :
+    (k -> v -> FastSet.Set comparable)
+    -> FastDict.Dict k v
+    -> FastSet.Set comparable
+fastDictMapToFastSetsAndUnify keyValueToFastSet fastDict =
+    fastDict
+        |> FastDict.foldr
+            (\key value soFar ->
+                FastSet.union
+                    soFar
+                    (keyValueToFastSet key value)
+            )
+            FastSet.empty
 
 
 {-| Does it contain no type variables. E.g
@@ -16221,6 +16335,13 @@ rustTypeIsConcrete rustType =
         RustTypeConstruct typeConstruct ->
             typeConstruct.arguments
                 |> List.all rustTypeIsConcrete
+
+        RustTypeRecordStruct recordStruct ->
+            recordStruct.fields
+                |> fastDictAll
+                    (\_ fieldValue ->
+                        fieldValue |> rustTypeIsConcrete
+                    )
 
         RustTypeFunction typeFunction ->
             (typeFunction.input
