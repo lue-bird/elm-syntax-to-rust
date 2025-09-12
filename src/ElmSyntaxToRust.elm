@@ -33826,13 +33826,6 @@ pub fn char_from_code(code: i64) -> char {
     char::from_u32(code as u32).unwrap_or('\\0')
 }
 
-/// a rope
-#[derive(
-    /*, PartialEq, Ord, PartialOrd, Hash, Display (includes ToString), Debug are implemented below */
-    Copy,
-    Clone,
-    Eq,
-)]
 /// a rope of string slices (basically a tree that delays append operations).
 ///
 /// There would be various alternatives to represent a string, each with up- and downsides:
@@ -33861,16 +33854,17 @@ pub fn char_from_code(code: i64) -> char {
 ///
 /// Testing with elm-syntax-format, `Cow<str>` performed similarly but worse than rope
 /// which lead to me to favor the rope approach for now
+#[derive(Copy, Clone, Eq)]
 pub enum StringString<'a> {
     One(&'a str),
-    Append(&'a StringString<'a>, &'a StringString<'a>),
+    Append(&'a (StringString<'a>, StringString<'a>)),
 }
 impl<'a> std::fmt::Debug for StringString<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             StringString::One(str) => std::fmt::Debug::fmt(str, f),
-            StringString::Append(early, late) => {
-                std::fmt::Debug::fmt(&string_rope_append_to_string(early, late), f)
+            StringString::Append(append) => {
+                std::fmt::Debug::fmt(&string_rope_append_to_string(append), f)
             }
         }
     }
@@ -33879,8 +33873,8 @@ impl<'a> std::fmt::Display for StringString<'a> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             StringString::One(str) => formatter.write_str(str),
-            StringString::Append(early, late) => {
-                formatter.write_str(&string_rope_append_to_string(early, late))
+            StringString::Append(append) => {
+                formatter.write_str(&string_rope_append_to_string(append))
             }
         }
     }
@@ -33889,7 +33883,7 @@ impl<'a> std::hash::Hash for StringString<'a> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         match self {
             StringString::One(str) => str.hash(state),
-            StringString::Append(l, r) => string_rope_append_to_string(l, r).hash(state),
+            StringString::Append(append) => string_rope_append_to_string(append).hash(state),
         }
     }
 }
@@ -33897,17 +33891,17 @@ impl<'a> Ord for StringString<'a> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         match (self, other) {
             (StringString::One(self_str), StringString::One(other_str)) => self_str.cmp(other_str),
-            (StringString::One(self_str), StringString::Append(other_l, other_r)) => {
-                (*self_str).cmp(string_rope_append_to_string(other_l, other_r).as_str())
+            (StringString::One(self_str), StringString::Append(other_append)) => {
+                (*self_str).cmp(string_rope_append_to_string(other_append).as_str())
             }
-            (StringString::Append(self_l, self_r), StringString::One(other_str)) => {
-                string_rope_append_to_string(self_l, self_r)
+            (StringString::Append(self_append), StringString::One(other_str)) => {
+                string_rope_append_to_string(self_append)
                     .as_str()
                     .cmp(other_str)
             }
-            (StringString::Append(self_l, self_r), StringString::Append(other_l, other_r)) => {
-                string_rope_append_to_string(self_l, self_r)
-                    .cmp(&string_rope_append_to_string(other_l, other_r))
+            (StringString::Append(self_append), StringString::Append(other_append)) => {
+                string_rope_append_to_string(self_append)
+                    .cmp(&string_rope_append_to_string(other_append))
             }
         }
     }
@@ -33921,15 +33915,15 @@ impl<'a> PartialEq for StringString<'a> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (StringString::One(self_str), StringString::One(other_str)) => self_str == other_str,
-            (StringString::One(self_str), StringString::Append(other_l, other_r)) => {
-                self_str == &string_rope_append_to_string(other_l, other_r)
+            (StringString::One(self_str), StringString::Append(other_append)) => {
+                self_str == &string_rope_append_to_string(other_append)
             }
-            (StringString::Append(self_l, self_r), StringString::One(other_str)) => {
-                &string_rope_append_to_string(self_l, self_r) == other_str
+            (StringString::Append(self_append), StringString::One(other_str)) => {
+                &string_rope_append_to_string(self_append) == other_str
             }
-            (StringString::Append(self_l, self_r), StringString::Append(other_l, other_r)) => {
-                string_rope_append_to_string(self_l, self_r)
-                    == string_rope_append_to_string(other_l, other_r)
+            (StringString::Append(self_append), StringString::Append(other_append)) => {
+                string_rope_append_to_string(self_append)
+                    == string_rope_append_to_string(other_append)
             }
         }
     }
@@ -33937,14 +33931,13 @@ impl<'a> PartialEq for StringString<'a> {
 pub fn string_equals_str(string: StringString, other_str: &str) -> bool {
     match string {
         StringString::One(self_str) => self_str == other_str,
-        StringString::Append(self_l, self_r) => {
-            &string_rope_append_to_string(self_l, self_r) == other_str
+        StringString::Append(self_append) => {
+            &string_rope_append_to_string(self_append) == other_str
         }
     }
 }
 pub fn string_rope_append_to_string(
-    full_earlier: &StringString,
-    full_later: &StringString,
+    (full_earlier, full_later): &(StringString, StringString),
 ) -> String {
     let mut builder: String = String::new();
     // String::with_capacity(string_ref_length(full_earlier) + string_ref_length(full_later));
@@ -33961,7 +33954,7 @@ pub fn string_rope_append_to_string(
                     }
                 }
             }
-            StringString::Append(earlier, later) => {
+            StringString::Append((earlier, later)) => {
                 remaining_later_sub_ropes.push(later);
                 next_early_sub_rope = earlier;
             }
@@ -33977,14 +33970,16 @@ pub fn str_to_rope<'a>(string: &'a str) -> StringString<'a> {
 pub fn rope_to_cow_str(string: StringString) -> std::borrow::Cow<str> {
     match string {
         StringString::One(only_segment) => std::borrow::Cow::Borrowed(only_segment),
-        StringString::Append(l, r) => std::borrow::Cow::Owned(string_rope_append_to_string(l, r)),
+        StringString::Append(append) => {
+            std::borrow::Cow::Owned(string_rope_append_to_string(append))
+        }
     }
 }
 /// you may not need this. Typically `rope_to_cow_str` does the job
 pub fn rope_to_str<'a>(allocator: &'a bumpalo::Bump, string: StringString<'a>) -> &'a str {
     match string {
         StringString::One(str) => str,
-        StringString::Append(l, r) => allocator.alloc(string_rope_append_to_string(l, r)),
+        StringString::Append(append) => allocator.alloc(string_rope_append_to_string(append)),
     }
 }
 pub fn string_rope_flatten<'a>(
@@ -33993,7 +33988,9 @@ pub fn string_rope_flatten<'a>(
 ) -> StringString<'a> {
     match string {
         StringString::One(_) => string,
-        StringString::Append(l, r) => string_to_rope(allocator, string_rope_append_to_string(l, r)),
+        StringString::Append(append) => {
+            string_to_rope(allocator, string_rope_append_to_string(append))
+        }
     }
 }
 pub fn string_to_rope<'a>(allocator: &'a bumpalo::Bump, string: String) -> StringString<'a> {
@@ -34006,7 +34003,7 @@ pub fn string_is_empty(string: StringString) -> bool {
 pub fn string_ref_is_empty(string: &StringString) -> bool {
     match string {
         StringString::One(only_segment) => only_segment.is_empty(),
-        StringString::Append(earlier, later) => {
+        StringString::Append((earlier, later)) => {
             string_ref_is_empty(earlier) || string_ref_is_empty(later)
         }
     }
@@ -34017,7 +34014,7 @@ pub fn string_length(string: StringString) -> i64 {
 pub fn string_ref_length(string: &StringString) -> usize {
     match string {
         StringString::One(only_segment) => only_segment.len(),
-        StringString::Append(full_earlier, full_later) => {
+        StringString::Append((full_earlier, full_later)) => {
             let mut so_far: usize = 0;
             let mut next_early_sub_rope: &StringString = full_earlier;
             let mut remaining_later_sub_ropes: Vec<&StringString> = vec![full_later];
@@ -34032,7 +34029,7 @@ pub fn string_ref_length(string: &StringString) -> usize {
                             }
                         }
                     }
-                    StringString::Append(earlier, later) => {
+                    StringString::Append((earlier, later)) => {
                         remaining_later_sub_ropes.push(later);
                         next_early_sub_rope = earlier;
                     }
@@ -34069,8 +34066,7 @@ pub fn string_cons<'a>(
     tail_string: StringString<'a>,
 ) -> StringString<'a> {
     StringString::Append(
-        allocator.alloc(string_from_char(allocator, new_first_char)),
-        allocator.alloc(tail_string),
+        allocator.alloc((string_from_char(allocator, new_first_char), tail_string)),
     )
 }
 pub fn string_all(is_expected: impl Fn(char) -> bool, string: StringString) -> bool {
@@ -34298,11 +34294,11 @@ pub fn string_replace<'a>(
 ) -> StringString<'a> {
     let from_str: &str = match from {
         StringString::One(str) => str,
-        StringString::Append(l, r) => &string_rope_append_to_string(l, r),
+        StringString::Append(append) => &string_rope_append_to_string(append),
     };
     let to_str: &str = match to {
         StringString::One(str) => str,
-        StringString::Append(l, r) => &string_rope_append_to_string(l, r),
+        StringString::Append(append) => &string_rope_append_to_string(append),
     };
     string_to_rope(allocator, rope_to_cow_str(string).replace(from_str, to_str))
 }
@@ -34311,7 +34307,7 @@ pub fn string_append<'a>(
     left: StringString<'a>,
     right: StringString<'a>,
 ) -> StringString<'a> {
-    StringString::Append(allocator.alloc(left), allocator.alloc(right))
+    StringString::Append(allocator.alloc((left, right)))
 }
 pub fn string_concat<'a>(
     allocator: &'a bumpalo::Bump,
@@ -34332,13 +34328,12 @@ pub fn string_join<'a>(
         ListList::Empty => string_rope_empty,
         ListList::Cons(head_segment, tail_segments) => {
             let mut joined: StringString = head_segment;
-            let in_between_borrowed: &StringString =
-                allocator.alloc(string_rope_flatten(allocator, in_between));
+            let in_between_borrowed: StringString = string_rope_flatten(allocator, in_between);
             for segment in tail_segments.ref_iter() {
                 joined = string_append(
                     allocator,
                     joined,
-                    StringString::Append(in_between_borrowed, segment),
+                    StringString::Append(allocator.alloc((in_between_borrowed, segment.clone()))),
                 );
             }
             joined
@@ -34352,7 +34347,7 @@ pub fn string_split<'a>(
 ) -> ListList<'a, StringString<'a>> {
     let separator_str: &str = match separator {
         StringString::One(str) => str,
-        StringString::Append(early, late) => &string_rope_append_to_string(early, late),
+        StringString::Append(append) => &string_rope_append_to_string(append),
     };
     iterator_to_list(
         allocator,
@@ -34393,11 +34388,11 @@ pub fn string_indexes<'a>(
 ) -> ListList<'a, i64> {
     let as_str: &str = match string {
         StringString::One(str) => str,
-        StringString::Append(early, late) => &string_rope_append_to_string(early, late),
+        StringString::Append(append) => &string_rope_append_to_string(append),
     };
     let needle_str: &str = match needle {
         StringString::One(str) => str,
-        StringString::Append(early, late) => &string_rope_append_to_string(early, late),
+        StringString::Append(append) => &string_rope_append_to_string(append),
     };
     // this is a fairly expensive operation, O(chars * matches). Anyone know something faster?
     iterator_to_list(
@@ -35089,7 +35084,6 @@ pub fn set_diff<K: PartialOrd + Clone>(a_set: SetSet<K>, b_set: SetSet<K>) -> Se
         }
     })
 }
-/// TODO make lazy at field values and Array level
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum JsonValue<'a> {
     Null,
