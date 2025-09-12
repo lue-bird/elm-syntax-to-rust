@@ -8514,7 +8514,9 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
                         )
                         resultWithAdditionalGeneratedArgumentsApplied
                         |> rustExpressionCloneWhereNecessary
-                            { variablesInScope = allRustParameterIntroducedBindings }
+                            { variablesInScope = allRustParameterIntroducedBindings
+                            , cloneCapturesBeforeClosure = False
+                            }
                         |> rustExpressionCloneMultipleBindingUsesBeforeLast
                             (allRustParameterIntroducedBindings
                                 |> List.map .name
@@ -12945,6 +12947,7 @@ can do it all in one swoop.
 rustExpressionCloneWhereNecessary :
     { -- not including local fns
       variablesInScope : List { name : String, type_ : RustType }
+    , cloneCapturesBeforeClosure : Bool
     }
     -> RustExpression
     -> RustExpression
@@ -13107,48 +13110,52 @@ rustExpressionCloneWhereNecessary context rustExpression =
 
                 capturedClones : List RustStatement
                 capturedClones =
-                    closure.result
-                        |> rustExpressionUsedLocalBindings
-                        |> FastSet.foldl
-                            (\closureResultLocalBinding soFar ->
-                                case
-                                    -- SLOW O(n) for every contained reference in result
-                                    context.variablesInScope
-                                        |> listMapAndFirstJust
-                                            (\scopeVariable ->
-                                                if scopeVariable.name == closureResultLocalBinding then
-                                                    Just scopeVariable.type_
+                    if Basics.not context.cloneCapturesBeforeClosure then
+                        []
 
-                                                else
-                                                    Nothing
-                                            )
-                                of
-                                    Nothing ->
-                                        soFar
+                    else
+                        closure.result
+                            |> rustExpressionUsedLocalBindings
+                            |> FastSet.foldl
+                                (\closureResultLocalBinding soFar ->
+                                    case
+                                        -- SLOW O(n) for every contained reference in result
+                                        context.variablesInScope
+                                            |> listMapAndFirstJust
+                                                (\scopeVariable ->
+                                                    if scopeVariable.name == closureResultLocalBinding then
+                                                        Just scopeVariable.type_
 
-                                    Just capturedRustType ->
-                                        RustStatementLetDeclaration
-                                            { name = closureResultLocalBinding
-                                            , resultType =
-                                                case capturedRustType of
-                                                    -- let cannot be typed with impl, only type inference can
-                                                    -- see https://github.com/rust-lang/rust/issues/63065
-                                                    RustTypeFunction _ ->
+                                                    else
                                                         Nothing
+                                                )
+                                    of
+                                        Nothing ->
+                                            soFar
 
-                                                    _ ->
-                                                        Just capturedRustType
-                                            , result =
-                                                rustExpressionClone
-                                                    (RustExpressionReference
-                                                        { qualification = []
-                                                        , name = closureResultLocalBinding
-                                                        }
-                                                    )
-                                            }
-                                            :: soFar
-                            )
-                            []
+                                        Just capturedRustType ->
+                                            RustStatementLetDeclaration
+                                                { name = closureResultLocalBinding
+                                                , resultType =
+                                                    case capturedRustType of
+                                                        -- let cannot be typed with impl, only type inference can
+                                                        -- see https://github.com/rust-lang/rust/issues/63065
+                                                        RustTypeFunction _ ->
+                                                            Nothing
+
+                                                        _ ->
+                                                            Just capturedRustType
+                                                , result =
+                                                    rustExpressionClone
+                                                        (RustExpressionReference
+                                                            { qualification = []
+                                                            , name = closureResultLocalBinding
+                                                            }
+                                                        )
+                                                }
+                                                :: soFar
+                                )
+                                []
             in
             rustExpressionPrependStatements
                 capturedClones
@@ -13161,6 +13168,7 @@ rustExpressionCloneWhereNecessary context rustExpression =
                                 { variablesInScope =
                                     closureParameterIntroducedBindings
                                         ++ context.variablesInScope
+                                , cloneCapturesBeforeClosure = True
                                 }
                             |> rustExpressionCloneMultipleBindingUsesBeforeLast
                                 (closureParameterIntroducedBindings
@@ -13193,6 +13201,8 @@ rustExpressionCloneWhereNecessary context rustExpression =
                                             { variablesInScope =
                                                 casePatternIntroducedBindings
                                                     ++ context.variablesInScope
+                                            , cloneCapturesBeforeClosure =
+                                                context.cloneCapturesBeforeClosure
                                             }
                                         |> rustExpressionCloneMultipleBindingUsesBeforeLast
                                             (casePatternIntroducedBindings
@@ -13220,6 +13230,7 @@ rustExpressionCloneWhereNecessary context rustExpression =
                             { variablesInScope =
                                 statementIntroducedVariables
                                     ++ context.variablesInScope
+                            , cloneCapturesBeforeClosure = False
                             }
                         |> rustExpressionCloneMultipleBindingUsesBeforeLast
                             (statementIntroducedVariables |> List.map .name)
@@ -13231,6 +13242,7 @@ rustExpressionCloneWhereNecessary context rustExpression =
 rustStatementCloneWhereNecessary :
     { -- not including local fns
       variablesInScope : List { name : String, type_ : RustType }
+    , cloneCapturesBeforeClosure : Bool
     }
     -> RustStatement
     -> RustStatement
@@ -13287,7 +13299,9 @@ rustStatementCloneWhereNecessary context rustStatement =
                             -- not including context because
                             -- all captured context variables are
                             -- present in parameters
-                            { variablesInScope = parametersIntroducedBindings }
+                            { variablesInScope = parametersIntroducedBindings
+                            , cloneCapturesBeforeClosure = False
+                            }
                         |> rustExpressionCloneMultipleBindingUsesBeforeLast
                             (parametersIntroducedBindings |> List.map .name)
                 }
@@ -13400,13 +13414,49 @@ rustExpressionCloneVariables variableShouldBeCloned rustExpression =
                 }
 
         RustExpressionClosure lambda ->
-            RustExpressionClosure
-                { parameters = lambda.parameters
-                , resultType = lambda.resultType
-                , result =
+            -- TODO prepend let x = x
+            -- for every captured variable before
+            let
+                closureWithClonedVariables =
+                    RustExpressionClosure
+                        { parameters = lambda.parameters
+                        , resultType = lambda.resultType
+                        , result =
+                            lambda.result
+                                |> rustExpressionCloneVariables variableShouldBeCloned
+                        }
+
+                resultUsedVariablesToClone =
                     lambda.result
-                        |> rustExpressionCloneVariables variableShouldBeCloned
-                }
+                        |> rustExpressionUsedLocalBindings
+                        |> FastSet.filter variableShouldBeCloned
+            in
+            if resultUsedVariablesToClone |> FastSet.isEmpty then
+                closureWithClonedVariables
+
+            else
+                resultUsedVariablesToClone
+                    |> FastSet.foldr
+                        (\variableToClone resultSoFar ->
+                            RustExpressionAfterStatement
+                                { statement =
+                                    RustStatementLetDeclaration
+                                        { name = variableToClone
+                                        , resultType =
+                                            -- TODO get from context (to add)
+                                            Nothing
+                                        , result =
+                                            rustExpressionClone
+                                                (RustExpressionReference
+                                                    { qualification = []
+                                                    , name = variableToClone
+                                                    }
+                                                )
+                                        }
+                                , result = resultSoFar
+                                }
+                        )
+                        closureWithClonedVariables
 
         RustExpressionBinaryOperation binaryOperation ->
             RustExpressionBinaryOperation
@@ -13752,7 +13802,18 @@ rustExpressionCloneBindingUsesBeforeLast bindingToCloneBeforeLast rustExpression
             }
 
         RustExpressionClosure closure ->
-            { bindingWasUsed = False
+            let
+                -- since the closure is move (as it does not implement Copy)
+                -- we do consider it used
+                bindingWasUsed : Bool
+                bindingWasUsed =
+                    closure.result
+                        |> -- can be optimized by only checking for bindingToCloneBeforeLast
+                           rustExpressionUsedLocalBindings
+                        |> FastSet.member
+                            bindingToCloneBeforeLast
+            in
+            { bindingWasUsed = bindingWasUsed
             , withClones =
                 RustExpressionClosure
                     { parameters = closure.parameters
