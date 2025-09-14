@@ -1580,8 +1580,8 @@ pub fn debug_to_string<'a, A: std::fmt::Debug>(
 ) -> StringString<'a> {
     string_to_rope(allocator, format!("{:?}", data))
 }
-pub fn debug_log<'a, A: std::fmt::Debug>(data: A) -> A {
-    println!("{:?}", data);
+pub fn debug_log<'a, A: std::fmt::Debug>(tag: StringString, data: A) -> A {
+    println!("{tag}: {:?}", data);
     data
 }
 pub fn debug_todo<A>(message: StringString) -> A {
