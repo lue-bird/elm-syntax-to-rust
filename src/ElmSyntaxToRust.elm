@@ -2554,23 +2554,23 @@ pattern context patternInferred =
                 rustHead =
                     listCons.head |> pattern context
 
-                rustTailPattern : { pattern : RustPattern, guardConditions : List RustExpression }
+                rustTailPattern :
+                    { pattern : RustPattern
+                    , guardConditions : List RustExpression
+                    , bindingsToDerefClone : List { name : String, type_ : RustType }
+                    }
                 rustTailPattern =
                     listCons.tail |> referencedPattern context
             in
             { pattern =
                 rustPatternListCons rustHead.pattern
-                    (rustTailPattern.pattern
-                        |> rustPatternAlterBindingsExceptDereferenced generatedPatternRefBindingName
-                    )
+                    rustTailPattern.pattern
             , guardConditions =
                 rustHead.guardConditions
                     ++ rustTailPattern.guardConditions
             , bindingsToDerefClone =
                 rustHead.bindingsToDerefClone
-                    ++ (rustTailPattern.pattern
-                            |> rustPatternIntroducedBindings
-                       )
+                    ++ rustTailPattern.bindingsToDerefClone
             }
 
         ElmSyntaxTypeInfer.PatternListExact elementPatterns ->
@@ -2591,23 +2591,23 @@ pattern context patternInferred =
                         rustHead =
                             head |> pattern context
 
-                        rustTailPattern : { pattern : RustPattern, guardConditions : List RustExpression }
+                        rustTailPattern :
+                            { pattern : RustPattern
+                            , guardConditions : List RustExpression
+                            , bindingsToDerefClone : List { name : String, type_ : RustType }
+                            }
                         rustTailPattern =
                             tail |> referencedPatternListExact context
                     in
                     { pattern =
                         rustPatternListCons rustHead.pattern
-                            (rustTailPattern.pattern
-                                |> rustPatternAlterBindingsExceptDereferenced generatedPatternRefBindingName
-                            )
+                            rustTailPattern.pattern
                     , guardConditions =
                         rustHead.guardConditions
                             ++ rustTailPattern.guardConditions
                     , bindingsToDerefClone =
                         rustHead.bindingsToDerefClone
-                            ++ (rustTailPattern.pattern
-                                    |> rustPatternIntroducedBindings
-                               )
+                            ++ rustTailPattern.bindingsToDerefClone
                     }
 
         ElmSyntaxTypeInfer.PatternVariant variant ->
@@ -2663,22 +2663,22 @@ pattern context patternInferred =
                             (\( valueIndex, variantValue ) soFar ->
                                 if reference.referencedValueIndexes |> List.member valueIndex then
                                     let
-                                        rustValue : { pattern : RustPattern, guardConditions : List RustExpression }
+                                        rustValue :
+                                            { pattern : RustPattern
+                                            , guardConditions : List RustExpression
+                                            , bindingsToDerefClone : List { name : String, type_ : RustType }
+                                            }
                                         rustValue =
                                             variantValue |> referencedPattern context
                                     in
                                     { patterns =
-                                        (rustValue.pattern
-                                            |> rustPatternAlterBindingsExceptDereferenced generatedPatternRefBindingName
-                                        )
+                                        rustValue.pattern
                                             :: soFar.patterns
                                     , guardConditions =
                                         rustValue.guardConditions
                                             ++ soFar.guardConditions
                                     , bindingsToDerefClone =
-                                        (rustValue.pattern
-                                            |> rustPatternIntroducedBindings
-                                        )
+                                        rustValue.bindingsToDerefClone
                                             ++ soFar.bindingsToDerefClone
                                     }
 
@@ -2718,16 +2718,8 @@ pattern context patternInferred =
 
         ElmSyntaxTypeInfer.PatternAs patternAs ->
             let
-                rustPattern :
-                    { pattern : RustPattern
-                    , guardConditions : List RustExpression
-                    , bindingsToDerefClone : List { name : String, type_ : RustType }
-                    }
-                rustPattern =
-                    patternAs.pattern |> pattern context
-
-                rustAliasBindingName : String
-                rustAliasBindingName =
+                dereferencedAliasBindingName : String
+                dereferencedAliasBindingName =
                     patternAs.variable.value |> toSnakeCaseRustName
 
                 rustType : RustType
@@ -2740,9 +2732,18 @@ pattern context patternInferred =
             -- does not capture any values (in an owning way),
             -- just make the alias binding owning
             if rustType |> rustTypeIsCopy { variablesAreCopy = False } then
+                let
+                    rustPattern :
+                        { pattern : RustPattern
+                        , guardConditions : List RustExpression
+                        , bindingsToDerefClone : List { name : String, type_ : RustType }
+                        }
+                    rustPattern =
+                        patternAs.pattern |> pattern context
+                in
                 { pattern =
                     RustPatternAlias
-                        { variable = rustAliasBindingName
+                        { variable = dereferencedAliasBindingName
                         , variableIsRef = False
                         , type_ = rustType
                         , pattern = rustPattern.pattern
@@ -2752,32 +2753,39 @@ pattern context patternInferred =
                 }
 
             else
+                let
+                    rustPattern :
+                        { pattern : RustPattern
+                        , guardConditions : List RustExpression
+                        , bindingsToDerefClone : List { name : String, type_ : RustType }
+                        }
+                    rustPattern =
+                        patternAs.pattern |> referencedPattern context
+                in
                 { pattern =
                     RustPatternAlias
                         { variable =
-                            rustAliasBindingName |> generatedPatternRefBindingName
+                            dereferencedAliasBindingName |> generatedPatternRefBindingName
                         , variableIsRef = True
                         , type_ = rustType
                         , pattern =
                             rustPattern.pattern
-                                |> rustPatternMapBindingsExceptDereferenced
+                                |> -- TODO adapt rustPattern.guardConditions
+                                   -- or better: create a version/configuration of referencedPattern
+                                   -- that sets isRef to True
+                                   rustPatternMapBindingsExceptDereferenced
                                     { isDereferenced = False
                                     , bindingChange =
-                                        \binding ->
-                                            { name = binding |> generatedPatternRefBindingName
-                                            , isRef = True
-                                            }
+                                        \bindingName ->
+                                            { name = bindingName, isRef = True }
                                     }
                         }
                 , guardConditions = rustPattern.guardConditions
                 , bindingsToDerefClone =
-                    { name = rustAliasBindingName
+                    { name = dereferencedAliasBindingName
                     , type_ = rustType
                     }
-                        :: (rustPattern.pattern
-                                |> rustPatternIntroducedBindings
-                           )
-                        ++ rustPattern.bindingsToDerefClone
+                        :: rustPattern.bindingsToDerefClone
                 }
 
 
@@ -2849,6 +2857,9 @@ referencedPattern :
     ->
         { pattern : RustPattern
         , guardConditions : List RustExpression
+        , bindingsToDerefClone : List { name : String, type_ : RustType }
+
+        -- TODO add bindingsToDeref and bindingsToDerefDeref for Copy types
         }
 referencedPattern context patternInferred =
     -- IGNORE TCO
@@ -2856,21 +2867,25 @@ referencedPattern context patternInferred =
         ElmSyntaxTypeInfer.PatternIgnored ->
             { pattern = RustPatternIgnore
             , guardConditions = []
+            , bindingsToDerefClone = []
             }
 
         ElmSyntaxTypeInfer.PatternUnit ->
             { pattern = RustPatternIgnore
             , guardConditions = []
+            , bindingsToDerefClone = []
             }
 
         ElmSyntaxTypeInfer.PatternChar charValue ->
             { pattern = RustPatternChar charValue
             , guardConditions = []
+            , bindingsToDerefClone = []
             }
 
         ElmSyntaxTypeInfer.PatternInt intValue ->
             { pattern = RustPatternInteger intValue.value
             , guardConditions = []
+            , bindingsToDerefClone = []
             }
 
         ElmSyntaxTypeInfer.PatternString stringValue ->
@@ -2897,6 +2912,7 @@ referencedPattern context patternInferred =
                         ]
                     }
                 ]
+            , bindingsToDerefClone = []
             }
 
         ElmSyntaxTypeInfer.PatternVariable variableName ->
@@ -2904,14 +2920,21 @@ referencedPattern context patternInferred =
                 rustType : RustType
                 rustType =
                     patternInferred.type_ |> type_ context
+
+                dereferencedVariableName : String
+                dereferencedVariableName =
+                    variableName |> toSnakeCaseRustName
             in
             { pattern =
                 RustPatternVariable
-                    { name = variableName |> toSnakeCaseRustName
+                    { name = generatedPatternRefBindingName dereferencedVariableName
                     , isRef = False
                     , type_ = rustType
                     }
             , guardConditions = []
+            , bindingsToDerefClone =
+                [ { name = dereferencedVariableName, type_ = rustType }
+                ]
             }
 
         ElmSyntaxTypeInfer.PatternParenthesized inParens ->
@@ -2919,11 +2942,19 @@ referencedPattern context patternInferred =
 
         ElmSyntaxTypeInfer.PatternTuple parts ->
             let
-                rustPart0 : { pattern : RustPattern, guardConditions : List RustExpression }
+                rustPart0 :
+                    { pattern : RustPattern
+                    , guardConditions : List RustExpression
+                    , bindingsToDerefClone : List { name : String, type_ : RustType }
+                    }
                 rustPart0 =
                     parts.part0 |> referencedPattern context
 
-                rustPart1 : { pattern : RustPattern, guardConditions : List RustExpression }
+                rustPart1 :
+                    { pattern : RustPattern
+                    , guardConditions : List RustExpression
+                    , bindingsToDerefClone : List { name : String, type_ : RustType }
+                    }
                 rustPart1 =
                     parts.part1 |> referencedPattern context
             in
@@ -2936,19 +2967,34 @@ referencedPattern context patternInferred =
             , guardConditions =
                 rustPart0.guardConditions
                     ++ rustPart1.guardConditions
+            , bindingsToDerefClone =
+                rustPart0.bindingsToDerefClone
+                    ++ rustPart1.bindingsToDerefClone
             }
 
         ElmSyntaxTypeInfer.PatternTriple parts ->
             let
-                rustPart0 : { pattern : RustPattern, guardConditions : List RustExpression }
+                rustPart0 :
+                    { pattern : RustPattern
+                    , guardConditions : List RustExpression
+                    , bindingsToDerefClone : List { name : String, type_ : RustType }
+                    }
                 rustPart0 =
                     parts.part0 |> referencedPattern context
 
-                rustPart1 : { pattern : RustPattern, guardConditions : List RustExpression }
+                rustPart1 :
+                    { pattern : RustPattern
+                    , guardConditions : List RustExpression
+                    , bindingsToDerefClone : List { name : String, type_ : RustType }
+                    }
                 rustPart1 =
                     parts.part1 |> referencedPattern context
 
-                rustPart2 : { pattern : RustPattern, guardConditions : List RustExpression }
+                rustPart2 :
+                    { pattern : RustPattern
+                    , guardConditions : List RustExpression
+                    , bindingsToDerefClone : List { name : String, type_ : RustType }
+                    }
                 rustPart2 =
                     parts.part2 |> referencedPattern context
             in
@@ -2962,6 +3008,10 @@ referencedPattern context patternInferred =
                 rustPart0.guardConditions
                     ++ rustPart1.guardConditions
                     ++ rustPart2.guardConditions
+            , bindingsToDerefClone =
+                rustPart0.bindingsToDerefClone
+                    ++ rustPart1.bindingsToDerefClone
+                    ++ rustPart2.bindingsToDerefClone
             }
 
         ElmSyntaxTypeInfer.PatternRecord patternFields ->
@@ -2984,11 +3034,11 @@ referencedPattern context patternInferred =
                                     )
                                 |> FastDict.fromList
 
-                rustFieldPatterns : FastDict.Dict String RustPattern
-                rustFieldPatterns =
+                rustFields : List { name : String, type_ : RustType }
+                rustFields =
                     patternFields
-                        |> List.foldl
-                            (\field soFar ->
+                        |> List.map
+                            (\field ->
                                 let
                                     rustFieldName : String
                                     rustFieldName =
@@ -3003,12 +3053,23 @@ referencedPattern context patternInferred =
                                             Just inferredType ->
                                                 inferredType |> type_ context
                                 in
+                                { name = rustFieldName
+                                , type_ = rustType
+                                }
+                            )
+
+                rustFieldPatterns : FastDict.Dict String RustPattern
+                rustFieldPatterns =
+                    rustFields
+                        |> List.foldl
+                            (\rustField soFar ->
                                 soFar
-                                    |> FastDict.insert rustFieldName
+                                    |> FastDict.insert rustField.name
                                         (RustPatternVariable
-                                            { name = rustFieldName
+                                            { name =
+                                                generatedPatternRefBindingName rustField.name
                                             , isRef = False
-                                            , type_ = rustType
+                                            , type_ = rustField.type_
                                             }
                                         )
                             )
@@ -3022,15 +3083,24 @@ referencedPattern context patternInferred =
                     , fields = rustFieldPatterns
                     }
             , guardConditions = []
+            , bindingsToDerefClone = rustFields
             }
 
         ElmSyntaxTypeInfer.PatternListCons listCons ->
             let
-                rustHead : { pattern : RustPattern, guardConditions : List RustExpression }
+                rustHead :
+                    { pattern : RustPattern
+                    , guardConditions : List RustExpression
+                    , bindingsToDerefClone : List { name : String, type_ : RustType }
+                    }
                 rustHead =
                     listCons.head |> referencedPattern context
 
-                rustTail : { pattern : RustPattern, guardConditions : List RustExpression }
+                rustTail :
+                    { pattern : RustPattern
+                    , guardConditions : List RustExpression
+                    , bindingsToDerefClone : List { name : String, type_ : RustType }
+                    }
                 rustTail =
                     listCons.tail |> referencedPattern context
             in
@@ -3038,10 +3108,13 @@ referencedPattern context patternInferred =
             , guardConditions =
                 rustHead.guardConditions
                     ++ rustTail.guardConditions
+            , bindingsToDerefClone =
+                rustHead.bindingsToDerefClone
+                    ++ rustTail.bindingsToDerefClone
             }
 
-        ElmSyntaxTypeInfer.PatternListExact elementPatterns ->
-            referencedPatternListExact context elementPatterns
+        ElmSyntaxTypeInfer.PatternListExact elements ->
+            referencedPatternListExact context elements
 
         ElmSyntaxTypeInfer.PatternVariant variant ->
             let
@@ -3072,13 +3145,21 @@ referencedPattern context patternInferred =
                             , name = variant.name |> toPascalCaseRustName
                             }
 
-                rustValues : { patterns : List RustPattern, guardConditions : List RustExpression }
+                rustValues :
+                    { patterns : List RustPattern
+                    , guardConditions : List RustExpression
+                    , bindingsToDerefClone : List { name : String, type_ : RustType }
+                    }
                 rustValues =
                     variant.values
                         |> List.foldr
                             (\variantValue soFar ->
                                 let
-                                    rustValue : { pattern : RustPattern, guardConditions : List RustExpression }
+                                    rustValue :
+                                        { pattern : RustPattern
+                                        , guardConditions : List RustExpression
+                                        , bindingsToDerefClone : List { name : String, type_ : RustType }
+                                        }
                                     rustValue =
                                         variantValue |> referencedPattern context
                                 in
@@ -3086,9 +3167,15 @@ referencedPattern context patternInferred =
                                 , guardConditions =
                                     rustValue.guardConditions
                                         ++ soFar.guardConditions
+                                , bindingsToDerefClone =
+                                    rustValue.bindingsToDerefClone
+                                        ++ soFar.bindingsToDerefClone
                                 }
                             )
-                            { patterns = [], guardConditions = [] }
+                            { patterns = []
+                            , guardConditions = []
+                            , bindingsToDerefClone = []
+                            }
             in
             { pattern =
                 RustPatternVariant
@@ -3097,6 +3184,7 @@ referencedPattern context patternInferred =
                     , values = rustValues.patterns
                     }
             , guardConditions = rustValues.guardConditions
+            , bindingsToDerefClone = rustValues.bindingsToDerefClone
             }
 
         ElmSyntaxTypeInfer.PatternAs patternAs ->
@@ -3105,19 +3193,30 @@ referencedPattern context patternInferred =
                 rustType =
                     patternAs.variable.type_ |> type_ context
 
-                rustPattern : { pattern : RustPattern, guardConditions : List RustExpression }
+                rustPattern :
+                    { pattern : RustPattern
+                    , guardConditions : List RustExpression
+                    , bindingsToDerefClone : List { name : String, type_ : RustType }
+                    }
                 rustPattern =
                     patternAs.pattern |> referencedPattern context
+
+                dereferencedAliasBindingName : String
+                dereferencedAliasBindingName =
+                    patternAs.variable.value |> toSnakeCaseRustName
             in
             { pattern =
                 RustPatternAlias
                     { variable =
-                        patternAs.variable.value |> toSnakeCaseRustName
+                        generatedPatternRefBindingName dereferencedAliasBindingName
                     , variableIsRef = False
                     , type_ = rustType
                     , pattern = rustPattern.pattern
                     }
             , guardConditions = rustPattern.guardConditions
+            , bindingsToDerefClone =
+                { name = dereferencedAliasBindingName, type_ = rustType }
+                    :: rustPattern.bindingsToDerefClone
             }
 
 
@@ -3147,13 +3246,18 @@ referencedPatternListExact :
     ->
         { pattern : RustPattern
         , guardConditions : List RustExpression
+        , bindingsToDerefClone : List { name : String, type_ : RustType }
         }
 referencedPatternListExact context elements =
     elements
         |> List.foldr
             (\element soFar ->
                 let
-                    rustElement : { pattern : RustPattern, guardConditions : List RustExpression }
+                    rustElement :
+                        { pattern : RustPattern
+                        , guardConditions : List RustExpression
+                        , bindingsToDerefClone : List { name : String, type_ : RustType }
+                        }
                     rustElement =
                         element |> referencedPattern context
                 in
@@ -3161,10 +3265,14 @@ referencedPatternListExact context elements =
                 , guardConditions =
                     rustElement.guardConditions
                         ++ soFar.guardConditions
+                , bindingsToDerefClone =
+                    rustElement.bindingsToDerefClone
+                        ++ soFar.bindingsToDerefClone
                 }
             )
             { pattern = rustPatternListEmpty
             , guardConditions = []
+            , bindingsToDerefClone = []
             }
 
 
