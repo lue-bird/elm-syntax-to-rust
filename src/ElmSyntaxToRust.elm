@@ -11361,8 +11361,6 @@ expression context expressionTypedNode =
                     rustExpressionPrependStatements
                         (declarations |> List.concat)
                         result
-                        |> rustExpressionCloneMultipleBindingUsesBeforeLast
-                            rustLetIntroducedVariables
                 )
                 (letDeclarationsSortedFromMostToLeastDependedOn
                     |> List.indexedMap
