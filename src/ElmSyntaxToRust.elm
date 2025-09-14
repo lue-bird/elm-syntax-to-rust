@@ -5019,7 +5019,7 @@ referenceToCoreRust reference =
                 "isEmpty" ->
                     Just
                         { qualification = []
-                        , name = "list_isEmpty"
+                        , name = "list_is_empty"
                         , requiresAllocator = False
                         }
 
