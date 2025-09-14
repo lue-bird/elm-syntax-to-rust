@@ -19558,7 +19558,7 @@ rustDeclarationsToModuleString rustDeclarations =
                     )
                     Print.empty
                 |> Print.toString
-                |> -- TODO hacky way to make stil4m/elm-syntax compile
+                |> -- TODO hacky way to make stil4m/elm-syntax and miniBill/elm-fast-dict compile
                    -- because we have no way to find out which type variable is equatable
                    String.replace
                     "list_extra_unique_help<'a, A: Clone + 'a>"
@@ -19566,6 +19566,11 @@ rustDeclarationsToModuleString rustDeclarations =
                 |> String.replace
                     "list_extra_unique<'a, A: Clone + 'a>"
                     "list_extra_unique<'a, A: Clone + PartialEq + 'a>"
+                |> String.replace
+                    """pub fn fast_dict_equals<'a, Comparable: Clone + PartialOrd + 'a, V: Clone + 'a>(generated_allocator: &'a bumpalo::Bump, InternalDict::Dict(lsz, l_root): InternalDict<'a, Comparable, V>, InternalDict::Dict(rsz, r_root): InternalDict<'a, Comparable, V>) -> bool {
+    fn go<'a, Comparable1: Clone + PartialOrd + 'a, V1: Clone + 'a>"""
+                    """pub fn fast_dict_equals<'a, Comparable: Clone + PartialOrd + 'a, V: Clone + PartialEq + 'a>(generated_allocator: &'a bumpalo::Bump, InternalDict::Dict(lsz, l_root): InternalDict<'a, Comparable, V>, InternalDict::Dict(rsz, r_root): InternalDict<'a, Comparable, V>) -> bool {
+    fn go<'a, Comparable1: Clone + PartialOrd + 'a, V1: Clone + PartialEq + 'a>"""
            )
         ++ "\n"
 
