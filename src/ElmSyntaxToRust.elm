@@ -18290,8 +18290,8 @@ and similarly
 
 will be split into and used as
 
-    let Fields_setX__p_x_y<x, p_y> : x -> (x: x, y: p_y) -> (x: x, y: p_y)
-    let Fields_setX__p_x_y_z : x -> (x: x, y: p_y, z: p_z) -> (x: x, y: p_y, z: p_z)
+    fn fields_set_x_p_x_y<X, PY>(:X, :GeneratedXY<X, PY>) -> GeneratedXY<X, PY>
+    fn fields_set_x_p_x_y_z<X, PY, PZ>(:X, :GeneratedXYZ<x, PY, PZ>) -> GeneratedXYZ<x, PY, PZ>
 
 for all elm records in types and expressions that contain the field `x`
 
@@ -18324,7 +18324,7 @@ rustNameWithSpecializedTypes specializedTypes name =
 
                                     specializedTypeRecordField0 :: specializedTypeRecordField1Up ->
                                         listFilledMapAndStringJoinWith "_"
-                                            Basics.identity
+                                            toSnakeCaseRustName
                                             specializedTypeRecordField0
                                             specializedTypeRecordField1Up
                        )
