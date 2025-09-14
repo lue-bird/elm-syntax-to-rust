@@ -9219,7 +9219,7 @@ type alias ExpressionToRustContext =
                 -- Nothing means value, Just means function
                 { capturedVariablesFromContextAsParameters :
                     -- not including the always-present generated allocator
-                    List String
+                    List { name : String, type_ : ElmSyntaxTypeInfer.Type }
                 , parameters : List ElmSyntaxTypeInfer.Type
                 }
             )
@@ -10516,7 +10516,7 @@ expression context expressionTypedNode =
                                                                             RustExpressionReference
                                                                                 { qualification = []
                                                                                 , name =
-                                                                                    capturedVariableFromContextAsParameters
+                                                                                    capturedVariableFromContextAsParameters.name
                                                                                         |> toSnakeCaseRustName
                                                                                 }
                                                                         )
@@ -11300,7 +11300,7 @@ expression context expressionTypedNode =
                             -- Nothing means value, Just means function
                             { capturedVariablesFromContextAsParameters :
                                 -- not including the always-present generated allocator
-                                List String
+                                List { name : String, type_ : ElmSyntaxTypeInfer.Type }
                             , parameters : List ElmSyntaxTypeInfer.Type
                             }
                         )
@@ -14932,7 +14932,7 @@ letValueOrFunctionDeclarationToRustKindAndParameters :
                 -- Nothing means value, Just means function
                 { capturedVariablesFromContextAsParameters :
                     -- not including the always-present generated allocator
-                    List String
+                    List { name : String, type_ : ElmSyntaxTypeInfer.Type }
                 , parameters : List ElmSyntaxTypeInfer.Type
                 }
             )
@@ -14977,7 +14977,7 @@ letValueOrFunctionDeclarationToRustKindAndParameters :
             -- Nothing means value, Just means function
             { capturedVariablesFromContextAsParameters :
                 -- not including the always-present generated allocator
-                List String
+                List { name : String, type_ : ElmSyntaxTypeInfer.Type }
             , parameters : List ElmSyntaxTypeInfer.Type
             }
 letValueOrFunctionDeclarationToRustKindAndParameters context inferredLetDeclarationValueOrFunctionNode =
@@ -15059,7 +15059,6 @@ letValueOrFunctionDeclarationToRustKindAndParameters context inferredLetDeclarat
                             |> FastDict.remove inferredLetDeclarationValueOrFunctionNode.declaration.name
                     }
                     inferredLetDeclarationValueOrFunctionNode.declaration.result.value
-                    |> List.map .name
             , parameters = parameters
             }
 
@@ -15196,18 +15195,6 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                             }
                         )
 
-            capturedVariables : List { name : String, type_ : ElmSyntaxTypeInfer.Type }
-            capturedVariables =
-                inferredExpressionCapturedVariablesFromContext
-                    { bindings =
-                        context.localElmBindingsInScope
-                            |> FastDict.remove inferredLetDeclarationValueOrFunctionNode.declaration.name
-                    , letDeclaredValueAndFunctionTypes =
-                        context.letDeclaredValueAndFunctionTypes
-                            |> FastDict.remove inferredLetDeclarationValueOrFunctionNode.declaration.name
-                    }
-                    inferredLetDeclarationValueOrFunctionNode.declaration.result.value
-
             elmParametersAsRust :
                 { patterns : List { pattern : RustPattern, type_ : RustType }
                 , bindingsToDerefClone : List { name : String, type_ : RustType }
@@ -15250,34 +15237,9 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                         , bindingsToDerefClone = []
                         }
 
-            allRustParametersAfterAllocator : List { pattern : RustPattern, type_ : RustType }
-            allRustParametersAfterAllocator =
-                (capturedVariables
-                    |> List.map
-                        (\parameter ->
-                            let
-                                rustType : RustType
-                                rustType =
-                                    parameter.type_
-                                        |> type_
-                                            { typeAliasesInModule = typeAliasesInModule
-                                            , rustEnumTypes = context.rustEnumTypes
-                                            }
-                                        |> rustTypeUnnestFn
-                            in
-                            { pattern =
-                                RustPatternVariable
-                                    { name =
-                                        parameter.name
-                                            |> toSnakeCaseRustName
-                                    , isRef = False
-                                    , type_ = rustType
-                                    }
-                            , type_ = rustType
-                            }
-                        )
-                )
-                    ++ elmParametersAsRust.patterns
+            elmAndAdditionalGeneratedParametersAsRust : List { pattern : RustPattern, type_ : RustType }
+            elmAndAdditionalGeneratedParametersAsRust =
+                elmParametersAsRust.patterns
                     ++ (additionalGeneratedParameters
                             |> List.map
                                 (\generatedAdditionalParameter ->
@@ -15324,6 +15286,47 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                                 { typeAliasesInModule = typeAliasesInModule
                                 , rustEnumTypes = context.rustEnumTypes
                                 }
+
+                    capturedVariables : List { name : String, type_ : ElmSyntaxTypeInfer.Type }
+                    capturedVariables =
+                        inferredExpressionCapturedVariablesFromContext
+                            { bindings =
+                                context.localElmBindingsInScope
+                                    |> FastDict.remove inferredLetDeclarationValueOrFunctionNode.declaration.name
+                            , letDeclaredValueAndFunctionTypes =
+                                context.letDeclaredValueAndFunctionTypes
+                                    |> FastDict.remove inferredLetDeclarationValueOrFunctionNode.declaration.name
+                            }
+                            inferredLetDeclarationValueOrFunctionNode.declaration.result.value
+
+                    allRustParametersAfterAllocator : List { pattern : RustPattern, type_ : RustType }
+                    allRustParametersAfterAllocator =
+                        (capturedVariables
+                            |> List.map
+                                (\parameter ->
+                                    let
+                                        rustType : RustType
+                                        rustType =
+                                            parameter.type_
+                                                |> type_
+                                                    { typeAliasesInModule = typeAliasesInModule
+                                                    , rustEnumTypes = context.rustEnumTypes
+                                                    }
+                                                |> rustTypeUnnestFn
+                                    in
+                                    { pattern =
+                                        RustPatternVariable
+                                            { name =
+                                                parameter.name
+                                                    |> toSnakeCaseRustName
+                                            , isRef = False
+                                            , type_ = rustType
+                                            }
+                                    , type_ = rustType
+                                    }
+                                )
+                        )
+                            ++ elmAndAdditionalGeneratedParametersAsRust
                 in
                 RustStatementFnDeclaration
                     { name = rustName
@@ -15408,7 +15411,7 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                     , functionDeclaredRustParameterEquivalentBindings =
                         context.functionDeclaredRustParameterEquivalentBindings
                             |> FastSet.union
-                                (allRustParametersAfterAllocator
+                                (elmAndAdditionalGeneratedParametersAsRust
                                     |> listMapToFastSetsAndUnify
                                         (\rustParameter ->
                                             rustParameter.pattern
@@ -15478,7 +15481,7 @@ inferredExpressionCapturedVariablesFromContext :
                 -- Nothing means value, Just means function
                 { capturedVariablesFromContextAsParameters :
                     -- not including the always-present generated allocator
-                    List String
+                    List { name : String, type_ : ElmSyntaxTypeInfer.Type }
                 , parameters : List ElmSyntaxTypeInfer.Type
                 }
             )
@@ -15496,34 +15499,44 @@ inferredExpressionCapturedVariablesFromContext context inferredExpression =
         |> FastDict.foldr
             (\variableFromWithinDeclarationInScope variableFromWithinDeclarationInScopeType soFar ->
                 if
-                    (resultUsedLocalReferences
+                    resultUsedLocalReferences
                         |> FastSet.member variableFromWithinDeclarationInScope
-                    )
-                        && (case
-                                context.letDeclaredValueAndFunctionTypes
-                                    |> FastDict.get variableFromWithinDeclarationInScope
-                            of
-                                Nothing ->
-                                    True
-
-                                Just letValueOrFunction ->
-                                    case letValueOrFunction of
-                                        -- value
-                                        Nothing ->
-                                            True
-
-                                        -- function
-                                        Just _ ->
-                                            False
-                           )
                 then
-                    { name = variableFromWithinDeclarationInScope
-                    , type_ = variableFromWithinDeclarationInScopeType
-                    }
-                        :: soFar
+                    case
+                        context.letDeclaredValueAndFunctionTypes
+                            |> FastDict.get variableFromWithinDeclarationInScope
+                    of
+                        Nothing ->
+                            soFar
+                                |> FastDict.insert variableFromWithinDeclarationInScope
+                                    variableFromWithinDeclarationInScopeType
+
+                        Just letValueOrFunction ->
+                            case letValueOrFunction of
+                                -- value
+                                Nothing ->
+                                    soFar
+                                        |> FastDict.insert variableFromWithinDeclarationInScope
+                                            variableFromWithinDeclarationInScopeType
+
+                                -- function
+                                Just originLetFunction ->
+                                    originLetFunction.capturedVariablesFromContextAsParameters
+                                        |> List.foldl
+                                            (\originLetFunctionCapture withOriginLetFunctionCapturesSoFar ->
+                                                withOriginLetFunctionCapturesSoFar
+                                                    |> FastDict.insert originLetFunctionCapture.name
+                                                        originLetFunctionCapture.type_
+                                            )
+                                            soFar
 
                 else
                     soFar
+            )
+            FastDict.empty
+        |> FastDict.foldr
+            (\name bindingType soFar ->
+                { name = name, type_ = bindingType } :: soFar
             )
             []
 
