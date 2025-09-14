@@ -4230,22 +4230,22 @@ referenceToCoreRust reference =
 
                 "ceiling" ->
                     Just
-                        { qualification = [ "f64" ]
-                        , name = "ceil"
+                        { qualification = []
+                        , name = "basics_ceiling"
                         , requiresAllocator = False
                         }
 
                 "floor" ->
                     Just
-                        { qualification = [ "f64" ]
-                        , name = "floor"
+                        { qualification = []
+                        , name = "basics_floor"
                         , requiresAllocator = False
                         }
 
                 "round" ->
                     Just
-                        { qualification = [ "f64" ]
-                        , name = "round"
+                        { qualification = []
+                        , name = "basics_round"
                         , requiresAllocator = False
                         }
 
@@ -33146,6 +33146,15 @@ pub const fn basics_to_float(int: i64) -> f64 {
 }
 pub const fn basics_truncate(float: f64) -> i64 {
     float as i64
+}
+pub fn basics_floor(float: f64) -> i64 {
+    f64::floor(float) as i64
+}
+pub fn basics_ceiling(float: f64) -> i64 {
+    f64::ceil(float) as i64
+}
+pub fn basics_round(float: f64) -> i64 {
+    f64::round(float) as i64
 }
 pub fn basics_clamp_int(min: i64, max: i64, n: i64) -> i64 {
     n.clamp(min, max)
