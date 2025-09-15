@@ -1263,13 +1263,13 @@ typeNotVariable context inferredTypeNotVariable =
                             , name = rustName
                             , isCopy =
                                 expandedRustType
-                                    |> rustTypeIsCopy { variablesAreCopy = False }
+                                    |> rustTypeIsCopy { variablesAreCopy = True }
                             , isDebug =
                                 expandedRustType
-                                    |> rustTypeIsDebug { variablesAreDebug = False }
+                                    |> rustTypeIsDebug { variablesAreDebug = True }
                             , isPartialEq =
                                 expandedRustType
-                                    |> rustTypeIsPartialEq { variablesArePartialEq = False }
+                                    |> rustTypeIsPartialEq { variablesArePartialEq = True }
                             }
 
                     else
@@ -1284,9 +1284,10 @@ typeNotVariable context inferredTypeNotVariable =
                                     , qualification = []
                                     , name = rustName
                                     , isCopy =
-                                        -- could be in theory but no
-                                        -- simple way to know
-                                        False
+                                        -- this assumption works because any mention
+                                        -- of a mutually recursive type will
+                                        -- be behind a & in practice
+                                        True
                                     , isDebug = {- TODO this is a wrong assumption -} True
                                     , isPartialEq = {- TODO this is a wrong assumption -} True
                                     }
@@ -3309,19 +3310,6 @@ bindingsToDerefCloneToRustStatements bindingsToDerefClone =
                             (RustExpressionDeref rustReferenceBindingToDeref)
                     }
             )
-
-
-rustPatternAlterBindingsExceptDereferenced : (String -> String) -> RustPattern -> RustPattern
-rustPatternAlterBindingsExceptDereferenced bindingNameChange rustPattern =
-    rustPatternMapBindingsExceptDereferenced
-        { isDereferenced = False
-        , bindingChange =
-            \bindingName ->
-                { name = bindingName |> bindingNameChange
-                , isRef = False
-                }
-        }
-        rustPattern
 
 
 rustPatternMapBindingsExceptDereferenced :
@@ -11331,33 +11319,9 @@ expression context expressionTypedNode =
                                                 )
                             )
                             context.letDeclaredValueAndFunctionTypes
-
-                typeAliasesInModule : String -> Maybe (FastDict.Dict String { parameters : List String, recordFieldOrder : Maybe (List String), type_ : ElmSyntaxTypeInfer.Type })
-                typeAliasesInModule moduleNameToAccess =
-                    context.moduleInfo
-                        |> FastDict.get moduleNameToAccess
-                        |> Maybe.map .typeAliases
             in
             Result.map2
                 (\declarations result ->
-                    let
-                        rustLetIntroducedVariables : List { name : String, type_ : RustType }
-                        rustLetIntroducedVariables =
-                            letIntroducedBindings
-                                |> FastDict.foldl
-                                    (\letIntroducedBinding letIntroducedBindingType soFar ->
-                                        { name = letIntroducedBinding |> toSnakeCaseRustName
-                                        , type_ =
-                                            letIntroducedBindingType
-                                                |> type_
-                                                    { rustEnumTypes = context.rustEnumTypes
-                                                    , typeAliasesInModule = typeAliasesInModule
-                                                    }
-                                        }
-                                            :: soFar
-                                    )
-                                    []
-                    in
                     rustExpressionPrependStatements
                         (declarations |> List.concat)
                         result
@@ -13539,55 +13503,74 @@ rustExpressionCloneBindingUses binding rustExpression =
                     |> rustExpressionCloneBindingUses binding
                 )
 
-        RustExpressionStructAccess recordAccess ->
+        RustExpressionStructAccess structAccess ->
             let
-                structIsReferenceToClone : Bool
-                structIsReferenceToClone =
-                    case recordAccess.struct of
-                        RustExpressionReference reference ->
-                            case reference.qualification of
+                structAsNestedAccessOfReferenceToClone : RustExpression -> Maybe RustType
+                structAsNestedAccessOfReferenceToClone innerStructExpression =
+                    -- IGNORE TCO
+                    case innerStructExpression of
+                        RustExpressionReference rootStructReference ->
+                            case rootStructReference.qualification of
                                 _ :: _ ->
-                                    False
+                                    Nothing
 
                                 [] ->
-                                    reference.name == binding.name
+                                    if rootStructReference.name == binding.name then
+                                        Just binding.type_
 
-                        _ ->
-                            False
-            in
-            if structIsReferenceToClone then
-                -- can clone only field value
-                if
-                    case binding.type_ of
-                        RustTypeRecordStruct bindingTypeRecord ->
-                            case
-                                bindingTypeRecord.fields
-                                    |> FastDict.get recordAccess.field
-                            of
-                                Just bindingTypeRecordAccessedFieldValue ->
-                                    bindingTypeRecordAccessedFieldValue
-                                        |> rustTypeIsCopy { variablesAreCopy = False }
+                                    else
+                                        Nothing
 
+                        RustExpressionStructAccess innerStructAccess ->
+                            case structAsNestedAccessOfReferenceToClone innerStructAccess.struct of
                                 Nothing ->
-                                    False
+                                    Nothing
+
+                                Just innerAccessedStructType ->
+                                    case innerAccessedStructType of
+                                        RustTypeRecordStruct bindingTypeRecord ->
+                                            bindingTypeRecord.fields
+                                                |> FastDict.get innerStructAccess.field
+
+                                        _ ->
+                                            Nothing
 
                         _ ->
-                            False
-                then
-                    -- _hand-wave_ optimization:
-                    -- no clone if field value type is Copy (e.g. a shared reference)
-                    rustExpression
+                            Nothing
+            in
+            case structAccess.struct |> structAsNestedAccessOfReferenceToClone of
+                Just accessedStructType ->
+                    -- can clone only field value
+                    if
+                        case accessedStructType of
+                            RustTypeRecordStruct bindingTypeRecord ->
+                                case
+                                    bindingTypeRecord.fields
+                                        |> FastDict.get structAccess.field
+                                of
+                                    Just bindingTypeRecordAccessedFieldValue ->
+                                        bindingTypeRecordAccessedFieldValue
+                                            |> rustTypeIsCopy { variablesAreCopy = False }
 
-                else
-                    rustExpressionClone rustExpression
+                                    Nothing ->
+                                        False
 
-            else
-                RustExpressionStructAccess
-                    { struct =
-                        recordAccess.struct
-                            |> rustExpressionCloneBindingUses binding
-                    , field = recordAccess.field
-                    }
+                            _ ->
+                                False
+                    then
+                        -- no clone if field value type is Copy
+                        rustExpression
+
+                    else
+                        rustExpressionClone rustExpression
+
+                Nothing ->
+                    RustExpressionStructAccess
+                        { struct =
+                            structAccess.struct
+                                |> rustExpressionCloneBindingUses binding
+                        , field = structAccess.field
+                        }
 
         RustExpressionReferenceMethod reference ->
             RustExpressionReferenceMethod
@@ -19556,14 +19539,20 @@ rustDeclarationsToModuleString rustDeclarations =
                     )
                     Print.empty
                 |> Print.toString
-                |> -- TODO hacky way to make stil4m/elm-syntax and miniBill/elm-fast-dict compile
-                   -- because we have no way to find out which type variable is equatable
+                |> -- TODO hacky way to make stil4m/elm-syntax & miniBill/elm-fast-dict & elm-syntax-type-infer
+                   -- compile because we have no way to find out which type variable is equatable
                    String.replace
                     "list_extra_unique_help<'a, A: Clone + 'a>"
                     "list_extra_unique_help<'a, A: Clone + PartialEq + 'a>"
                 |> String.replace
                     "list_extra_unique<'a, A: Clone + 'a>"
                     "list_extra_unique<'a, A: Clone + PartialEq + 'a>"
+                |> String.replace
+                    "dict_by_type_variable_from_context_equals<'a, V: Clone + 'a>"
+                    "dict_by_type_variable_from_context_equals<'a, V: Clone + PartialEq + 'a>"
+                |> String.replace
+                    "dict_by_type_variable_from_context_equals_help<'a, V: Clone + 'a>"
+                    "dict_by_type_variable_from_context_equals_help<'a, V: Clone + PartialEq + 'a>"
                 |> String.replace
                     """pub fn fast_dict_equals<'a, Comparable: Clone + PartialOrd + 'a, V: Clone + 'a>(generated_allocator: &'a bumpalo::Bump, InternalDict::Dict(lsz, l_root): InternalDict<'a, Comparable, V>, InternalDict::Dict(rsz, r_root): InternalDict<'a, Comparable, V>) -> bool {
     fn go<'a, Comparable1: Clone + PartialOrd + 'a, V1: Clone + 'a>"""
