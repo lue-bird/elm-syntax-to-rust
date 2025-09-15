@@ -4917,7 +4917,7 @@ pub enum RandomSeed {
 }
 #[derive(Clone, Copy)]
 pub enum RandomGenerator<'a, A> {
-    Generator(&'a (dyn Fn(RandomSeed) -> (A, RandomSeed))),
+    Generator(&'a dyn Fn(RandomSeed) -> (A, RandomSeed)),
 }
 
 pub const fn random_min_int() -> i64 {

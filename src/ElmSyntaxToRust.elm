@@ -1406,7 +1406,7 @@ printRustTypeNotParenthesized rustType =
                 |> Print.followedBy
                     (Print.withIndentIncreasedBy 1
                         (borrow.type_
-                            |> printRustTypeParenthesizedIfSpaceSeparated
+                            |> printRustTypeNotParenthesized
                         )
                     )
 
@@ -1848,48 +1848,6 @@ printExactlyLessThan =
 printExactlyGreaterThan : Print
 printExactlyGreaterThan =
     Print.exactly ">"
-
-
-rustTypeIsSpaceSeparated : RustType -> Bool
-rustTypeIsSpaceSeparated rustType =
-    case rustType of
-        RustTypeInfer ->
-            False
-
-        RustTypeUnit ->
-            False
-
-        RustTypeVariable _ ->
-            False
-
-        RustTypeConstruct _ ->
-            False
-
-        RustTypeRecordStruct _ ->
-            False
-
-        RustTypeTuple _ ->
-            False
-
-        RustTypeFunction _ ->
-            True
-
-        RustTypeBorrow _ ->
-            True
-
-
-printRustTypeParenthesizedIfSpaceSeparated : RustType -> Print
-printRustTypeParenthesizedIfSpaceSeparated rustType =
-    let
-        notParenthesizedPrint : Print
-        notParenthesizedPrint =
-            rustType |> printRustTypeNotParenthesized
-    in
-    if rustType |> rustTypeIsSpaceSeparated then
-        printParenthesized notParenthesizedPrint
-
-    else
-        notParenthesizedPrint
 
 
 i64Literal : Int -> String
@@ -37979,7 +37937,7 @@ pub enum RandomSeed {
 }
 #[derive(Clone, Copy)]
 pub enum RandomGenerator<'a, A> {
-    Generator(&'a (dyn Fn(RandomSeed) -> (A, RandomSeed))),
+    Generator(&'a dyn Fn(RandomSeed) -> (A, RandomSeed)),
 }
 
 pub const fn random_min_int() -> i64 {
