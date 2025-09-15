@@ -10368,62 +10368,67 @@ expression context expressionTypedNode =
                                         expressionTypedNode.type_
                                             |> inferredTypeExpandFunction
                                 in
-                                if (inferredReferenceTypeAsFunction.inputs |> List.length) >= 2 then
-                                    let
-                                        typeAliasesInModule : String -> Maybe (FastDict.Dict String { parameters : List String, recordFieldOrder : Maybe (List String), type_ : ElmSyntaxTypeInfer.Type })
-                                        typeAliasesInModule moduleNameToAccess =
-                                            context.moduleInfo
-                                                |> FastDict.get moduleNameToAccess
-                                                |> Maybe.map .typeAliases
+                                case inferredReferenceTypeAsFunction.inputs of
+                                    [ _ ] ->
+                                        rustExpressionAlloc
+                                            rustExpressionReference
 
-                                        rustParameters : List { name : String, type_ : RustType }
-                                        rustParameters =
-                                            inferredReferenceTypeAsFunction.inputs
-                                                |> List.indexedMap
-                                                    (\parameterIndex parameterInferredType ->
-                                                        { name = generatedParameterNameForIndexAtPath parameterIndex context.path
-                                                        , type_ =
-                                                            parameterInferredType
-                                                                |> type_
-                                                                    { typeAliasesInModule = typeAliasesInModule
-                                                                    , rustEnumTypes = context.rustEnumTypes
-                                                                    }
+                                    [] ->
+                                        rustExpressionReference
+
+                                    _ :: _ :: _ ->
+                                        let
+                                            typeAliasesInModule : String -> Maybe (FastDict.Dict String { parameters : List String, recordFieldOrder : Maybe (List String), type_ : ElmSyntaxTypeInfer.Type })
+                                            typeAliasesInModule moduleNameToAccess =
+                                                context.moduleInfo
+                                                    |> FastDict.get moduleNameToAccess
+                                                    |> Maybe.map .typeAliases
+
+                                            rustParameters : List { name : String, type_ : RustType }
+                                            rustParameters =
+                                                inferredReferenceTypeAsFunction.inputs
+                                                    |> List.indexedMap
+                                                        (\parameterIndex parameterInferredType ->
+                                                            { name = generatedParameterNameForIndexAtPath parameterIndex context.path
+                                                            , type_ =
+                                                                parameterInferredType
+                                                                    |> type_
+                                                                        { typeAliasesInModule = typeAliasesInModule
+                                                                        , rustEnumTypes = context.rustEnumTypes
+                                                                        }
+                                                            }
+                                                        )
+                                        in
+                                        rustParameters
+                                            |> List.foldr
+                                                (\rustParameter soFar ->
+                                                    rustExpressionClosureReference
+                                                        { parameters =
+                                                            [ { pattern =
+                                                                    RustPatternVariable
+                                                                        { name = rustParameter.name
+                                                                        , isRef = False
+                                                                        , type_ = rustParameter.type_
+                                                                        }
+                                                              , type_ = Just rustParameter.type_
+                                                              }
+                                                            ]
+                                                        , result = soFar
                                                         }
-                                                    )
-                                    in
-                                    rustParameters
-                                        |> List.foldr
-                                            (\rustParameter soFar ->
-                                                rustExpressionClosureReference
-                                                    { parameters =
-                                                        [ { pattern =
-                                                                RustPatternVariable
-                                                                    { name = rustParameter.name
-                                                                    , isRef = False
-                                                                    , type_ = rustParameter.type_
-                                                                    }
-                                                          , type_ = Just rustParameter.type_
-                                                          }
-                                                        ]
-                                                    , result = soFar
+                                                )
+                                                (RustExpressionCall
+                                                    { called = rustExpressionReference
+                                                    , arguments =
+                                                        rustParameters
+                                                            |> List.map
+                                                                (\rustParameter ->
+                                                                    RustExpressionReference
+                                                                        { qualification = []
+                                                                        , name = rustParameter.name
+                                                                        }
+                                                                )
                                                     }
-                                            )
-                                            (RustExpressionCall
-                                                { called = rustExpressionReference
-                                                , arguments =
-                                                    rustParameters
-                                                        |> List.map
-                                                            (\rustParameter ->
-                                                                RustExpressionReference
-                                                                    { qualification = []
-                                                                    , name = rustParameter.name
-                                                                    }
-                                                            )
-                                                }
-                                            )
-
-                                else
-                                    rustExpressionReference
+                                                )
 
                             else
                                 rustExpressionReference
