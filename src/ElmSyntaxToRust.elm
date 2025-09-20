@@ -9419,6 +9419,14 @@ expression context expressionTypedNode =
                             context.moduleInfo
                                 |> FastDict.get moduleNameToAccess
                                 |> Maybe.map .typeAliases
+
+                        inputRecordRustType : RustType
+                        inputRecordRustType =
+                            typeFunction.input
+                                |> type_
+                                    { typeAliasesInModule = typeAliasesInModule
+                                    , rustEnumTypes = context.rustEnumTypes
+                                    }
                     in
                     Ok
                         (rustExpressionClosureReference
@@ -9427,15 +9435,9 @@ expression context expressionTypedNode =
                                         RustPatternVariable
                                             { name = generatedAccessedStructVariableName
                                             , isRef = False
-                                            , type_ = rustTypeConstructBumpaloBump
+                                            , type_ = inputRecordRustType
                                             }
-                                  , type_ =
-                                        typeFunction.input
-                                            |> type_
-                                                { typeAliasesInModule = typeAliasesInModule
-                                                , rustEnumTypes = context.rustEnumTypes
-                                                }
-                                            |> Just
+                                  , type_ = Just inputRecordRustType
                                   }
                                 ]
                             , result =
