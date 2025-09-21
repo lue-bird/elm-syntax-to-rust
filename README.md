@@ -8,7 +8,7 @@ import ElmSyntaxToRust
 
 """module Sample exposing (..)
 
-plus2 : Int -> Int
+plus2 : Float -> Float
 plus2 n =
     n + ([ 2.0 ] |> List.sum)
 """
@@ -98,7 +98,7 @@ In the transpiled code, you will find these types:
 - elm `Float`s will be of type `f64`. Create and match by appending `_f64` to any number literal or using `as f64`
 - elm `String`s (like `"a"`) will be of type `elm::StringString`.
   Create from literals or other string slices with (`elm::StringString::One("a")`). Match with `your_string if elm::string_equals_str(your_string, "some string")`
-- elm `Array<a>`s (like `Array.fromList [ 'a' ]`) will be of type `Rc<Vec<A>>` (alias `elm::ArrayArray<A>`).
+- elm `Array a`s (like `Array.fromList [ 'a' ]`) will be of type `Rc<Vec<A>>` (alias `elm::ArrayArray<A>`).
   Create new values with (`std::rc::Rc::new(vec!['a'])`). To match, use e.g. `match array.as_slice() { [] => ..., [_, ..] => ... etc }`
 - elm records like `{ y : Float, x : Float }` will be of type `elm::GeneratedXY<f64, f64>` with the fields sorted and can be constructed and matched with `elm::GeneratedXY { x: _, y: _ }`. `record.x` access also works
 - a transpiled elm app does not run itself.

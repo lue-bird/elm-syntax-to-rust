@@ -3909,7 +3909,7 @@ justRustReferenceStringString =
     Just
         { qualification = []
         , name = "StringString"
-        , lifetimeParameters = [ "a" ]
+        , lifetimeParameters = [ generatedLifetimeVariableName ]
         , isCopy = True
         , isDebug = True
         , isPartialEq = True
@@ -3921,7 +3921,7 @@ rustTypeStringString =
     RustTypeConstruct
         { qualification = []
         , name = "StringString"
-        , lifetimeArguments = [ "a" ]
+        , lifetimeArguments = [ generatedLifetimeVariableName ]
         , arguments = []
         , isCopy = True
         , isDebug = True
@@ -3962,7 +3962,7 @@ justRustReferenceListList =
     Just
         { qualification = []
         , name = "ListList"
-        , lifetimeParameters = [ "a" ]
+        , lifetimeParameters = [ generatedLifetimeVariableName ]
         , isCopy = True
         , isDebug = True
         , isPartialEq = True
@@ -4925,7 +4925,7 @@ referenceToCoreRust reference =
                 "isOctDigit" ->
                     Just
                         { qualification = []
-                        , name = "char_isOctDigit"
+                        , name = "char_is_oct_digit"
                         , requiresAllocator = False
                         }
 
