@@ -35975,17 +35975,7 @@ pub fn json_decode_field_value<'a>(
             JsonValue::Object(decoded_object) => match decoded_object.get(field_name) {
                 Option::Some(&decoded_field_value) => Result::Ok(decoded_field_value),
                 Option::None => {
-                    let mut field_name_chars: std::str::Chars<'a> = field_name.chars();
-                    let field_description: &str = match field_name_chars.next() {
-                        Option::Some(field_name_first_char)
-                            if field_name_first_char.is_ascii_alphanumeric()
-                                && field_name_chars
-                                    .all(|tail_char| tail_char.is_ascii_alphanumeric()) =>
-                        {
-                            field_name.as_ref()
-                        }
-                        _ => &format!("[{field_name}]"),
-                    };
+                    let field_description: &str = &json_field_description(field_name);
                     Result::Err(JsonDecodeError::Failure(
                         string_to_rope(
                             allocator,
@@ -36000,6 +35990,18 @@ pub fn json_decode_field_value<'a>(
                 json_not_object,
             )),
         }),
+    }
+}
+fn json_field_description(field_name: &str) -> String {
+    let mut field_name_chars: std::str::Chars = field_name.chars();
+    match field_name_chars.next() {
+        Option::Some(field_name_first_char)
+            if field_name_first_char.is_ascii_alphabetic()
+                && field_name_chars.all(|tail_char| tail_char.is_ascii_alphanumeric()) =>
+        {
+            format!(".{field_name}")
+        }
+        _ => format!("['{field_name}']"),
     }
 }
 pub fn json_decode_field<'a, A>(
@@ -36022,17 +36024,7 @@ pub fn json_decode_field<'a, A>(
                     })
                 }
                 Option::None => {
-                    let mut field_name_chars: std::str::Chars = field_name.chars();
-                    let field_description: &str = match field_name_chars.next() {
-                        Option::Some(field_name_first_char)
-                            if field_name_first_char.is_ascii_alphanumeric()
-                                && field_name_chars
-                                    .all(|tail_char| tail_char.is_ascii_alphanumeric()) =>
-                        {
-                            field_name.as_ref()
-                        }
-                        _ => &format!("[{field_name}]"),
-                    };
+                    let field_description: &str = &json_field_description(field_name);
                     Result::Err(JsonDecodeError::Failure(
                         string_to_rope(
                             allocator,
