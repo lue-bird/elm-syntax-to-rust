@@ -4412,10 +4412,10 @@ pub fn platform_cmd_batch<'a, Event: Clone>(
 }
 pub fn platform_cmd_map<'a, A: Clone, B>(
     _event_change: impl Fn(A) -> B + Clone,
-    sub: PlatformCmdCmd<'a, A>,
+    cmd: PlatformCmdCmd<'a, A>,
 ) -> PlatformCmdCmd<'a, B> {
     PlatformCmdCmd {
-        tree: sub.tree,
+        tree: cmd.tree,
         phantom_data: std::marker::PhantomData,
     }
 }
