@@ -37102,7 +37102,7 @@ pub fn time_custom_zone<'a>(
     default_offset_in_minutes: i64,
     eras: ListList<'a, GeneratedOffsetStart<i64, i64>>,
 ) -> TimeZone<'a> {
-    TimeZone::Zone(default_offset_in_minutes as i64, eras)
+    TimeZone::Zone(default_offset_in_minutes, eras)
 }
 
 pub fn time_millis_to_posix(milliseconds: i64) -> TimePosix {
@@ -37113,19 +37113,11 @@ pub fn time_posix_to_millis(TimePosix::Posix(millis): TimePosix) -> i64 {
     millis
 }
 
-pub fn time_posix_to_millis_i64(TimePosix::Posix(millis): TimePosix) -> i64 {
-    millis
-}
-
 pub fn time_to_adjusted_minutes(
     TimeZone::Zone(default_offset, eras): TimeZone,
     time: TimePosix,
 ) -> i64 {
-    time_to_adjusted_minutes_help(
-        default_offset,
-        time_posix_to_millis_i64(time) / 60000_i64,
-        eras,
-    )
+    time_to_adjusted_minutes_help(default_offset, time_posix_to_millis(time) / 60000_i64, eras)
 }
 
 pub fn time_to_adjusted_minutes_help(
@@ -37136,8 +37128,8 @@ pub fn time_to_adjusted_minutes_help(
     match eras {
         ListList::Empty => posix_minutes + default_offset,
         ListList::Cons(era, older_eras) => {
-            if (era.start as i64) < posix_minutes {
-                posix_minutes + era.offset as i64
+            if era.start < posix_minutes {
+                posix_minutes + era.offset
             } else {
                 time_to_adjusted_minutes_help(default_offset, posix_minutes, older_eras.clone())
             }
@@ -37177,7 +37169,7 @@ pub fn time_to_hour(zone: TimeZone, time: TimePosix) -> i64 {
 }
 
 pub fn time_to_millis(_: TimeZone, time: TimePosix) -> i64 {
-    time_posix_to_millis_i64(time) % 1000_i64
+    time_posix_to_millis(time) % 1000_i64
 }
 
 pub fn time_to_minute(zone: TimeZone, time: TimePosix) -> i64 {
@@ -37202,7 +37194,7 @@ pub fn time_to_month(zone: TimeZone, time: TimePosix) -> TimeMonth {
 }
 
 pub fn time_to_second(_: TimeZone, time: TimePosix) -> i64 {
-    (time_posix_to_millis_i64(time) / 1000_i64) % 60_i64
+    (time_posix_to_millis(time) / 1000_i64) % 60_i64
 }
 
 pub fn time_to_weekday(zone: TimeZone, time: TimePosix) -> TimeWeekday {
