@@ -10,7 +10,7 @@ declarations to rust.
 @docs RustStatement, RustExpression, RustPattern, RustType
 
 If you need more fine-grained helpers,
-[open an issue](https://github.com/lue-bird/elm-syntax-format/issues/new)
+[open an issue](https://github.com/lue-bird/elm-syntax-to-rust/issues/new)
 
 -}
 
