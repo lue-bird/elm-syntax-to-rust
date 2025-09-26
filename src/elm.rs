@@ -4900,8 +4900,8 @@ pub enum RandomSeed {
     Seed(i64, i64),
 }
 #[derive(Clone, Copy)]
-pub enum RandomGenerator<'a, A> {
-    Generator(&'a dyn Fn(RandomSeed) -> (A, RandomSeed)),
+pub struct RandomGenerator<'a, A> {
+    generate: &'a dyn Fn(RandomSeed) -> (A, RandomSeed),
 }
 
 pub const fn random_min_int() -> i64 {
@@ -4911,11 +4911,8 @@ pub const fn random_max_int() -> i64 {
     2147483647_i64
 }
 
-pub fn random_step<A>(
-    RandomGenerator::Generator(generator): RandomGenerator<A>,
-    seed: RandomSeed,
-) -> (A, RandomSeed) {
-    generator(seed)
+pub fn random_step<A>(generator: RandomGenerator<A>, seed: RandomSeed) -> (A, RandomSeed) {
+    (generator.generate)(seed)
 }
 pub fn random_peel(RandomSeed::Seed(state, _): RandomSeed) -> i64 {
     let word: i64 = bitwise_xor(
@@ -4941,138 +4938,157 @@ pub fn random_initial_seed(x: i64) -> RandomSeed {
 pub fn random_independent_seed<'a>(
     allocator: &'a bumpalo::Bump,
 ) -> RandomGenerator<'a, RandomSeed> {
-    RandomGenerator::Generator(alloc_shared(allocator, move |seed0: RandomSeed| {
-        fn make_independent_seed(state: i64, b: i64, c: i64) -> RandomSeed {
-            random_next(RandomSeed::Seed(
-                state,
-                bitwise_shift_right_zf_by(0_i64, bitwise_or(1_i64, bitwise_xor(b, c))),
-            ))
-        }
-        let gen_: RandomGenerator<'a, i64> = random_int(allocator, 0_i64, 4294967295_i64);
-        random_step(
-            random_map3(allocator, make_independent_seed, gen_, gen_, gen_),
-            seed0,
-        )
-    }))
+    RandomGenerator {
+        generate: alloc_shared(allocator, move |seed0: RandomSeed| {
+            fn make_independent_seed(state: i64, b: i64, c: i64) -> RandomSeed {
+                random_next(RandomSeed::Seed(
+                    state,
+                    bitwise_shift_right_zf_by(0_i64, bitwise_or(1_i64, bitwise_xor(b, c))),
+                ))
+            }
+            let gen_: RandomGenerator<'a, i64> = random_int(allocator, 0_i64, 4294967295_i64);
+            random_step(
+                random_map3(allocator, make_independent_seed, gen_, gen_, gen_),
+                seed0,
+            )
+        }),
+    }
 }
 
 pub fn random_constant<'a, A: Clone>(
     allocator: &'a bumpalo::Bump,
     value: A,
 ) -> RandomGenerator<'a, A> {
-    RandomGenerator::Generator(alloc_shared(allocator, move |seed: RandomSeed| {
-        (value.clone(), seed)
-    }))
+    RandomGenerator {
+        generate: alloc_shared(allocator, move |seed: RandomSeed| (value.clone(), seed)),
+    }
 }
 pub fn random_and_then<'a, A, B>(
     allocator: &'a bumpalo::Bump,
-    callback: impl Fn(A) -> RandomGenerator<'a, B> + 'a,
-    RandomGenerator::Generator(gen_a): RandomGenerator<'a, A>,
+    followup_generator: impl Fn(A) -> RandomGenerator<'a, B> + 'a,
+    generator: RandomGenerator<'a, A>,
 ) -> RandomGenerator<'a, B> {
-    RandomGenerator::Generator(alloc_shared(allocator, move |seed: RandomSeed| {
-        let (result, new_seed) = gen_a(seed);
-        let RandomGenerator::Generator(gen_b) = callback(result);
-        gen_b(new_seed)
-    }))
+    RandomGenerator {
+        generate: (alloc_shared(allocator, move |seed: RandomSeed| {
+            let (result, new_seed) = (generator.generate)(seed);
+            (followup_generator(result).generate)(new_seed)
+        })),
+    }
 }
 pub fn random_lazy<'a, A>(
     allocator: &'a bumpalo::Bump,
-    callback: impl Fn(()) -> RandomGenerator<'a, A> + 'a,
+    construct_generator: impl Fn(()) -> RandomGenerator<'a, A> + 'a,
 ) -> RandomGenerator<'a, A> {
-    RandomGenerator::Generator(alloc_shared(allocator, move |seed: RandomSeed| {
-        let RandomGenerator::Generator(gen_) = callback(());
-        gen_(seed)
-    }))
+    RandomGenerator {
+        generate: (alloc_shared(allocator, move |seed: RandomSeed| {
+            (construct_generator(()).generate)(seed)
+        })),
+    }
 }
 pub fn random_map<'a, A, B>(
     allocator: &'a bumpalo::Bump,
-    func: impl Fn(A) -> B + 'a,
-    RandomGenerator::Generator(gen_a): RandomGenerator<'a, A>,
+    value_change: impl Fn(A) -> B + 'a,
+    generator: RandomGenerator<'a, A>,
 ) -> RandomGenerator<'a, B> {
-    RandomGenerator::Generator(alloc_shared(allocator, {
-        move |seed0: RandomSeed| {
-            let (a, seed1) = gen_a(seed0);
-            (func(a), seed1)
-        }
-    }))
+    RandomGenerator {
+        generate: (alloc_shared(allocator, {
+            move |seed0: RandomSeed| {
+                let (a, seed1) = (generator.generate)(seed0);
+                (value_change(a), seed1)
+            }
+        })),
+    }
 }
 pub fn random_pair<'a, A, B>(
     allocator: &'a bumpalo::Bump,
-    gen_a: RandomGenerator<'a, A>,
-    gen_b: RandomGenerator<'a, B>,
+    first_generator: RandomGenerator<'a, A>,
+    second_generator: RandomGenerator<'a, B>,
 ) -> RandomGenerator<'a, (A, B)> {
-    random_map2(allocator, move |a: A, b: B| (a, b), gen_a, gen_b)
+    random_map2(
+        allocator,
+        move |a: A, b: B| (a, b),
+        first_generator,
+        second_generator,
+    )
 }
 pub fn random_map2<'a, A, B, C>(
     allocator: &'a bumpalo::Bump,
-    func: impl Fn(A, B) -> C + 'a,
-    RandomGenerator::Generator(gen_a): RandomGenerator<'a, A>,
-    RandomGenerator::Generator(gen_b): RandomGenerator<'a, B>,
+    combine: impl Fn(A, B) -> C + 'a,
+    a_generator: RandomGenerator<'a, A>,
+    b_generator: RandomGenerator<'a, B>,
 ) -> RandomGenerator<'a, C> {
-    RandomGenerator::Generator(alloc_shared(allocator, move |seed0: RandomSeed| {
-        let (a, seed1) = gen_a(seed0);
-        let (b, seed2) = gen_b(seed1);
-        (func(a, b), seed2)
-    }))
+    RandomGenerator {
+        generate: (alloc_shared(allocator, move |seed0: RandomSeed| {
+            let (a, seed1) = (a_generator.generate)(seed0);
+            let (b, seed2) = (b_generator.generate)(seed1);
+            (combine(a, b), seed2)
+        })),
+    }
 }
 pub fn random_map3<'a, A, B, C, D>(
     allocator: &'a bumpalo::Bump,
-    func: impl Fn(A, B, C) -> D + 'a,
-    RandomGenerator::Generator(gen_a): RandomGenerator<'a, A>,
-    RandomGenerator::Generator(gen_b): RandomGenerator<'a, B>,
-    RandomGenerator::Generator(gen_c): RandomGenerator<'a, C>,
+    combine: impl Fn(A, B, C) -> D + 'a,
+    a_generator: RandomGenerator<'a, A>,
+    b_generator: RandomGenerator<'a, B>,
+    c_generator: RandomGenerator<'a, C>,
 ) -> RandomGenerator<'a, D> {
-    RandomGenerator::Generator(alloc_shared(allocator, move |seed0: RandomSeed| {
-        let (a, seed1) = gen_a(seed0);
-        let (b, seed2) = gen_b(seed1);
-        let (c, seed3) = gen_c(seed2);
-        (func(a, b, c), seed3)
-    }))
+    RandomGenerator {
+        generate: (alloc_shared(allocator, move |seed0: RandomSeed| {
+            let (a, seed1) = (a_generator.generate)(seed0);
+            let (b, seed2) = (b_generator.generate)(seed1);
+            let (c, seed3) = (c_generator.generate)(seed2);
+            (combine(a, b, c), seed3)
+        })),
+    }
 }
 pub fn random_map4<'a, A, B, C, D, E>(
     allocator: &'a bumpalo::Bump,
-    func: impl Fn(A, B, C, D) -> E + 'a,
-    RandomGenerator::Generator(gen_a): RandomGenerator<'a, A>,
-    RandomGenerator::Generator(gen_b): RandomGenerator<'a, B>,
-    RandomGenerator::Generator(gen_c): RandomGenerator<'a, C>,
-    RandomGenerator::Generator(gen_d): RandomGenerator<'a, D>,
+    combine: impl Fn(A, B, C, D) -> E + 'a,
+    a_generator: RandomGenerator<'a, A>,
+    b_generator: RandomGenerator<'a, B>,
+    c_generator: RandomGenerator<'a, C>,
+    d_generator: RandomGenerator<'a, D>,
 ) -> RandomGenerator<'a, E> {
-    RandomGenerator::Generator(alloc_shared(allocator, move |seed0: RandomSeed| {
-        let (a, seed1) = gen_a(seed0);
-        let (b, seed2) = gen_b(seed1);
-        let (c, seed3) = gen_c(seed2);
-        let (d, seed4) = gen_d(seed3);
-        (func(a, b, c, d), seed4)
-    }))
+    RandomGenerator {
+        generate: (alloc_shared(allocator, move |seed0: RandomSeed| {
+            let (a, seed1) = (a_generator.generate)(seed0);
+            let (b, seed2) = (b_generator.generate)(seed1);
+            let (c, seed3) = (c_generator.generate)(seed2);
+            let (d, seed4) = (d_generator.generate)(seed3);
+            (combine(a, b, c, d), seed4)
+        })),
+    }
 }
 pub fn random_map5<'a, A, B, C, D, E, F>(
     allocator: &'a bumpalo::Bump,
-    func: impl Fn(A, B, C, D, E) -> F + 'a,
-    RandomGenerator::Generator(gen_a): RandomGenerator<'a, A>,
-    RandomGenerator::Generator(gen_b): RandomGenerator<'a, B>,
-    RandomGenerator::Generator(gen_c): RandomGenerator<'a, C>,
-    RandomGenerator::Generator(gen_d): RandomGenerator<'a, D>,
-    RandomGenerator::Generator(gen_e): RandomGenerator<'a, E>,
+    combine: impl Fn(A, B, C, D, E) -> F + 'a,
+    a_generator: RandomGenerator<'a, A>,
+    b_generator: RandomGenerator<'a, B>,
+    c_generator: RandomGenerator<'a, C>,
+    d_generator: RandomGenerator<'a, D>,
+    e_generator: RandomGenerator<'a, E>,
 ) -> RandomGenerator<'a, F> {
-    RandomGenerator::Generator(alloc_shared(allocator, move |seed0: RandomSeed| {
-        let (a, seed1) = gen_a(seed0);
-        let (b, seed2) = gen_b(seed1);
-        let (c, seed3) = gen_c(seed2);
-        let (d, seed4) = gen_d(seed3);
-        let (e, seed5) = gen_e(seed4);
-        (func(a, b, c, d, e), seed5)
-    }))
+    RandomGenerator {
+        generate: (alloc_shared(allocator, move |seed0: RandomSeed| {
+            let (a, seed1) = (a_generator.generate)(seed0);
+            let (b, seed2) = (b_generator.generate)(seed1);
+            let (c, seed3) = (c_generator.generate)(seed2);
+            let (d, seed4) = (d_generator.generate)(seed3);
+            let (e, seed5) = (e_generator.generate)(seed4);
+            (combine(a, b, c, d, e), seed5)
+        })),
+    }
 }
 
 pub fn random_uniform<'a, A: Clone>(
     allocator: &'a bumpalo::Bump,
-    value: A,
-    value_list: ListList<'a, A>,
+    first: A,
+    others: ListList<'a, A>,
 ) -> RandomGenerator<'a, A> {
     random_weighted(
         allocator,
-        (1_f64, value),
-        list_map(allocator, |v| (1_f64, v), value_list),
+        (1_f64, first),
+        list_map(allocator, |v| (1_f64, v), others),
     )
 }
 pub fn random_weighted<'a, A: Clone>(
@@ -5116,77 +5132,91 @@ pub fn random_get_by_weight<A: Clone>(
 }
 pub fn random_list<'a, A>(
     allocator: &'a bumpalo::Bump,
-    n: i64,
-    RandomGenerator::Generator(gen_): RandomGenerator<'a, A>,
+    length: i64,
+    element_generator: RandomGenerator<'a, A>,
 ) -> RandomGenerator<'a, ListList<'a, A>> {
-    RandomGenerator::Generator(alloc_shared(allocator, move |seed: RandomSeed| {
-        random_list_help(allocator, ListList::Empty, n, gen_, seed)
-    }))
+    RandomGenerator {
+        generate: (alloc_shared(allocator, move |seed: RandomSeed| {
+            random_list_into(
+                allocator,
+                ListList::Empty,
+                length,
+                element_generator.generate,
+                seed,
+            )
+        })),
+    }
 }
-pub fn random_list_help<'a, A>(
+pub fn random_list_into<'a, A>(
     allocator: &'a bumpalo::Bump,
-    rev_list: ListList<'a, A>,
-    n: i64,
-    gen_: impl Fn(RandomSeed) -> (A, RandomSeed) + 'a,
+    so_far_reverse: ListList<'a, A>,
+    length: i64,
+    element_generate: impl Fn(RandomSeed) -> (A, RandomSeed) + 'a,
     seed: RandomSeed,
 ) -> (ListList<'a, A>, RandomSeed) {
-    if n < 1_i64 {
-        (rev_list, seed)
+    if length < 1_i64 {
+        (so_far_reverse, seed)
     } else {
-        let (value, new_seed) = gen_(seed);
-        random_list_help(
+        let (value, new_seed) = element_generate(seed);
+        random_list_into(
             allocator,
-            list_cons(allocator, value, rev_list),
-            n - 1_i64,
-            gen_,
+            list_cons(allocator, value, so_far_reverse),
+            length - 1_i64,
+            element_generate,
             new_seed,
         )
     }
 }
 
 pub fn random_int<'a>(allocator: &'a bumpalo::Bump, a: i64, b: i64) -> RandomGenerator<'a, i64> {
-    RandomGenerator::Generator(alloc_shared(allocator, move |seed0: RandomSeed| {
-        let (lo, hi) = if a < b { (a, b) } else { (b, a) };
-        let range: i64 = (hi - lo) + 1_i64;
-        if bitwise_and(range - 1_i64, range) == 0_i64 {
-            (
-                bitwise_shift_right_zf_by(0_i64, bitwise_and(range - 1_i64, random_peel(seed0)))
-                    + lo,
-                random_next(seed0),
-            )
-        } else {
-            let threshold: i64 = bitwise_shift_right_zf_by(
-                0_i64,
-                basics_remainder_by(range, bitwise_shift_right_zf_by(0_i64, -range)),
-            );
-            fn account_for_bias(
-                lo: i64,
-                range: i64,
-                threshold: i64,
-                seed: RandomSeed,
-            ) -> (i64, RandomSeed) {
-                let x: i64 = random_peel(seed);
-                let seed_n: RandomSeed = random_next(seed);
-                if x < threshold {
-                    account_for_bias(lo, range, threshold, seed_n)
-                } else {
-                    (basics_remainder_by(range, x) + lo, seed_n)
+    RandomGenerator {
+        generate: (alloc_shared(allocator, move |seed0: RandomSeed| {
+            let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+            let range: i64 = (hi - lo) + 1_i64;
+            if bitwise_and(range - 1_i64, range) == 0_i64 {
+                (
+                    bitwise_shift_right_zf_by(
+                        0_i64,
+                        bitwise_and(range - 1_i64, random_peel(seed0)),
+                    ) + lo,
+                    random_next(seed0),
+                )
+            } else {
+                let threshold: i64 = bitwise_shift_right_zf_by(
+                    0_i64,
+                    basics_remainder_by(range, bitwise_shift_right_zf_by(0_i64, -range)),
+                );
+                fn account_for_bias(
+                    lo: i64,
+                    range: i64,
+                    threshold: i64,
+                    seed: RandomSeed,
+                ) -> (i64, RandomSeed) {
+                    let x: i64 = random_peel(seed);
+                    let seed_n: RandomSeed = random_next(seed);
+                    if x < threshold {
+                        account_for_bias(lo, range, threshold, seed_n)
+                    } else {
+                        (basics_remainder_by(range, x) + lo, seed_n)
+                    }
                 }
+                account_for_bias(lo, range, threshold, seed0)
             }
-            account_for_bias(lo, range, threshold, seed0)
-        }
-    }))
+        })),
+    }
 }
 pub fn random_float<'a>(allocator: &'a bumpalo::Bump, a: f64, b: f64) -> RandomGenerator<'a, f64> {
-    RandomGenerator::Generator(alloc_shared(allocator, move |seed0: RandomSeed| {
-        let seed1: RandomSeed = random_next(seed0);
-        let range: f64 = f64::abs(b - a);
-        let n1: i64 = random_peel(seed1);
-        let n0: i64 = random_peel(seed0);
-        let lo: f64 = (bitwise_and(134217727_i64, n1)) as f64;
-        let hi: f64 = (bitwise_and(67108863_i64, n0)) as f64;
-        let val: f64 = ((hi * 134217728_f64) + lo) / 9007199254740992_f64;
-        let scaled: f64 = (val * range) + a;
-        (scaled, random_next(seed1))
-    }))
+    RandomGenerator {
+        generate: (alloc_shared(allocator, move |seed0: RandomSeed| {
+            let seed1: RandomSeed = random_next(seed0);
+            let range: f64 = f64::abs(b - a);
+            let n1: i64 = random_peel(seed1);
+            let n0: i64 = random_peel(seed0);
+            let lo: f64 = (bitwise_and(134217727_i64, n1)) as f64;
+            let hi: f64 = (bitwise_and(67108863_i64, n0)) as f64;
+            let val: f64 = ((hi * 134217728_f64) + lo) / 9007199254740992_f64;
+            let scaled: f64 = (val * range) + a;
+            (scaled, random_next(seed1))
+        })),
+    }
 }
