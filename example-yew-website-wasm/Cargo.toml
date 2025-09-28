@@ -1,5 +1,5 @@
 [package]
-name = "example-website-wasm"
+name = "example-yew-website-wasm"
 edition = "2024"
 [dependencies]
 bumpalo = "3.19.0"
