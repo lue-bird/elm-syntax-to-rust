@@ -13,4 +13,5 @@ zombie
 # for experimentation
 /src/main.rs
 example-experiments
+example-transpile-itself
 perf.data
