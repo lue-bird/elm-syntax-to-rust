@@ -3372,21 +3372,21 @@ referencedPattern context patternInferred =
             if context.isRefRef then
                 { pattern = fullRustPattern
                 , guardConditions = aliasedRustPattern.guardConditions
+                , bindingsToDerefClone = aliasedRustPattern.bindingsToDerefClone
                 , bindingsToDerefDerefClone =
-                    aliasedRustPattern.bindingsToDerefDerefClone
-                , bindingsToDerefClone =
                     { name = dereferencedAliasBindingName, type_ = rustType }
-                        :: aliasedRustPattern.bindingsToDerefClone
+                        :: aliasedRustPattern.bindingsToDerefDerefClone
                 }
 
             else
                 -- is not ref ref
                 { pattern = fullRustPattern
                 , guardConditions = aliasedRustPattern.guardConditions
-                , bindingsToDerefClone = aliasedRustPattern.bindingsToDerefClone
                 , bindingsToDerefDerefClone =
+                    aliasedRustPattern.bindingsToDerefDerefClone
+                , bindingsToDerefClone =
                     { name = dereferencedAliasBindingName, type_ = rustType }
-                        :: aliasedRustPattern.bindingsToDerefDerefClone
+                        :: aliasedRustPattern.bindingsToDerefClone
                 }
 
 
