@@ -33224,7 +33224,7 @@ defaultDeclarations : String
 defaultDeclarations =
     -- update with `node src/updateDefaultDeclarations.js`
     """
-/* The json parser (primarity `JsonParser`)
+/* The json parser (primarily `JsonParser`)
 is modified from https://github.com/rhysd/tinyjson
 which is licensed under:
 
