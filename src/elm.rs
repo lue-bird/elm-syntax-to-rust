@@ -4198,9 +4198,7 @@ pub fn time_to_year(zone: TimeZone, time: TimePosix) -> i64 {
     time_to_civil(time_to_adjusted_minutes(zone, time)).year
 }
 
-pub fn time_utc<'a>() -> TimeZone<'a> {
-    TimeZone::Zone(0_i64, ListList::Empty)
-}
+pub const time_utc: TimeZone<'static> = TimeZone::Zone(0_i64, ListList::Empty);
 
 pub fn elm_kernel_parser_is_sub_string(
     small_string: StringString,
@@ -4904,12 +4902,8 @@ pub struct RandomGenerator<'a, A> {
     generate: &'a dyn Fn(RandomSeed) -> (A, RandomSeed),
 }
 
-pub const fn random_min_int() -> i64 {
-    -2147483648_i64
-}
-pub const fn random_max_int() -> i64 {
-    2147483647_i64
-}
+pub const random_min_int: i64 = -2147483648_i64;
+pub const random_max_int: i64 = 2147483647_i64;
 
 pub fn random_step<A>(generator: RandomGenerator<A>, seed: RandomSeed) -> (A, RandomSeed) {
     (generator.generate)(seed)

@@ -4463,16 +4463,28 @@ justRustReferenceIdentity :
         { qualification : List String
         , name : String
         , requiresAllocator : Bool
+        , isValue : Bool
         }
 justRustReferenceIdentity =
     Just
         { qualification = [ "std", "convert" ]
         , name = "identity"
         , requiresAllocator = False
+        , isValue = False
         }
 
 
 {-| Use `typeConstructReferenceToCoreRust` for types
+
+TODO change to
+
+
+    { qualification : List String
+    , name : String
+    , kind : RustReferenceKindValue
+           | RustReferenceKindFunction {requiresAllocator : Bool}
+    }
+
 -}
 referenceToCoreRust :
     { moduleOrigin : String
@@ -4484,6 +4496,7 @@ referenceToCoreRust :
             { qualification : List String
             , name : String
             , requiresAllocator : Bool
+            , isValue : Bool
             }
 referenceToCoreRust reference =
     case reference.moduleOrigin of
@@ -4497,6 +4510,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "basics_always"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "compare" ->
@@ -4504,6 +4518,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "basics_compare"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "max" ->
@@ -4511,6 +4526,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "basics_max"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "min" ->
@@ -4518,6 +4534,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "basics_min"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "not" ->
@@ -4525,6 +4542,7 @@ referenceToCoreRust reference =
                         { qualification = [ "std", "ops", "Not" ]
                         , name = "not"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "xor" ->
@@ -4532,6 +4550,7 @@ referenceToCoreRust reference =
                         { qualification = [ "std", "ops", "BitXor" ]
                         , name = "bitxor"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "e" ->
@@ -4539,6 +4558,7 @@ referenceToCoreRust reference =
                         { qualification = [ "std", "f64", "consts" ]
                         , name = "E"
                         , requiresAllocator = False
+                        , isValue = True
                         }
 
                 "pi" ->
@@ -4546,6 +4566,7 @@ referenceToCoreRust reference =
                         { qualification = [ "std", "f64", "consts" ]
                         , name = "PI"
                         , requiresAllocator = False
+                        , isValue = True
                         }
 
                 "ceiling" ->
@@ -4553,6 +4574,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "basics_ceiling"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "floor" ->
@@ -4560,6 +4582,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "basics_floor"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "round" ->
@@ -4567,6 +4590,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "basics_round"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "truncate" ->
@@ -4574,6 +4598,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "basics_truncate"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "negate" ->
@@ -4581,6 +4606,7 @@ referenceToCoreRust reference =
                         { qualification = [ "std", "ops", "Neg" ]
                         , name = "neg"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "abs" ->
@@ -4598,12 +4624,14 @@ referenceToCoreRust reference =
                                 { qualification = [ "f64" ]
                                 , name = "abs"
                                 , requiresAllocator = False
+                                , isValue = False
                                 }
 
                             IntNotFloat ->
                                 { qualification = [ "i64" ]
                                 , name = "abs"
                                 , requiresAllocator = False
+                                , isValue = False
                                 }
                         )
 
@@ -4612,6 +4640,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "basics_to_float"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "isNaN" ->
@@ -4619,6 +4648,7 @@ referenceToCoreRust reference =
                         { qualification = [ "f64" ]
                         , name = "is_nan"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "isInfinite" ->
@@ -4626,6 +4656,7 @@ referenceToCoreRust reference =
                         { qualification = [ "f64" ]
                         , name = "is_infinite"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "remainderBy" ->
@@ -4633,6 +4664,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "basics_remainder_by"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "modBy" ->
@@ -4640,6 +4672,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "basics_mod_by"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "sin" ->
@@ -4647,6 +4680,7 @@ referenceToCoreRust reference =
                         { qualification = [ "f64" ]
                         , name = "sin"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "cos" ->
@@ -4654,6 +4688,7 @@ referenceToCoreRust reference =
                         { qualification = [ "f64" ]
                         , name = "cos"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "tan" ->
@@ -4661,6 +4696,7 @@ referenceToCoreRust reference =
                         { qualification = [ "f64" ]
                         , name = "tan"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "asin" ->
@@ -4668,6 +4704,7 @@ referenceToCoreRust reference =
                         { qualification = [ "f64" ]
                         , name = "asin"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "acos" ->
@@ -4675,6 +4712,7 @@ referenceToCoreRust reference =
                         { qualification = [ "f64" ]
                         , name = "acos"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "atan" ->
@@ -4682,6 +4720,7 @@ referenceToCoreRust reference =
                         { qualification = [ "f64" ]
                         , name = "atan"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "atan2" ->
@@ -4689,6 +4728,7 @@ referenceToCoreRust reference =
                         { qualification = [ "f64" ]
                         , name = "atan2"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "sqrt" ->
@@ -4696,6 +4736,7 @@ referenceToCoreRust reference =
                         { qualification = [ "f64" ]
                         , name = "sqrt"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "logBase" ->
@@ -4703,6 +4744,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "basics_log_base"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "radians" ->
@@ -4713,6 +4755,7 @@ referenceToCoreRust reference =
                         { qualification = [ "f64" ]
                         , name = "to_radians"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "turns" ->
@@ -4720,6 +4763,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "basics_turns"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "fromPolar" ->
@@ -4727,6 +4771,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "basics_from_polar"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "toPolar" ->
@@ -4734,6 +4779,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "basics_to_polar"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "clamp" ->
@@ -4751,12 +4797,14 @@ referenceToCoreRust reference =
                                 { qualification = []
                                 , name = "basics_clamp_float"
                                 , requiresAllocator = False
+                                , isValue = False
                                 }
 
                             IntNotFloat ->
                                 { qualification = []
                                 , name = "basics_clamp_int"
                                 , requiresAllocator = False
+                                , isValue = False
                                 }
                         )
 
@@ -4765,6 +4813,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "basics_never"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 _ ->
@@ -4777,6 +4826,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "bitwise_complement"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "and" ->
@@ -4784,6 +4834,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "bitwise_and"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "or" ->
@@ -4791,6 +4842,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "bitwise_or"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "xor" ->
@@ -4798,6 +4850,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "bitwise_xor"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "shiftLeftBy" ->
@@ -4805,6 +4858,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "bitwise_shift_left_by"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "shiftRightBy" ->
@@ -4812,6 +4866,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "bitwise_shift_right_by"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "shiftRightZfBy" ->
@@ -4819,6 +4874,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "bitwise_shift_right_zf_by"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 _ ->
@@ -4831,6 +4887,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_is_empty"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "length" ->
@@ -4838,6 +4895,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_length"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "append" ->
@@ -4845,6 +4903,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_append"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "concat" ->
@@ -4852,6 +4911,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_concat"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "trim" ->
@@ -4859,6 +4919,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_trim"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "trimLeft" ->
@@ -4866,6 +4927,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_trim_left"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "trimRight" ->
@@ -4873,6 +4935,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_trim_right"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "left" ->
@@ -4880,6 +4943,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_left"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "right" ->
@@ -4887,6 +4951,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_right"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "dropLeft" ->
@@ -4894,6 +4959,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_drop_left"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "dropRight" ->
@@ -4901,6 +4967,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_drop_right"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "pad" ->
@@ -4908,6 +4975,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_pad"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "padLeft" ->
@@ -4915,6 +4983,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_pad_left"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "padRight" ->
@@ -4922,6 +4991,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_pad_right"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "replace" ->
@@ -4929,6 +4999,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_replace"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "reverse" ->
@@ -4936,6 +5007,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_reverse"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "fromList" ->
@@ -4943,6 +5015,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_from_list"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "toList" ->
@@ -4950,6 +5023,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_to_list"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "foldl" ->
@@ -4957,6 +5031,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_foldl"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "foldr" ->
@@ -4964,6 +5039,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_foldr"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "join" ->
@@ -4971,6 +5047,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_join"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "filter" ->
@@ -4978,6 +5055,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_filter"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "any" ->
@@ -4985,6 +5063,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_any"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "all" ->
@@ -4992,6 +5071,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_all"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "map" ->
@@ -4999,6 +5079,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_map"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "repeat" ->
@@ -5006,6 +5087,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_repeat"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "split" ->
@@ -5013,6 +5095,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_split"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "lines" ->
@@ -5020,6 +5103,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_lines"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "words" ->
@@ -5027,6 +5111,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_words"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "startsWith" ->
@@ -5034,6 +5119,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_starts_with"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "endsWith" ->
@@ -5041,6 +5127,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_ends_with"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "toInt" ->
@@ -5048,6 +5135,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_to_int"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "toFloat" ->
@@ -5055,6 +5143,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_to_float"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "fromInt" ->
@@ -5062,6 +5151,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_from_int"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "fromFloat" ->
@@ -5069,6 +5159,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_from_float"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "contains" ->
@@ -5076,6 +5167,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_contains"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "fromChar" ->
@@ -5083,6 +5175,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_from_char"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "cons" ->
@@ -5090,6 +5183,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_cons"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "uncons" ->
@@ -5097,6 +5191,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_uncons"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "slice" ->
@@ -5104,6 +5199,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_slice"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "toLower" ->
@@ -5111,6 +5207,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_to_lower"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "toUpper" ->
@@ -5118,6 +5215,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "string_to_upper"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 _ ->
@@ -5130,6 +5228,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "char_to_code"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "fromCode" ->
@@ -5137,6 +5236,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "char_from_code"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "toLower" ->
@@ -5144,6 +5244,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "char_to_lower"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "toUpper" ->
@@ -5151,6 +5252,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "char_to_upper"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "toLocaleLower" ->
@@ -5158,6 +5260,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "char_to_lower"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "toLocaleUpper" ->
@@ -5165,6 +5268,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "char_to_upper"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "isLower" ->
@@ -5172,6 +5276,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "char_is_lower"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "isUpper" ->
@@ -5179,6 +5284,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "char_is_upper"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "isHexDigit" ->
@@ -5186,6 +5292,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "char_is_hex_digit"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "isOctDigit" ->
@@ -5193,6 +5300,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "char_is_oct_digit"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "isDigit" ->
@@ -5200,6 +5308,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "char_is_digit"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "isAlpha" ->
@@ -5207,6 +5316,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "char_is_alpha"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "isAlphaNum" ->
@@ -5214,6 +5324,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "char_is_alpha_num"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 _ ->
@@ -5226,6 +5337,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_singleton"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "isEmpty" ->
@@ -5233,6 +5345,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_is_empty"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "length" ->
@@ -5240,6 +5353,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_length"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "member" ->
@@ -5247,6 +5361,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_member"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "minimum" ->
@@ -5254,6 +5369,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_minimum"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "maximum" ->
@@ -5261,6 +5377,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_maximum"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "sum" ->
@@ -5278,12 +5395,14 @@ referenceToCoreRust reference =
                                 { qualification = []
                                 , name = "list_sum_float"
                                 , requiresAllocator = False
+                                , isValue = False
                                 }
 
                             IntNotFloat ->
                                 { qualification = []
                                 , name = "list_sum_int"
                                 , requiresAllocator = False
+                                , isValue = False
                                 }
                         )
 
@@ -5302,12 +5421,14 @@ referenceToCoreRust reference =
                                 { qualification = []
                                 , name = "list_product_float"
                                 , requiresAllocator = False
+                                , isValue = False
                                 }
 
                             IntNotFloat ->
                                 { qualification = []
                                 , name = "list_product_int"
                                 , requiresAllocator = False
+                                , isValue = False
                                 }
                         )
 
@@ -5316,6 +5437,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_append"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "concat" ->
@@ -5323,6 +5445,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_concat"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "reverse" ->
@@ -5330,6 +5453,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_reverse"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "repeat" ->
@@ -5337,6 +5461,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_repeat"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "head" ->
@@ -5344,6 +5469,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_head"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "tail" ->
@@ -5351,6 +5477,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_tail"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "all" ->
@@ -5358,6 +5485,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_all"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "any" ->
@@ -5365,6 +5493,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_any"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "filter" ->
@@ -5372,6 +5501,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_filter"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "filterMap" ->
@@ -5379,6 +5509,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_filter_map"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "map" ->
@@ -5386,6 +5517,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_map"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "indexedMap" ->
@@ -5393,6 +5525,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_indexed_map"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "map2" ->
@@ -5400,6 +5533,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_map2"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "zip" ->
@@ -5407,6 +5541,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_zip"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "map3" ->
@@ -5414,6 +5549,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_map3"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "map4" ->
@@ -5421,6 +5557,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_map4"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "map5" ->
@@ -5428,6 +5565,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_map5"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "unzip" ->
@@ -5435,6 +5573,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_unzip"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "concatMap" ->
@@ -5442,6 +5581,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_concat_map"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "sort" ->
@@ -5449,6 +5589,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_sort"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "sortBy" ->
@@ -5456,6 +5597,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_sort_by"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "sortWith" ->
@@ -5463,6 +5605,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_sort_with"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "range" ->
@@ -5470,6 +5613,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_range"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "take" ->
@@ -5477,6 +5621,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_take"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "drop" ->
@@ -5484,6 +5629,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_drop"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "intersperse" ->
@@ -5491,6 +5637,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_intersperse"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "foldl" ->
@@ -5498,6 +5645,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_foldl"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "foldr" ->
@@ -5505,6 +5653,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "list_foldr"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 _ ->
@@ -5517,6 +5666,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "maybe_with_default"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "map" ->
@@ -5524,6 +5674,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "maybe_map"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "map2" ->
@@ -5531,6 +5682,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "maybe_map2"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "map3" ->
@@ -5538,6 +5690,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "maybe_map3"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "map4" ->
@@ -5545,6 +5698,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "maybe_map4"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "map5" ->
@@ -5552,6 +5706,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "maybe_map5"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "andThen" ->
@@ -5559,6 +5714,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "maybe_and_then"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 _ ->
@@ -5571,6 +5727,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "result_map"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "map2" ->
@@ -5578,6 +5735,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "result_map2"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "map3" ->
@@ -5585,6 +5743,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "result_map3"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "map4" ->
@@ -5592,6 +5751,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "result_map4"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "map5" ->
@@ -5599,6 +5759,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "result_map5"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "andThen" ->
@@ -5606,6 +5767,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "result_and_then"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "withDefault" ->
@@ -5613,6 +5775,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "result_with_default"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "toMaybe" ->
@@ -5620,6 +5783,7 @@ referenceToCoreRust reference =
                         { qualification = [ "Result" ]
                         , name = "ok"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "fromMaybe" ->
@@ -5627,6 +5791,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "result_from_maybe"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "mapError" ->
@@ -5634,6 +5799,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "result_map_error"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 _ ->
@@ -5646,6 +5812,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "array_is_empty"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "length" ->
@@ -5653,6 +5820,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "array_length"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "get" ->
@@ -5660,6 +5828,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "array_get"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "empty" ->
@@ -5667,6 +5836,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "array_empty"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "singleton" ->
@@ -5674,6 +5844,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "array_singleton"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "initialize" ->
@@ -5681,6 +5852,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "array_initialize"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "repeat" ->
@@ -5688,6 +5860,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "array_repeat"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "fromList" ->
@@ -5695,6 +5868,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "array_from_list"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "reverse" ->
@@ -5702,6 +5876,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "array_reverse"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "filter" ->
@@ -5709,6 +5884,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "array_filter"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "push" ->
@@ -5716,6 +5892,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "array_push"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "set" ->
@@ -5723,6 +5900,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "array_set"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "slice" ->
@@ -5730,6 +5908,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "array_slice"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "map" ->
@@ -5737,6 +5916,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "array_map"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "indexedMap" ->
@@ -5744,6 +5924,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "array_indexed_map"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "append" ->
@@ -5751,6 +5932,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "array_append"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "toList" ->
@@ -5758,6 +5940,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "array_to_list"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "toIndexedList" ->
@@ -5765,6 +5948,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "array_to_indexed_list"
                         , requiresAllocator = True
+                        , isValue = False
                         }
 
                 "foldl" ->
@@ -5772,6 +5956,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "array_foldl"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 "foldr" ->
@@ -5779,6 +5964,7 @@ referenceToCoreRust reference =
                         { qualification = []
                         , name = "array_foldr"
                         , requiresAllocator = False
+                        , isValue = False
                         }
 
                 _ ->
@@ -5787,70 +5973,70 @@ referenceToCoreRust reference =
         "Dict" ->
             case reference.name of
                 "size" ->
-                    Just { qualification = [], name = "dict_size", requiresAllocator = False }
+                    Just { qualification = [], name = "dict_size", requiresAllocator = False, isValue = False }
 
                 "empty" ->
-                    Just { qualification = [], name = "dict_empty", requiresAllocator = False }
+                    Just { qualification = [], name = "dict_empty", requiresAllocator = False, isValue = False }
 
                 "singleton" ->
-                    Just { qualification = [], name = "dict_singleton", requiresAllocator = False }
+                    Just { qualification = [], name = "dict_singleton", requiresAllocator = False, isValue = False }
 
                 "fromList" ->
-                    Just { qualification = [], name = "dict_from_list", requiresAllocator = False }
+                    Just { qualification = [], name = "dict_from_list", requiresAllocator = False, isValue = False }
 
                 "toList" ->
-                    Just { qualification = [], name = "dict_to_list", requiresAllocator = True }
+                    Just { qualification = [], name = "dict_to_list", requiresAllocator = True, isValue = False }
 
                 "keys" ->
-                    Just { qualification = [], name = "dict_keys", requiresAllocator = True }
+                    Just { qualification = [], name = "dict_keys", requiresAllocator = True, isValue = False }
 
                 "values" ->
-                    Just { qualification = [], name = "dict_values", requiresAllocator = True }
+                    Just { qualification = [], name = "dict_values", requiresAllocator = True, isValue = False }
 
                 "isEmpty" ->
-                    Just { qualification = [], name = "dict_is_empty", requiresAllocator = False }
+                    Just { qualification = [], name = "dict_is_empty", requiresAllocator = False, isValue = False }
 
                 "map" ->
-                    Just { qualification = [], name = "dict_map", requiresAllocator = False }
+                    Just { qualification = [], name = "dict_map", requiresAllocator = False, isValue = False }
 
                 "partition" ->
-                    Just { qualification = [], name = "dict_partition", requiresAllocator = False }
+                    Just { qualification = [], name = "dict_partition", requiresAllocator = False, isValue = False }
 
                 "foldl" ->
-                    Just { qualification = [], name = "dict_foldl", requiresAllocator = False }
+                    Just { qualification = [], name = "dict_foldl", requiresAllocator = False, isValue = False }
 
                 "foldr" ->
-                    Just { qualification = [], name = "dict_foldr", requiresAllocator = False }
+                    Just { qualification = [], name = "dict_foldr", requiresAllocator = False, isValue = False }
 
                 "filter" ->
-                    Just { qualification = [], name = "dict_filter", requiresAllocator = False }
+                    Just { qualification = [], name = "dict_filter", requiresAllocator = False, isValue = False }
 
                 "get" ->
-                    Just { qualification = [], name = "dict_get", requiresAllocator = False }
+                    Just { qualification = [], name = "dict_get", requiresAllocator = False, isValue = False }
 
                 "member" ->
-                    Just { qualification = [], name = "dict_member", requiresAllocator = False }
+                    Just { qualification = [], name = "dict_member", requiresAllocator = False, isValue = False }
 
                 "insert" ->
-                    Just { qualification = [], name = "dict_insert", requiresAllocator = False }
+                    Just { qualification = [], name = "dict_insert", requiresAllocator = False, isValue = False }
 
                 "update" ->
-                    Just { qualification = [], name = "dict_update", requiresAllocator = False }
+                    Just { qualification = [], name = "dict_update", requiresAllocator = False, isValue = False }
 
                 "remove" ->
-                    Just { qualification = [], name = "dict_remove", requiresAllocator = False }
+                    Just { qualification = [], name = "dict_remove", requiresAllocator = False, isValue = False }
 
                 "union" ->
-                    Just { qualification = [], name = "dict_union", requiresAllocator = False }
+                    Just { qualification = [], name = "dict_union", requiresAllocator = False, isValue = False }
 
                 "diff" ->
-                    Just { qualification = [], name = "dict_diff", requiresAllocator = False }
+                    Just { qualification = [], name = "dict_diff", requiresAllocator = False, isValue = False }
 
                 "intersect" ->
-                    Just { qualification = [], name = "dict_intersect", requiresAllocator = False }
+                    Just { qualification = [], name = "dict_intersect", requiresAllocator = False, isValue = False }
 
                 "merge" ->
-                    Just { qualification = [], name = "dict_merge", requiresAllocator = False }
+                    Just { qualification = [], name = "dict_merge", requiresAllocator = False, isValue = False }
 
                 _ ->
                     Nothing
@@ -5858,55 +6044,55 @@ referenceToCoreRust reference =
         "Set" ->
             case reference.name of
                 "size" ->
-                    Just { qualification = [], name = "set_size", requiresAllocator = False }
+                    Just { qualification = [], name = "set_size", requiresAllocator = False, isValue = False }
 
                 "empty" ->
-                    Just { qualification = [], name = "set_empty", requiresAllocator = False }
+                    Just { qualification = [], name = "set_empty", requiresAllocator = False, isValue = False }
 
                 "singleton" ->
-                    Just { qualification = [], name = "set_singleton", requiresAllocator = False }
+                    Just { qualification = [], name = "set_singleton", requiresAllocator = False, isValue = False }
 
                 "fromList" ->
-                    Just { qualification = [], name = "set_from_list", requiresAllocator = False }
+                    Just { qualification = [], name = "set_from_list", requiresAllocator = False, isValue = False }
 
                 "toList" ->
-                    Just { qualification = [], name = "set_to_list", requiresAllocator = True }
+                    Just { qualification = [], name = "set_to_list", requiresAllocator = True, isValue = False }
 
                 "isEmpty" ->
-                    Just { qualification = [], name = "set_is_empty", requiresAllocator = False }
+                    Just { qualification = [], name = "set_is_empty", requiresAllocator = False, isValue = False }
 
                 "insert" ->
-                    Just { qualification = [], name = "set_insert", requiresAllocator = False }
+                    Just { qualification = [], name = "set_insert", requiresAllocator = False, isValue = False }
 
                 "partition" ->
-                    Just { qualification = [], name = "set_partition", requiresAllocator = False }
+                    Just { qualification = [], name = "set_partition", requiresAllocator = False, isValue = False }
 
                 "foldl" ->
-                    Just { qualification = [], name = "set_foldl", requiresAllocator = False }
+                    Just { qualification = [], name = "set_foldl", requiresAllocator = False, isValue = False }
 
                 "foldr" ->
-                    Just { qualification = [], name = "set_foldr", requiresAllocator = False }
+                    Just { qualification = [], name = "set_foldr", requiresAllocator = False, isValue = False }
 
                 "map" ->
-                    Just { qualification = [], name = "set_map", requiresAllocator = False }
+                    Just { qualification = [], name = "set_map", requiresAllocator = False, isValue = False }
 
                 "filter" ->
-                    Just { qualification = [], name = "set_filter", requiresAllocator = False }
+                    Just { qualification = [], name = "set_filter", requiresAllocator = False, isValue = False }
 
                 "member" ->
-                    Just { qualification = [], name = "set_member", requiresAllocator = False }
+                    Just { qualification = [], name = "set_member", requiresAllocator = False, isValue = False }
 
                 "remove" ->
-                    Just { qualification = [], name = "set_remove", requiresAllocator = False }
+                    Just { qualification = [], name = "set_remove", requiresAllocator = False, isValue = False }
 
                 "union" ->
-                    Just { qualification = [], name = "set_union", requiresAllocator = False }
+                    Just { qualification = [], name = "set_union", requiresAllocator = False, isValue = False }
 
                 "diff" ->
-                    Just { qualification = [], name = "set_diff", requiresAllocator = False }
+                    Just { qualification = [], name = "set_diff", requiresAllocator = False, isValue = False }
 
                 "intersect" ->
-                    Just { qualification = [], name = "set_intersect", requiresAllocator = False }
+                    Just { qualification = [], name = "set_intersect", requiresAllocator = False, isValue = False }
 
                 _ ->
                     Nothing
@@ -5914,13 +6100,13 @@ referenceToCoreRust reference =
         "Debug" ->
             case reference.name of
                 "log" ->
-                    Just { qualification = [], name = "debug_log", requiresAllocator = False }
+                    Just { qualification = [], name = "debug_log", requiresAllocator = False, isValue = False }
 
                 "toString" ->
-                    Just { qualification = [], name = "debug_to_string", requiresAllocator = True }
+                    Just { qualification = [], name = "debug_to_string", requiresAllocator = True, isValue = False }
 
                 "todo" ->
-                    Just { qualification = [], name = "debug_todo", requiresAllocator = False }
+                    Just { qualification = [], name = "debug_todo", requiresAllocator = False, isValue = False }
 
                 _ ->
                     Nothing
@@ -5928,37 +6114,37 @@ referenceToCoreRust reference =
         "Json.Encode" ->
             case reference.name of
                 "encode" ->
-                    Just { qualification = [], name = "json_encode_encode", requiresAllocator = True }
+                    Just { qualification = [], name = "json_encode_encode", requiresAllocator = True, isValue = False }
 
                 "null" ->
-                    Just { qualification = [], name = "json_encode_null", requiresAllocator = False }
+                    Just { qualification = [], name = "json_encode_null", requiresAllocator = False, isValue = False }
 
                 "bool" ->
-                    Just { qualification = [], name = "json_encode_bool", requiresAllocator = False }
+                    Just { qualification = [], name = "json_encode_bool", requiresAllocator = False, isValue = False }
 
                 "string" ->
-                    Just { qualification = [], name = "json_encode_string", requiresAllocator = True }
+                    Just { qualification = [], name = "json_encode_string", requiresAllocator = True, isValue = False }
 
                 "int" ->
-                    Just { qualification = [], name = "json_encode_int", requiresAllocator = False }
+                    Just { qualification = [], name = "json_encode_int", requiresAllocator = False, isValue = False }
 
                 "float" ->
-                    Just { qualification = [], name = "json_encode_float", requiresAllocator = False }
+                    Just { qualification = [], name = "json_encode_float", requiresAllocator = False, isValue = False }
 
                 "list" ->
-                    Just { qualification = [], name = "json_encode_list", requiresAllocator = True }
+                    Just { qualification = [], name = "json_encode_list", requiresAllocator = True, isValue = False }
 
                 "array" ->
-                    Just { qualification = [], name = "json_encode_array", requiresAllocator = True }
+                    Just { qualification = [], name = "json_encode_array", requiresAllocator = True, isValue = False }
 
                 "set" ->
-                    Just { qualification = [], name = "json_encode_set", requiresAllocator = True }
+                    Just { qualification = [], name = "json_encode_set", requiresAllocator = True, isValue = False }
 
                 "object" ->
-                    Just { qualification = [], name = "json_encode_object", requiresAllocator = True }
+                    Just { qualification = [], name = "json_encode_object", requiresAllocator = True, isValue = False }
 
                 "dict" ->
-                    Just { qualification = [], name = "json_encode_dict", requiresAllocator = True }
+                    Just { qualification = [], name = "json_encode_dict", requiresAllocator = True, isValue = False }
 
                 _ ->
                     Nothing
@@ -5966,100 +6152,100 @@ referenceToCoreRust reference =
         "Json.Decode" ->
             case reference.name of
                 "string" ->
-                    Just { qualification = [], name = "json_decode_string", requiresAllocator = False }
+                    Just { qualification = [], name = "json_decode_string", requiresAllocator = False, isValue = False }
 
                 "bool" ->
-                    Just { qualification = [], name = "json_decode_bool", requiresAllocator = False }
+                    Just { qualification = [], name = "json_decode_bool", requiresAllocator = False, isValue = False }
 
                 "int" ->
-                    Just { qualification = [], name = "json_decode_int", requiresAllocator = False }
+                    Just { qualification = [], name = "json_decode_int", requiresAllocator = False, isValue = False }
 
                 "float" ->
-                    Just { qualification = [], name = "json_decode_float", requiresAllocator = False }
+                    Just { qualification = [], name = "json_decode_float", requiresAllocator = False, isValue = False }
 
                 "nullable" ->
-                    Just { qualification = [], name = "json_decode_nullable", requiresAllocator = True }
+                    Just { qualification = [], name = "json_decode_nullable", requiresAllocator = True, isValue = False }
 
                 "list" ->
-                    Just { qualification = [], name = "json_decode_list", requiresAllocator = True }
+                    Just { qualification = [], name = "json_decode_list", requiresAllocator = True, isValue = False }
 
                 "array" ->
-                    Just { qualification = [], name = "json_decode_array", requiresAllocator = True }
+                    Just { qualification = [], name = "json_decode_array", requiresAllocator = True, isValue = False }
 
                 "dict" ->
-                    Just { qualification = [], name = "json_decode_dict", requiresAllocator = True }
+                    Just { qualification = [], name = "json_decode_dict", requiresAllocator = True, isValue = False }
 
                 "keyValuePairs" ->
-                    Just { qualification = [], name = "json_decode_key_value_pairs", requiresAllocator = True }
+                    Just { qualification = [], name = "json_decode_key_value_pairs", requiresAllocator = True, isValue = False }
 
                 "oneOrMore" ->
-                    Just { qualification = [], name = "json_decode_one_or_more", requiresAllocator = True }
+                    Just { qualification = [], name = "json_decode_one_or_more", requiresAllocator = True, isValue = False }
 
                 "field" ->
-                    Just { qualification = [], name = "json_decode_field", requiresAllocator = True }
+                    Just { qualification = [], name = "json_decode_field", requiresAllocator = True, isValue = False }
 
                 "at" ->
-                    Just { qualification = [], name = "json_decode_at", requiresAllocator = True }
+                    Just { qualification = [], name = "json_decode_at", requiresAllocator = True, isValue = False }
 
                 "index" ->
-                    Just { qualification = [], name = "json_decode_index", requiresAllocator = True }
+                    Just { qualification = [], name = "json_decode_index", requiresAllocator = True, isValue = False }
 
                 "maybe" ->
-                    Just { qualification = [], name = "json_decode_maybe", requiresAllocator = True }
+                    Just { qualification = [], name = "json_decode_maybe", requiresAllocator = True, isValue = False }
 
                 "oneOf" ->
-                    Just { qualification = [], name = "json_decode_one_of", requiresAllocator = True }
+                    Just { qualification = [], name = "json_decode_one_of", requiresAllocator = True, isValue = False }
 
                 "decodeString" ->
-                    Just { qualification = [], name = "json_decode_decode_string", requiresAllocator = True }
+                    Just { qualification = [], name = "json_decode_decode_string", requiresAllocator = True, isValue = False }
 
                 "decodeValue" ->
-                    Just { qualification = [], name = "json_decode_decode_value", requiresAllocator = False }
+                    Just { qualification = [], name = "json_decode_decode_value", requiresAllocator = False, isValue = False }
 
                 "errorToString" ->
-                    Just { qualification = [], name = "json_decode_error_to_string", requiresAllocator = True }
+                    Just { qualification = [], name = "json_decode_error_to_string", requiresAllocator = True, isValue = False }
 
                 "map" ->
-                    Just { qualification = [], name = "json_decode_map", requiresAllocator = True }
+                    Just { qualification = [], name = "json_decode_map", requiresAllocator = True, isValue = False }
 
                 "map2" ->
-                    Just { qualification = [], name = "json_decode_map2", requiresAllocator = True }
+                    Just { qualification = [], name = "json_decode_map2", requiresAllocator = True, isValue = False }
 
                 "map3" ->
-                    Just { qualification = [], name = "json_decode_map3", requiresAllocator = True }
+                    Just { qualification = [], name = "json_decode_map3", requiresAllocator = True, isValue = False }
 
                 "map4" ->
-                    Just { qualification = [], name = "json_decode_map4", requiresAllocator = True }
+                    Just { qualification = [], name = "json_decode_map4", requiresAllocator = True, isValue = False }
 
                 "map5" ->
-                    Just { qualification = [], name = "json_decode_map5", requiresAllocator = True }
+                    Just { qualification = [], name = "json_decode_map5", requiresAllocator = True, isValue = False }
 
                 "map6" ->
-                    Just { qualification = [], name = "json_decode_map6", requiresAllocator = True }
+                    Just { qualification = [], name = "json_decode_map6", requiresAllocator = True, isValue = False }
 
                 "map7" ->
-                    Just { qualification = [], name = "json_decode_map7", requiresAllocator = True }
+                    Just { qualification = [], name = "json_decode_map7", requiresAllocator = True, isValue = False }
 
                 "map8" ->
-                    Just { qualification = [], name = "json_decode_map8", requiresAllocator = True }
+                    Just { qualification = [], name = "json_decode_map8", requiresAllocator = True, isValue = False }
 
                 "lazy" ->
-                    Just { qualification = [], name = "json_decode_lazy", requiresAllocator = True }
+                    Just { qualification = [], name = "json_decode_lazy", requiresAllocator = True, isValue = False }
 
                 "value" ->
-                    Just { qualification = [], name = "json_decode_value", requiresAllocator = False }
+                    Just { qualification = [], name = "json_decode_value", requiresAllocator = False, isValue = False }
 
                 "null" ->
-                    Just { qualification = [], name = "json_decode_null", requiresAllocator = True }
+                    Just { qualification = [], name = "json_decode_null", requiresAllocator = True, isValue = False }
 
                 "succeed" ->
-                    Just { qualification = [], name = "json_decode_succeed", requiresAllocator = True }
+                    Just { qualification = [], name = "json_decode_succeed", requiresAllocator = True, isValue = False }
 
                 "fail" ->
-                    Just { qualification = [], name = "json_decode_fail", requiresAllocator = True }
+                    Just { qualification = [], name = "json_decode_fail", requiresAllocator = True, isValue = False }
 
                 "andThen" ->
-                    Just { qualification = [], name = "json_decode_and_then", requiresAllocator = True }
+                    Just { qualification = [], name = "json_decode_and_then", requiresAllocator = True, isValue = False }
 
                 _ ->
                     Nothing
@@ -6067,61 +6253,61 @@ referenceToCoreRust reference =
         "Random" ->
             case reference.name of
                 "int" ->
-                    Just { qualification = [], name = "random_int", requiresAllocator = True }
+                    Just { qualification = [], name = "random_int", requiresAllocator = True, isValue = False }
 
                 "float" ->
-                    Just { qualification = [], name = "random_float", requiresAllocator = True }
+                    Just { qualification = [], name = "random_float", requiresAllocator = True, isValue = False }
 
                 "uniform" ->
-                    Just { qualification = [], name = "random_uniform", requiresAllocator = True }
+                    Just { qualification = [], name = "random_uniform", requiresAllocator = True, isValue = False }
 
                 "weighted" ->
-                    Just { qualification = [], name = "random_weighted", requiresAllocator = True }
+                    Just { qualification = [], name = "random_weighted", requiresAllocator = True, isValue = False }
 
                 "constant" ->
-                    Just { qualification = [], name = "random_constant", requiresAllocator = True }
+                    Just { qualification = [], name = "random_constant", requiresAllocator = True, isValue = False }
 
                 "list" ->
-                    Just { qualification = [], name = "random_list", requiresAllocator = True }
+                    Just { qualification = [], name = "random_list", requiresAllocator = True, isValue = False }
 
                 "pair" ->
-                    Just { qualification = [], name = "random_pair", requiresAllocator = True }
+                    Just { qualification = [], name = "random_pair", requiresAllocator = True, isValue = False }
 
                 "map" ->
-                    Just { qualification = [], name = "random_map", requiresAllocator = True }
+                    Just { qualification = [], name = "random_map", requiresAllocator = True, isValue = False }
 
                 "map2" ->
-                    Just { qualification = [], name = "random_map2", requiresAllocator = True }
+                    Just { qualification = [], name = "random_map2", requiresAllocator = True, isValue = False }
 
                 "map3" ->
-                    Just { qualification = [], name = "random_map3", requiresAllocator = True }
+                    Just { qualification = [], name = "random_map3", requiresAllocator = True, isValue = False }
 
                 "map4" ->
-                    Just { qualification = [], name = "random_map4", requiresAllocator = True }
+                    Just { qualification = [], name = "random_map4", requiresAllocator = True, isValue = False }
 
                 "map5" ->
-                    Just { qualification = [], name = "random_map5", requiresAllocator = True }
+                    Just { qualification = [], name = "random_map5", requiresAllocator = True, isValue = False }
 
                 "andThen" ->
-                    Just { qualification = [], name = "random_and_then", requiresAllocator = True }
+                    Just { qualification = [], name = "random_and_then", requiresAllocator = True, isValue = False }
 
                 "lazy" ->
-                    Just { qualification = [], name = "random_lazy", requiresAllocator = True }
+                    Just { qualification = [], name = "random_lazy", requiresAllocator = True, isValue = False }
 
                 "minInt" ->
-                    Just { qualification = [], name = "random_min_int", requiresAllocator = False }
+                    Just { qualification = [], name = "random_min_int", requiresAllocator = False, isValue = True }
 
                 "maxInt" ->
-                    Just { qualification = [], name = "random_max_int", requiresAllocator = False }
+                    Just { qualification = [], name = "random_max_int", requiresAllocator = False, isValue = True }
 
                 "step" ->
-                    Just { qualification = [], name = "random_step", requiresAllocator = False }
+                    Just { qualification = [], name = "random_step", requiresAllocator = False, isValue = False }
 
                 "initialSeed" ->
-                    Just { qualification = [], name = "random_initial_seed", requiresAllocator = False }
+                    Just { qualification = [], name = "random_initial_seed", requiresAllocator = False, isValue = False }
 
                 "independentSeed" ->
-                    Just { qualification = [], name = "random_independent_seed", requiresAllocator = True }
+                    Just { qualification = [], name = "random_independent_seed", requiresAllocator = True, isValue = False }
 
                 _ ->
                     Nothing
@@ -6129,40 +6315,40 @@ referenceToCoreRust reference =
         "Time" ->
             case reference.name of
                 "posixToMillis" ->
-                    Just { qualification = [], name = "time_posix_to_millis", requiresAllocator = False }
+                    Just { qualification = [], name = "time_posix_to_millis", requiresAllocator = False, isValue = False }
 
                 "millisToPosix" ->
-                    Just { qualification = [], name = "time_millis_to_posix", requiresAllocator = False }
+                    Just { qualification = [], name = "time_millis_to_posix", requiresAllocator = False, isValue = False }
 
                 "utc" ->
-                    Just { qualification = [], name = "time_utc", requiresAllocator = False }
+                    Just { qualification = [], name = "time_utc", requiresAllocator = False, isValue = True }
 
                 "toYear" ->
-                    Just { qualification = [], name = "time_to_year", requiresAllocator = False }
+                    Just { qualification = [], name = "time_to_year", requiresAllocator = False, isValue = False }
 
                 "toMonth" ->
-                    Just { qualification = [], name = "time_to_month", requiresAllocator = False }
+                    Just { qualification = [], name = "time_to_month", requiresAllocator = False, isValue = False }
 
                 "toDay" ->
-                    Just { qualification = [], name = "time_to_day", requiresAllocator = False }
+                    Just { qualification = [], name = "time_to_day", requiresAllocator = False, isValue = False }
 
                 "toWeekday" ->
-                    Just { qualification = [], name = "time_to_weekday", requiresAllocator = False }
+                    Just { qualification = [], name = "time_to_weekday", requiresAllocator = False, isValue = False }
 
                 "toHour" ->
-                    Just { qualification = [], name = "time_to_hour", requiresAllocator = False }
+                    Just { qualification = [], name = "time_to_hour", requiresAllocator = False, isValue = False }
 
                 "toMinute" ->
-                    Just { qualification = [], name = "time_to_minute", requiresAllocator = False }
+                    Just { qualification = [], name = "time_to_minute", requiresAllocator = False, isValue = False }
 
                 "toSecond" ->
-                    Just { qualification = [], name = "time_to_second", requiresAllocator = False }
+                    Just { qualification = [], name = "time_to_second", requiresAllocator = False, isValue = False }
 
                 "toMillis" ->
-                    Just { qualification = [], name = "time_to_millis", requiresAllocator = False }
+                    Just { qualification = [], name = "time_to_millis", requiresAllocator = False, isValue = False }
 
                 "customZone" ->
-                    Just { qualification = [], name = "time_custom_zone", requiresAllocator = False }
+                    Just { qualification = [], name = "time_custom_zone", requiresAllocator = False, isValue = False }
 
                 _ ->
                     Nothing
@@ -6170,7 +6356,7 @@ referenceToCoreRust reference =
         "Bytes" ->
             case reference.name of
                 "width" ->
-                    Just { qualification = [], name = "bytes_width", requiresAllocator = False }
+                    Just { qualification = [], name = "bytes_width", requiresAllocator = False, isValue = False }
 
                 _ ->
                     Nothing
@@ -6178,64 +6364,64 @@ referenceToCoreRust reference =
         "Bytes.Decode" ->
             case reference.name of
                 "decode" ->
-                    Just { qualification = [], name = "bytes_decode_decode", requiresAllocator = False }
+                    Just { qualification = [], name = "bytes_decode_decode", requiresAllocator = False, isValue = False }
 
                 "signedInt8" ->
-                    Just { qualification = [], name = "bytes_decode_signed_int8", requiresAllocator = False }
+                    Just { qualification = [], name = "bytes_decode_signed_int8", requiresAllocator = False, isValue = False }
 
                 "signedInt16" ->
-                    Just { qualification = [], name = "bytes_decode_signed_int16", requiresAllocator = True }
+                    Just { qualification = [], name = "bytes_decode_signed_int16", requiresAllocator = True, isValue = False }
 
                 "signedInt32" ->
-                    Just { qualification = [], name = "bytes_decode_signed_int32", requiresAllocator = True }
+                    Just { qualification = [], name = "bytes_decode_signed_int32", requiresAllocator = True, isValue = False }
 
                 "unsignedInt8" ->
-                    Just { qualification = [], name = "bytes_decode_unsigned_int8", requiresAllocator = False }
+                    Just { qualification = [], name = "bytes_decode_unsigned_int8", requiresAllocator = False, isValue = False }
 
                 "unsignedInt16" ->
-                    Just { qualification = [], name = "bytes_decode_unsigned_int16", requiresAllocator = True }
+                    Just { qualification = [], name = "bytes_decode_unsigned_int16", requiresAllocator = True, isValue = False }
 
                 "unsignedInt32" ->
-                    Just { qualification = [], name = "bytes_decode_unsigned_int32", requiresAllocator = True }
+                    Just { qualification = [], name = "bytes_decode_unsigned_int32", requiresAllocator = True, isValue = False }
 
                 "float32" ->
-                    Just { qualification = [], name = "bytes_decode_float32", requiresAllocator = True }
+                    Just { qualification = [], name = "bytes_decode_float32", requiresAllocator = True, isValue = False }
 
                 "float64" ->
-                    Just { qualification = [], name = "bytes_decode_float64", requiresAllocator = True }
+                    Just { qualification = [], name = "bytes_decode_float64", requiresAllocator = True, isValue = False }
 
                 "string" ->
-                    Just { qualification = [], name = "bytes_decode_string", requiresAllocator = True }
+                    Just { qualification = [], name = "bytes_decode_string", requiresAllocator = True, isValue = False }
 
                 "bytes" ->
-                    Just { qualification = [], name = "bytes_decode_bytes", requiresAllocator = False }
+                    Just { qualification = [], name = "bytes_decode_bytes", requiresAllocator = False, isValue = False }
 
                 "map" ->
-                    Just { qualification = [], name = "bytes_decode_map", requiresAllocator = True }
+                    Just { qualification = [], name = "bytes_decode_map", requiresAllocator = True, isValue = False }
 
                 "map2" ->
-                    Just { qualification = [], name = "bytes_decode_map2", requiresAllocator = True }
+                    Just { qualification = [], name = "bytes_decode_map2", requiresAllocator = True, isValue = False }
 
                 "map3" ->
-                    Just { qualification = [], name = "bytes_decode_map3", requiresAllocator = True }
+                    Just { qualification = [], name = "bytes_decode_map3", requiresAllocator = True, isValue = False }
 
                 "map4" ->
-                    Just { qualification = [], name = "bytes_decode_map4", requiresAllocator = True }
+                    Just { qualification = [], name = "bytes_decode_map4", requiresAllocator = True, isValue = False }
 
                 "map5" ->
-                    Just { qualification = [], name = "bytes_decode_map5", requiresAllocator = True }
+                    Just { qualification = [], name = "bytes_decode_map5", requiresAllocator = True, isValue = False }
 
                 "andThen" ->
-                    Just { qualification = [], name = "bytes_decode_and_then", requiresAllocator = True }
+                    Just { qualification = [], name = "bytes_decode_and_then", requiresAllocator = True, isValue = False }
 
                 "succeed" ->
-                    Just { qualification = [], name = "bytes_decode_succeed", requiresAllocator = True }
+                    Just { qualification = [], name = "bytes_decode_succeed", requiresAllocator = True, isValue = False }
 
                 "fail" ->
-                    Just { qualification = [], name = "bytes_decode_fail", requiresAllocator = False }
+                    Just { qualification = [], name = "bytes_decode_fail", requiresAllocator = False, isValue = False }
 
                 "loop" ->
-                    Just { qualification = [], name = "bytes_decode_loop", requiresAllocator = True }
+                    Just { qualification = [], name = "bytes_decode_loop", requiresAllocator = True, isValue = False }
 
                 _ ->
                     Nothing
@@ -6243,43 +6429,43 @@ referenceToCoreRust reference =
         "Bytes.Encode" ->
             case reference.name of
                 "encode" ->
-                    Just { qualification = [], name = "bytes_encode_encode", requiresAllocator = True }
+                    Just { qualification = [], name = "bytes_encode_encode", requiresAllocator = True, isValue = False }
 
                 "signedInt8" ->
-                    Just { qualification = [], name = "bytes_encode_signed_int8", requiresAllocator = False }
+                    Just { qualification = [], name = "bytes_encode_signed_int8", requiresAllocator = False, isValue = False }
 
                 "signedInt16" ->
-                    Just { qualification = [], name = "bytes_encode_signed_int16", requiresAllocator = False }
+                    Just { qualification = [], name = "bytes_encode_signed_int16", requiresAllocator = False, isValue = False }
 
                 "signedInt32" ->
-                    Just { qualification = [], name = "bytes_encode_signed_int32", requiresAllocator = False }
+                    Just { qualification = [], name = "bytes_encode_signed_int32", requiresAllocator = False, isValue = False }
 
                 "unsignedInt8" ->
-                    Just { qualification = [], name = "bytes_encode_unsigned_int8", requiresAllocator = False }
+                    Just { qualification = [], name = "bytes_encode_unsigned_int8", requiresAllocator = False, isValue = False }
 
                 "unsignedInt16" ->
-                    Just { qualification = [], name = "bytes_encode_unsigned_int16", requiresAllocator = False }
+                    Just { qualification = [], name = "bytes_encode_unsigned_int16", requiresAllocator = False, isValue = False }
 
                 "unsignedInt32" ->
-                    Just { qualification = [], name = "bytes_encode_unsigned_int32", requiresAllocator = False }
+                    Just { qualification = [], name = "bytes_encode_unsigned_int32", requiresAllocator = False, isValue = False }
 
                 "float32" ->
-                    Just { qualification = [], name = "bytes_encode_float32", requiresAllocator = False }
+                    Just { qualification = [], name = "bytes_encode_float32", requiresAllocator = False, isValue = False }
 
                 "float64" ->
-                    Just { qualification = [], name = "bytes_encode_float64", requiresAllocator = False }
+                    Just { qualification = [], name = "bytes_encode_float64", requiresAllocator = False, isValue = False }
 
                 "bytes" ->
-                    Just { qualification = [], name = "bytes_encode_bytes", requiresAllocator = False }
+                    Just { qualification = [], name = "bytes_encode_bytes", requiresAllocator = False, isValue = False }
 
                 "string" ->
-                    Just { qualification = [], name = "bytes_encode_string", requiresAllocator = True }
+                    Just { qualification = [], name = "bytes_encode_string", requiresAllocator = True, isValue = False }
 
                 "getStringWidth" ->
-                    Just { qualification = [], name = "string_length", requiresAllocator = False }
+                    Just { qualification = [], name = "string_length", requiresAllocator = False, isValue = False }
 
                 "sequence" ->
-                    Just { qualification = [], name = "bytes_encode_sequence", requiresAllocator = True }
+                    Just { qualification = [], name = "bytes_encode_sequence", requiresAllocator = True, isValue = False }
 
                 _ ->
                     Nothing
@@ -6287,25 +6473,25 @@ referenceToCoreRust reference =
         "Elm.Kernel.Parser" ->
             case reference.name of
                 "isSubString" ->
-                    Just { qualification = [], name = "elm_kernel_parser_is_sub_string", requiresAllocator = False }
+                    Just { qualification = [], name = "elm_kernel_parser_is_sub_string", requiresAllocator = False, isValue = False }
 
                 "isSubChar" ->
-                    Just { qualification = [], name = "elm_kernel_parser_is_sub_char", requiresAllocator = False }
+                    Just { qualification = [], name = "elm_kernel_parser_is_sub_char", requiresAllocator = False, isValue = False }
 
                 "isAsciiCode" ->
-                    Just { qualification = [], name = "elm_kernel_parser_is_ascii_code", requiresAllocator = False }
+                    Just { qualification = [], name = "elm_kernel_parser_is_ascii_code", requiresAllocator = False, isValue = False }
 
                 "chompBase10" ->
-                    Just { qualification = [], name = "elm_kernel_parser_chomp_base10", requiresAllocator = False }
+                    Just { qualification = [], name = "elm_kernel_parser_chomp_base10", requiresAllocator = False, isValue = False }
 
                 "consumeBase" ->
-                    Just { qualification = [], name = "elm_kernel_parser_consume_base", requiresAllocator = False }
+                    Just { qualification = [], name = "elm_kernel_parser_consume_base", requiresAllocator = False, isValue = False }
 
                 "consumeBase16" ->
-                    Just { qualification = [], name = "elm_kernel_parser_consume_base16", requiresAllocator = False }
+                    Just { qualification = [], name = "elm_kernel_parser_consume_base16", requiresAllocator = False, isValue = False }
 
                 "findSubString" ->
-                    Just { qualification = [], name = "elm_kernel_parser_find_sub_string", requiresAllocator = False }
+                    Just { qualification = [], name = "elm_kernel_parser_find_sub_string", requiresAllocator = False, isValue = False }
 
                 _ ->
                     Nothing
@@ -6313,25 +6499,25 @@ referenceToCoreRust reference =
         "Elm.Kernel.VirtualDom" ->
             case reference.name of
                 "property" ->
-                    Just { qualification = [], name = "virtual_dom_property", requiresAllocator = True }
+                    Just { qualification = [], name = "virtual_dom_property", requiresAllocator = True, isValue = False }
 
                 "attribute" ->
-                    Just { qualification = [], name = "virtual_dom_attribute", requiresAllocator = True }
+                    Just { qualification = [], name = "virtual_dom_attribute", requiresAllocator = True, isValue = False }
 
                 "attributeNS" ->
-                    Just { qualification = [], name = "virtual_dom_attribute_ns", requiresAllocator = True }
+                    Just { qualification = [], name = "virtual_dom_attribute_ns", requiresAllocator = True, isValue = False }
 
                 "node" ->
-                    Just { qualification = [], name = "virtual_dom_node", requiresAllocator = True }
+                    Just { qualification = [], name = "virtual_dom_node", requiresAllocator = True, isValue = False }
 
                 "nodeNS" ->
-                    Just { qualification = [], name = "virtual_dom_node_ns", requiresAllocator = True }
+                    Just { qualification = [], name = "virtual_dom_node_ns", requiresAllocator = True, isValue = False }
 
                 "noJavaScriptOrHtmlUri" ->
-                    Just { qualification = [], name = "virtual_dom_no_java_script_or_html_uri", requiresAllocator = False }
+                    Just { qualification = [], name = "virtual_dom_no_java_script_or_html_uri", requiresAllocator = False, isValue = False }
 
                 "noJavaScriptUri" ->
-                    Just { qualification = [], name = "virtual_dom_no_java_script_uri", requiresAllocator = False }
+                    Just { qualification = [], name = "virtual_dom_no_java_script_uri", requiresAllocator = False, isValue = False }
 
                 _ ->
                     Nothing
@@ -6339,64 +6525,64 @@ referenceToCoreRust reference =
         "VirtualDom" ->
             case reference.name of
                 "text" ->
-                    Just { qualification = [], name = "virtual_dom_text", requiresAllocator = True }
+                    Just { qualification = [], name = "virtual_dom_text", requiresAllocator = True, isValue = False }
 
                 "node" ->
-                    Just { qualification = [], name = "virtual_dom_node", requiresAllocator = True }
+                    Just { qualification = [], name = "virtual_dom_node", requiresAllocator = True, isValue = False }
 
                 "nodeNS" ->
-                    Just { qualification = [], name = "virtual_dom_node_ns", requiresAllocator = True }
+                    Just { qualification = [], name = "virtual_dom_node_ns", requiresAllocator = True, isValue = False }
 
                 "style" ->
-                    Just { qualification = [], name = "virtual_dom_style", requiresAllocator = True }
+                    Just { qualification = [], name = "virtual_dom_style", requiresAllocator = True, isValue = False }
 
                 "property" ->
-                    Just { qualification = [], name = "virtual_dom_property", requiresAllocator = True }
+                    Just { qualification = [], name = "virtual_dom_property", requiresAllocator = True, isValue = False }
 
                 "attribute" ->
-                    Just { qualification = [], name = "virtual_dom_attribute", requiresAllocator = True }
+                    Just { qualification = [], name = "virtual_dom_attribute", requiresAllocator = True, isValue = False }
 
                 "attributeNS" ->
-                    Just { qualification = [], name = "virtual_dom_attribute_ns", requiresAllocator = True }
+                    Just { qualification = [], name = "virtual_dom_attribute_ns", requiresAllocator = True, isValue = False }
 
                 "on" ->
-                    Just { qualification = [], name = "virtual_dom_on", requiresAllocator = True }
+                    Just { qualification = [], name = "virtual_dom_on", requiresAllocator = True, isValue = False }
 
                 "map" ->
-                    Just { qualification = [], name = "virtual_dom_map", requiresAllocator = True }
+                    Just { qualification = [], name = "virtual_dom_map", requiresAllocator = True, isValue = False }
 
                 "mapAttribute" ->
-                    Just { qualification = [], name = "virtual_dom_map_attribute", requiresAllocator = True }
+                    Just { qualification = [], name = "virtual_dom_map_attribute", requiresAllocator = True, isValue = False }
 
                 "keyedNode" ->
-                    Just { qualification = [], name = "virtual_dom_keyed_node", requiresAllocator = True }
+                    Just { qualification = [], name = "virtual_dom_keyed_node", requiresAllocator = True, isValue = False }
 
                 "keyedNodeNS" ->
-                    Just { qualification = [], name = "virtual_dom_keyed_node_ns", requiresAllocator = True }
+                    Just { qualification = [], name = "virtual_dom_keyed_node_ns", requiresAllocator = True, isValue = False }
 
                 "lazy" ->
-                    Just { qualification = [], name = "virtual_dom_lazy", requiresAllocator = False }
+                    Just { qualification = [], name = "virtual_dom_lazy", requiresAllocator = False, isValue = False }
 
                 "lazy2" ->
-                    Just { qualification = [], name = "virtual_dom_lazy2", requiresAllocator = False }
+                    Just { qualification = [], name = "virtual_dom_lazy2", requiresAllocator = False, isValue = False }
 
                 "lazy3" ->
-                    Just { qualification = [], name = "virtual_dom_lazy3", requiresAllocator = False }
+                    Just { qualification = [], name = "virtual_dom_lazy3", requiresAllocator = False, isValue = False }
 
                 "lazy4" ->
-                    Just { qualification = [], name = "virtual_dom_lazy4", requiresAllocator = False }
+                    Just { qualification = [], name = "virtual_dom_lazy4", requiresAllocator = False, isValue = False }
 
                 "lazy5" ->
-                    Just { qualification = [], name = "virtual_dom_lazy5", requiresAllocator = False }
+                    Just { qualification = [], name = "virtual_dom_lazy5", requiresAllocator = False, isValue = False }
 
                 "lazy6" ->
-                    Just { qualification = [], name = "virtual_dom_lazy6", requiresAllocator = False }
+                    Just { qualification = [], name = "virtual_dom_lazy6", requiresAllocator = False, isValue = False }
 
                 "lazy7" ->
-                    Just { qualification = [], name = "virtual_dom_lazy7", requiresAllocator = False }
+                    Just { qualification = [], name = "virtual_dom_lazy7", requiresAllocator = False, isValue = False }
 
                 "lazy8" ->
-                    Just { qualification = [], name = "virtual_dom_lazy8", requiresAllocator = False }
+                    Just { qualification = [], name = "virtual_dom_lazy8", requiresAllocator = False, isValue = False }
 
                 _ ->
                     Nothing
@@ -6420,7 +6606,7 @@ referenceToCoreRust reference =
         "Platform" ->
             case reference.name of
                 "worker" ->
-                    Just { qualification = [], name = "platform_worker", requiresAllocator = False }
+                    Just { qualification = [], name = "platform_worker", requiresAllocator = False, isValue = False }
 
                 _ ->
                     Nothing
@@ -6428,13 +6614,13 @@ referenceToCoreRust reference =
         "Platform.Cmd" ->
             case reference.name of
                 "none" ->
-                    Just { qualification = [], name = "platform_cmd_none", requiresAllocator = False }
+                    Just { qualification = [], name = "platform_cmd_none", requiresAllocator = False, isValue = False }
 
                 "batch" ->
-                    Just { qualification = [], name = "platform_cmd_batch", requiresAllocator = True }
+                    Just { qualification = [], name = "platform_cmd_batch", requiresAllocator = True, isValue = False }
 
                 "map" ->
-                    Just { qualification = [], name = "platform_cmd_map", requiresAllocator = False }
+                    Just { qualification = [], name = "platform_cmd_map", requiresAllocator = False, isValue = False }
 
                 _ ->
                     Nothing
@@ -6442,13 +6628,13 @@ referenceToCoreRust reference =
         "Platform.Sub" ->
             case reference.name of
                 "none" ->
-                    Just { qualification = [], name = "platform_sub_none", requiresAllocator = False }
+                    Just { qualification = [], name = "platform_sub_none", requiresAllocator = False, isValue = False }
 
                 "batch" ->
-                    Just { qualification = [], name = "platform_sub_batch", requiresAllocator = True }
+                    Just { qualification = [], name = "platform_sub_batch", requiresAllocator = True, isValue = False }
 
                 "map" ->
-                    Just { qualification = [], name = "platform_sub_map", requiresAllocator = True }
+                    Just { qualification = [], name = "platform_sub_map", requiresAllocator = True, isValue = False }
 
                 _ ->
                     Nothing
@@ -10864,14 +11050,21 @@ expression context expressionTypedNode =
                                                     |> referenceToCoreRust
                                             of
                                                 Just coreRustReference ->
-                                                    rustExpressionReferenceDeclaredFnAppliedLazilyOrCurriedIfNecessary context
-                                                        { qualification = coreRustReference.qualification
-                                                        , name = coreRustReference.name
-                                                        , requiresAllocator = coreRustReference.requiresAllocator
-                                                        , inferredType = expressionTypedNode.type_
-                                                        , originDeclarationTypeWithExpandedAliases =
-                                                            originDeclarationTypeWithExpandedAliases
-                                                        }
+                                                    if coreRustReference.isValue then
+                                                        RustExpressionReference
+                                                            { qualification = coreRustReference.qualification
+                                                            , name = coreRustReference.name
+                                                            }
+
+                                                    else
+                                                        rustExpressionReferenceDeclaredFnAppliedLazilyOrCurriedIfNecessary context
+                                                            { qualification = coreRustReference.qualification
+                                                            , name = coreRustReference.name
+                                                            , requiresAllocator = coreRustReference.requiresAllocator
+                                                            , inferredType = expressionTypedNode.type_
+                                                            , originDeclarationTypeWithExpandedAliases =
+                                                                originDeclarationTypeWithExpandedAliases
+                                                            }
 
                                                 Nothing ->
                                                     let
@@ -37420,9 +37613,7 @@ pub fn time_to_year(zone: TimeZone, time: TimePosix) -> i64 {
     time_to_civil(time_to_adjusted_minutes(zone, time)).year
 }
 
-pub fn time_utc<'a>() -> TimeZone<'a> {
-    TimeZone::Zone(0_i64, ListList::Empty)
-}
+pub const time_utc: TimeZone<'static> = TimeZone::Zone(0_i64, ListList::Empty);
 
 pub fn elm_kernel_parser_is_sub_string(
     small_string: StringString,
@@ -38126,12 +38317,8 @@ pub struct RandomGenerator<'a, A> {
     generate: &'a dyn Fn(RandomSeed) -> (A, RandomSeed),
 }
 
-pub const fn random_min_int() -> i64 {
-    -2147483648_i64
-}
-pub const fn random_max_int() -> i64 {
-    2147483647_i64
-}
+pub const random_min_int: i64 = -2147483648_i64;
+pub const random_max_int: i64 = 2147483647_i64;
 
 pub fn random_step<A>(generator: RandomGenerator<A>, seed: RandomSeed) -> (A, RandomSeed) {
     (generator.generate)(seed)
