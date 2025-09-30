@@ -1,5 +1,3 @@
-> TODO: `inferredValueOrFunctionDeclarationsToMostToLeastDependedOn` does not work correctly for specialized declarations. Solution: already specialize the reference uses in the inferred elm AST
-
 Print [`elm-syntax`](https://dark.elm.dmy.fr/packages/stil4m/elm-syntax/latest/) declarations as [rust](https://www.rust-lang.org/) code.
 To try it out, you can
 run [this script](https://github.com/lue-bird/elm-syntax-to-rust/tree/main/node-elm-to-rust).
