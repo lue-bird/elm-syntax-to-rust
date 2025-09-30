@@ -7341,7 +7341,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                         specializedName : String
                                         specializedName =
                                             config.inferred.name
-                                                |> rustNameWithSpecializedTypes
+                                                |> nameWithSpecializedRustTypes
                                                     specialization
 
                                         (Elm.Syntax.Node.Node implementationRange implementation) =
@@ -7378,7 +7378,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                         specializedName : String
                                         specializedName =
                                             config.inferred.name
-                                                |> rustNameWithSpecializedTypes
+                                                |> nameWithSpecializedRustTypes
                                                     specialization
                                     in
                                     { documentation = config.syntax.documentation
@@ -8286,7 +8286,9 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                 in
                                 moduleInferred.declarationsInferred
                                     |> inferredValueOrFunctionDeclarationsToMostToLeastDependedOn
-                                        { moduleOrigin = moduleName }
+                                        { moduleOrigin = moduleName
+                                        , declarationTypes = modulesInferred.types
+                                        }
                                     |> List.foldl
                                         (\valueOrFunctionDeclarationInferredComponent withInferredValeAndFunctionDeclarationsSoFar ->
                                             case valueOrFunctionDeclarationInferredComponent of
@@ -11120,7 +11122,7 @@ expression context expressionTypedNode =
                                                         specializedRustName : String
                                                         specializedRustName =
                                                             rustName
-                                                                |> rustNameWithSpecializedTypes
+                                                                |> nameWithSpecializedRustTypes
                                                                     (inferredTypeSpecializedVariablesFrom
                                                                         originDeclarationTypeWithExpandedAliases
                                                                         (expressionTypedNode.type_
@@ -17017,10 +17019,20 @@ printExactlySpaceMinusGreaterThan =
 
 
 inferredValueOrFunctionDeclarationsToMostToLeastDependedOn :
-    { moduleOrigin : String }
+    { moduleOrigin : String
+    , declarationTypes :
+        FastDict.Dict String ElmSyntaxTypeInfer.ModuleTypes
+    }
     -> List InferredValueOrFunctionDeclaration
     -> List (Graph.SCC InferredValueOrFunctionDeclaration)
 inferredValueOrFunctionDeclarationsToMostToLeastDependedOn context inferredValueOrFunctionDeclarations =
+    let
+        typeAliasesInModule : String -> Maybe (FastDict.Dict String { parameters : List String, recordFieldOrder : Maybe (List String), type_ : ElmSyntaxTypeInfer.Type })
+        typeAliasesInModule moduleNameToAccess =
+            context.declarationTypes
+                |> FastDict.get moduleNameToAccess
+                |> Maybe.map .typeAliases
+    in
     inferredValueOrFunctionDeclarations
         |> List.map
             (\inferredValueOrFunctionDeclaration ->
@@ -17028,7 +17040,38 @@ inferredValueOrFunctionDeclarationsToMostToLeastDependedOn context inferredValue
                 , ( context.moduleOrigin, inferredValueOrFunctionDeclaration.name )
                 , inferredValueOrFunctionDeclaration.result
                     |> inferredExpressionTypedNodeUsedReferences
-                    |> FastSet.toList
+                    |> FastDict.foldl
+                        (\( useModuleOrigin, useName ) useType soFar ->
+                            ( useModuleOrigin
+                            , case
+                                context.declarationTypes
+                                    |> FastDict.get useModuleOrigin
+                                    |> Maybe.andThen
+                                        (\referenceOriginModuleInfo ->
+                                            referenceOriginModuleInfo.signatures
+                                                |> FastDict.get useName
+                                        )
+                              of
+                                Nothing ->
+                                    useName
+
+                                Just originDeclarationType ->
+                                    useName
+                                        |> nameWithSpecializedRustTypes
+                                            (inferredTypeSpecializedVariablesFrom
+                                                (originDeclarationType
+                                                    |> inferredTypeExpandInnerAliases
+                                                        typeAliasesInModule
+                                                )
+                                                (useType
+                                                    |> inferredTypeExpandInnerAliases
+                                                        typeAliasesInModule
+                                                )
+                                            )
+                            )
+                                :: soFar
+                        )
+                        []
                 )
             )
         |> Graph.stronglyConnComponents
@@ -17036,39 +17079,43 @@ inferredValueOrFunctionDeclarationsToMostToLeastDependedOn context inferredValue
 
 inferredExpressionTypedNodeUsedReferences :
     ElmSyntaxTypeInfer.TypedNode ElmSyntaxTypeInfer.Expression
-    -> FastSet.Set ( {- module origin -} String, String )
+    ->
+        FastDict.Dict
+            ( {- module origin -} String, String )
+            ElmSyntaxTypeInfer.Type
 inferredExpressionTypedNodeUsedReferences expressionTypedNode =
     -- IGNORE TCO
     case expressionTypedNode.value of
         ElmSyntaxTypeInfer.ExpressionUnit ->
-            FastSet.empty
+            FastDict.empty
 
         ElmSyntaxTypeInfer.ExpressionInteger _ ->
-            FastSet.empty
+            FastDict.empty
 
         ElmSyntaxTypeInfer.ExpressionFloat _ ->
-            FastSet.empty
+            FastDict.empty
 
         ElmSyntaxTypeInfer.ExpressionString _ ->
-            FastSet.empty
+            FastDict.empty
 
         ElmSyntaxTypeInfer.ExpressionChar _ ->
-            FastSet.empty
+            FastDict.empty
 
         ElmSyntaxTypeInfer.ExpressionReferenceVariant _ ->
-            FastSet.empty
+            FastDict.empty
 
         ElmSyntaxTypeInfer.ExpressionReferenceRecordTypeAliasConstructorFunction _ ->
-            FastSet.empty
+            FastDict.empty
 
         ElmSyntaxTypeInfer.ExpressionOperatorFunction _ ->
-            FastSet.empty
+            FastDict.empty
 
         ElmSyntaxTypeInfer.ExpressionRecordAccessFunction _ ->
-            FastSet.empty
+            FastDict.empty
 
         ElmSyntaxTypeInfer.ExpressionReference reference ->
-            FastSet.singleton ( reference.moduleOrigin, reference.name )
+            FastDict.singleton ( reference.moduleOrigin, reference.name )
+                expressionTypedNode.type_
 
         ElmSyntaxTypeInfer.ExpressionNegation negated ->
             inferredExpressionTypedNodeUsedReferences negated
@@ -17087,7 +17134,7 @@ inferredExpressionTypedNodeUsedReferences expressionTypedNode =
         ElmSyntaxTypeInfer.ExpressionInfixOperation expressionInfixOperation ->
             expressionInfixOperation.left
                 |> inferredExpressionTypedNodeUsedReferences
-                |> FastSet.union
+                |> FastDict.union
                     (expressionInfixOperation.right
                         |> inferredExpressionTypedNodeUsedReferences
                     )
@@ -17095,7 +17142,7 @@ inferredExpressionTypedNodeUsedReferences expressionTypedNode =
         ElmSyntaxTypeInfer.ExpressionTuple parts ->
             parts.part0
                 |> inferredExpressionTypedNodeUsedReferences
-                |> FastSet.union
+                |> FastDict.union
                     (parts.part1
                         |> inferredExpressionTypedNodeUsedReferences
                     )
@@ -17103,11 +17150,11 @@ inferredExpressionTypedNodeUsedReferences expressionTypedNode =
         ElmSyntaxTypeInfer.ExpressionTriple parts ->
             parts.part0
                 |> inferredExpressionTypedNodeUsedReferences
-                |> FastSet.union
+                |> FastDict.union
                     (parts.part1
                         |> inferredExpressionTypedNodeUsedReferences
                     )
-                |> FastSet.union
+                |> FastDict.union
                     (parts.part2
                         |> inferredExpressionTypedNodeUsedReferences
                     )
@@ -17115,23 +17162,23 @@ inferredExpressionTypedNodeUsedReferences expressionTypedNode =
         ElmSyntaxTypeInfer.ExpressionIfThenElse expressionIfThenElse ->
             expressionIfThenElse.condition
                 |> inferredExpressionTypedNodeUsedReferences
-                |> FastSet.union
+                |> FastDict.union
                     (expressionIfThenElse.onTrue
                         |> inferredExpressionTypedNodeUsedReferences
                     )
-                |> FastSet.union
+                |> FastDict.union
                     (expressionIfThenElse.onFalse
                         |> inferredExpressionTypedNodeUsedReferences
                     )
 
         ElmSyntaxTypeInfer.ExpressionList elements ->
             elements
-                |> listMapToFastSetsAndUnify
+                |> listMapToFastDictsAndUnify
                     inferredExpressionTypedNodeUsedReferences
 
         ElmSyntaxTypeInfer.ExpressionRecord fields ->
             fields
-                |> listMapToFastSetsAndUnify
+                |> listMapToFastDictsAndUnify
                     (\field ->
                         field.value
                             |> inferredExpressionTypedNodeUsedReferences
@@ -17140,29 +17187,30 @@ inferredExpressionTypedNodeUsedReferences expressionTypedNode =
         ElmSyntaxTypeInfer.ExpressionCall expressionCall ->
             expressionCall.called
                 |> inferredExpressionTypedNodeUsedReferences
-                |> FastSet.union
+                |> FastDict.union
                     (expressionCall.argument1Up
-                        |> listMapToFastSetsAndUnify
+                        |> listMapToFastDictsAndUnify
                             inferredExpressionTypedNodeUsedReferences
                     )
-                |> FastSet.union
+                |> FastDict.union
                     (expressionCall.argument0
                         |> inferredExpressionTypedNodeUsedReferences
                     )
 
         ElmSyntaxTypeInfer.ExpressionRecordUpdate expressionRecordUpdate ->
-            FastSet.insert
+            FastDict.insert
                 ( expressionRecordUpdate.recordVariable.value.moduleOrigin
                 , expressionRecordUpdate.recordVariable.value.name
                 )
+                expressionRecordUpdate.recordVariable.type_
                 (expressionRecordUpdate.field1Up
-                    |> listMapToFastSetsAndUnify
+                    |> listMapToFastDictsAndUnify
                         (\field ->
                             field.value
                                 |> inferredExpressionTypedNodeUsedReferences
                         )
                 )
-                |> FastSet.union
+                |> FastDict.union
                     (expressionRecordUpdate.field0.value
                         |> inferredExpressionTypedNodeUsedReferences
                     )
@@ -17170,15 +17218,15 @@ inferredExpressionTypedNodeUsedReferences expressionTypedNode =
         ElmSyntaxTypeInfer.ExpressionCaseOf expressionCaseOf ->
             expressionCaseOf.matched
                 |> inferredExpressionTypedNodeUsedReferences
-                |> FastSet.union
+                |> FastDict.union
                     (expressionCaseOf.case1Up
-                        |> listMapToFastSetsAndUnify
+                        |> listMapToFastDictsAndUnify
                             (\caseOfCase ->
                                 caseOfCase.result
                                     |> inferredExpressionTypedNodeUsedReferences
                             )
                     )
-                |> FastSet.union
+                |> FastDict.union
                     (expressionCaseOf.case0.result
                         |> inferredExpressionTypedNodeUsedReferences
                     )
@@ -17199,13 +17247,16 @@ expressionLetInUsesOfLocalReferences :
         }
     , result : ElmSyntaxTypeInfer.TypedNode ElmSyntaxTypeInfer.Expression
     }
-    -> FastSet.Set ( {- module origin -} String, String )
+    ->
+        FastDict.Dict
+            ( {- module origin -} String, String )
+            ElmSyntaxTypeInfer.Type
 expressionLetInUsesOfLocalReferences expressionLetIn =
-    FastSet.union
+    FastDict.union
         (expressionLetIn.declaration1Up
             |> List.foldl
                 (\inferredLetDeclaration soFar ->
-                    FastSet.union
+                    FastDict.union
                         soFar
                         (inferredLetDeclaration.declaration
                             |> letDeclarationUsesOfLocalReferences
@@ -17222,7 +17273,10 @@ expressionLetInUsesOfLocalReferences expressionLetIn =
 
 letDeclarationUsesOfLocalReferences :
     ElmSyntaxTypeInfer.LetDeclaration
-    -> FastSet.Set ( {- module origin -} String, String )
+    ->
+        FastDict.Dict
+            ( {- module origin -} String, String )
+            ElmSyntaxTypeInfer.Type
 letDeclarationUsesOfLocalReferences inferredLetDeclaration =
     case inferredLetDeclaration of
         ElmSyntaxTypeInfer.LetDestructuring letDestructuring ->
@@ -18706,11 +18760,11 @@ for all elm records in types and expressions that contain the field `x`
 These specializations can also stack.
 
 -}
-rustNameWithSpecializedTypes :
+nameWithSpecializedRustTypes :
     FastDict.Dict String RustTypeVariableSpecialization
     -> String
     -> String
-rustNameWithSpecializedTypes specializedTypes name =
+nameWithSpecializedRustTypes specializedTypes name =
     specializedTypes
         |> FastDict.foldl
             (\variable specializedType nameSoFar ->
