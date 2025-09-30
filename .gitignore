@@ -14,4 +14,6 @@ zombie
 /src/main.rs
 example-experiments
 example-transpile-itself
+example-bevy
+example-ggez-game
 perf.data
