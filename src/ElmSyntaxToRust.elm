@@ -11143,7 +11143,7 @@ expression context expressionTypedNode =
                                                             , qualification = []
                                                             , name = specializedRustName
                                                             , requiresAllocator =
-                                                                case context.rustFns |> FastDict.get rustName of
+                                                                case context.rustFns |> FastDict.get specializedRustName of
                                                                     Nothing ->
                                                                         -- (mutually) recursive fn
                                                                         True
@@ -18677,7 +18677,7 @@ inferredTypeUnit =
 {-| rust does not have a concept of the following elm types:
 
   - `number` type variable
-  - `{ extendedRecord | some : field }' extended record
+  - `{ extendedRecord | some : field }` extended record
 
 to accommodate, we split elm values/functions that use these in their annotation
 into specialized rust functions. For example
