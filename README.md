@@ -125,7 +125,7 @@ which only contains owned types – and conversion functions between the two.
 ### improvement ideas
 
 - keep types closer to elm (and do not expand aliases everywhere which currently leads to large and hard to understand transpiled types)
-- try and benchmark switching `String` representation from `One &str | Append String String` to `Rc<Vec<&str>>` to avoid massive nesting = indirection = expensive memory lookup (+ alloc and dealloc but lesser so)
+- try and benchmark switching `String` representation from `One &str | Append String String` to `Rc<Vec<&str>>` or `&dyn Fn(String) -> String` to avoid massive nesting = indirection = expensive memory lookup (+ alloc and dealloc but lesser so)
 - if lambda is called with a function, always inline that function
 - possible optimization: make `JsonValue` lazy at field values and Array level
 - your idea 👀
