@@ -32,7 +32,7 @@ pub fn sample_plus2<'a>(allocator: &'a Bump, n: f64) -> f64 {
 ### be aware
 
 - not supported are
-    - ports that use non-json values like `port sendMessage : String -> Cmd msg`, glsl, `==` on a generic value, mutually recursive phantom types or phantom types in type aliases
+    - ports that use non-json values like `port sendMessage : String -> Cmd msg`, glsl, `==` on a generic value, mutually recursive phantom types or using type variables for phantom types in type aliases
     - `elm/file`, `elm/http`, `elm/browser`, `elm-explorations/markdown`, `elm-explorations/webgl`, `elm-explorations/benchmark`, `elm/regex` (nothing in `std`), `elm-explorations/linear-algebra` (`std::simd` only available in nightly)
     - `Task`, `Process`, `Platform.Task`, `Platform.ProcessId`, `Platform.Router`, `Platform.sendToApp`, `Platform.sendToSelf`, `Random.generate`, `Time.now`, `Time.every`, `Time.here`, `Time.getZoneName`, `Bytes.getHostEndianness`
     - extensible record types outside of module-level value/function declarations. For example, these declarations might not work:
