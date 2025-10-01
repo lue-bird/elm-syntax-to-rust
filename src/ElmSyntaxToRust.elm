@@ -536,6 +536,10 @@ choiceTypeDeclaration :
             , isPartialEq : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
+    , rustTypeAliases :
+        FastDict.Dict
+            String
+            { unusedElmTypeParameterIndexes : List Int }
     }
     ->
         { parameters : List String
@@ -566,6 +570,7 @@ choiceTypeDeclaration context syntaxChoiceType =
                                             value
                                                 |> type_
                                                     { rustEnumTypes = context.rustEnumTypes
+                                                    , rustTypeAliases = context.rustTypeAliases
                                                     , typeAliasesInModule = context.typeAliasesInModule
                                                     , isPartOfTypeDeclaration = True
                                                     }
@@ -1098,6 +1103,10 @@ typeAliasDeclaration :
             , isPartialEq : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
+    , rustTypeAliases :
+        FastDict.Dict
+            String
+            { unusedElmTypeParameterIndexes : List Int }
     }
     ->
         { parameters : List String
@@ -1106,6 +1115,7 @@ typeAliasDeclaration :
     ->
         { lifetimeParameters : List String
         , parameters : List String
+        , unusedElmTypeParameterIndexes : List Int
         , type_ : RustType
         }
 typeAliasDeclaration context inferredTypeAlias =
@@ -1116,13 +1126,46 @@ typeAliasDeclaration context inferredTypeAlias =
                 |> inferredTypeExpandInnerAliases context.typeAliasesInModule
                 |> type_
                     { rustEnumTypes = context.rustEnumTypes
+                    , rustTypeAliases = context.rustTypeAliases
                     , typeAliasesInModule = context.typeAliasesInModule
                     , isPartOfTypeDeclaration = True
                     }
+
+        aliasedAsRustTypeContainedVariables : FastSet.Set String
+        aliasedAsRustTypeContainedVariables =
+            aliasedAsRustType
+                |> rustTypeContainedVariables
     in
     { parameters =
         inferredTypeAlias.parameters
-            |> List.map toPascalCaseRustName
+            |> List.filterMap
+                (\elmParameterName ->
+                    let
+                        rustParameterName : String
+                        rustParameterName =
+                            elmParameterName |> toPascalCaseRustName
+                    in
+                    if aliasedAsRustTypeContainedVariables |> FastSet.member rustParameterName then
+                        Just rustParameterName
+
+                    else
+                        Nothing
+                )
+    , unusedElmTypeParameterIndexes =
+        inferredTypeAlias.parameters
+            |> List.indexedMap Tuple.pair
+            |> List.filterMap
+                (\( parameterIndex, elmParameterName ) ->
+                    if
+                        aliasedAsRustTypeContainedVariables
+                            |> FastSet.member
+                                (elmParameterName |> toPascalCaseRustName)
+                    then
+                        Nothing
+
+                    else
+                        Just parameterIndex
+                )
     , type_ = aliasedAsRustType
     , lifetimeParameters =
         aliasedAsRustType
@@ -1182,6 +1225,10 @@ type_ :
             , isPartialEq : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
+    , rustTypeAliases :
+        FastDict.Dict
+            String
+            { unusedElmTypeParameterIndexes : List Int }
     }
     -> ElmSyntaxTypeInfer.Type
     -> RustType
@@ -1249,6 +1296,10 @@ typeNotVariable :
             , isPartialEq : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
+    , rustTypeAliases :
+        FastDict.Dict
+            String
+            { unusedElmTypeParameterIndexes : List Int }
     }
     -> ElmSyntaxTypeInfer.TypeNotVariable
     -> RustType
@@ -2383,6 +2434,10 @@ pattern :
             , isPartialEq : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
+    , rustTypeAliases :
+        FastDict.Dict
+            String
+            { unusedElmTypeParameterIndexes : List Int }
     }
     -> ElmSyntaxTypeInfer.TypedNode ElmSyntaxTypeInfer.Pattern
     ->
@@ -2457,6 +2512,7 @@ pattern context patternInferred =
                         patternInferred.type_
                             |> type_
                                 { rustEnumTypes = context.rustEnumTypes
+                                , rustTypeAliases = context.rustTypeAliases
                                 , typeAliasesInModule = context.typeAliasesInModule
                                 , isPartOfTypeDeclaration = False
                                 }
@@ -2605,6 +2661,7 @@ pattern context patternInferred =
                                                             inferredType
                                                                 |> type_
                                                                     { rustEnumTypes = context.rustEnumTypes
+                                                                    , rustTypeAliases = context.rustTypeAliases
                                                                     , typeAliasesInModule = context.typeAliasesInModule
                                                                     , isPartOfTypeDeclaration = False
                                                                     }
@@ -2640,6 +2697,7 @@ pattern context patternInferred =
                         |> referencedPattern
                             { isRefRef = False
                             , rustEnumTypes = context.rustEnumTypes
+                            , rustTypeAliases = context.rustTypeAliases
                             , typeAliasesInModule = context.typeAliasesInModule
                             }
             in
@@ -2765,6 +2823,7 @@ pattern context patternInferred =
                                                 |> referencedPattern
                                                     { isRefRef = False
                                                     , rustEnumTypes = context.rustEnumTypes
+                                                    , rustTypeAliases = context.rustTypeAliases
                                                     , typeAliasesInModule = context.typeAliasesInModule
                                                     }
                                     in
@@ -2833,6 +2892,7 @@ pattern context patternInferred =
                     patternAs.variable.type_
                         |> type_
                             { rustEnumTypes = context.rustEnumTypes
+                            , rustTypeAliases = context.rustTypeAliases
                             , typeAliasesInModule = context.typeAliasesInModule
                             , isPartOfTypeDeclaration = False
                             }
@@ -2878,6 +2938,7 @@ pattern context patternInferred =
                             |> referencedPattern
                                 { isRefRef = False
                                 , rustEnumTypes = context.rustEnumTypes
+                                , rustTypeAliases = context.rustTypeAliases
                                 , typeAliasesInModule = context.typeAliasesInModule
                                 }
                 in
@@ -2974,6 +3035,10 @@ referencedPattern :
             , isPartialEq : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
+    , rustTypeAliases :
+        FastDict.Dict
+            String
+            { unusedElmTypeParameterIndexes : List Int }
     , isRefRef : Bool
     }
     -> ElmSyntaxTypeInfer.TypedNode ElmSyntaxTypeInfer.Pattern
@@ -3058,6 +3123,7 @@ referencedPattern context patternInferred =
                     patternInferred.type_
                         |> type_
                             { rustEnumTypes = context.rustEnumTypes
+                            , rustTypeAliases = context.rustTypeAliases
                             , typeAliasesInModule = context.typeAliasesInModule
                             , isPartOfTypeDeclaration = False
                             }
@@ -3109,6 +3175,7 @@ referencedPattern context patternInferred =
                         |> referencedPattern
                             { isRefRef = False
                             , rustEnumTypes = context.rustEnumTypes
+                            , rustTypeAliases = context.rustTypeAliases
                             , typeAliasesInModule = context.typeAliasesInModule
                             }
 
@@ -3123,6 +3190,7 @@ referencedPattern context patternInferred =
                         |> referencedPattern
                             { isRefRef = False
                             , rustEnumTypes = context.rustEnumTypes
+                            , rustTypeAliases = context.rustTypeAliases
                             , typeAliasesInModule = context.typeAliasesInModule
                             }
             in
@@ -3156,6 +3224,7 @@ referencedPattern context patternInferred =
                         |> referencedPattern
                             { isRefRef = False
                             , rustEnumTypes = context.rustEnumTypes
+                            , rustTypeAliases = context.rustTypeAliases
                             , typeAliasesInModule = context.typeAliasesInModule
                             }
 
@@ -3170,6 +3239,7 @@ referencedPattern context patternInferred =
                         |> referencedPattern
                             { isRefRef = False
                             , rustEnumTypes = context.rustEnumTypes
+                            , rustTypeAliases = context.rustTypeAliases
                             , typeAliasesInModule = context.typeAliasesInModule
                             }
 
@@ -3184,6 +3254,7 @@ referencedPattern context patternInferred =
                         |> referencedPattern
                             { isRefRef = False
                             , rustEnumTypes = context.rustEnumTypes
+                            , rustTypeAliases = context.rustTypeAliases
                             , typeAliasesInModule = context.typeAliasesInModule
                             }
             in
@@ -3247,6 +3318,7 @@ referencedPattern context patternInferred =
                                                 inferredType
                                                     |> type_
                                                         { rustEnumTypes = context.rustEnumTypes
+                                                        , rustTypeAliases = context.rustTypeAliases
                                                         , typeAliasesInModule = context.typeAliasesInModule
                                                         , isPartOfTypeDeclaration = False
                                                         }
@@ -3298,6 +3370,7 @@ referencedPattern context patternInferred =
                         |> referencedPattern
                             { isRefRef = False
                             , rustEnumTypes = context.rustEnumTypes
+                            , rustTypeAliases = context.rustTypeAliases
                             , typeAliasesInModule = context.typeAliasesInModule
                             }
 
@@ -3312,6 +3385,7 @@ referencedPattern context patternInferred =
                         |> referencedPattern
                             { isRefRef = True
                             , rustEnumTypes = context.rustEnumTypes
+                            , rustTypeAliases = context.rustTypeAliases
                             , typeAliasesInModule = context.typeAliasesInModule
                             }
             in
@@ -3330,6 +3404,7 @@ referencedPattern context patternInferred =
         ElmSyntaxTypeInfer.PatternListExact elements ->
             referencedPatternListExact
                 { rustEnumTypes = context.rustEnumTypes
+                , rustTypeAliases = context.rustTypeAliases
                 , typeAliasesInModule = context.typeAliasesInModule
                 }
                 elements
@@ -3400,6 +3475,7 @@ referencedPattern context patternInferred =
                                                     reference.referencedValueIndexes
                                                         |> List.member variantValueIndex
                                                 , rustEnumTypes = context.rustEnumTypes
+                                                , rustTypeAliases = context.rustTypeAliases
                                                 , typeAliasesInModule = context.typeAliasesInModule
                                                 }
                                 in
@@ -3439,6 +3515,7 @@ referencedPattern context patternInferred =
                     patternAs.variable.type_
                         |> type_
                             { rustEnumTypes = context.rustEnumTypes
+                            , rustTypeAliases = context.rustTypeAliases
                             , typeAliasesInModule = context.typeAliasesInModule
                             , isPartOfTypeDeclaration = False
                             }
@@ -3509,6 +3586,10 @@ referencedPatternListExact :
             , isPartialEq : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
+    , rustTypeAliases :
+        FastDict.Dict
+            String
+            { unusedElmTypeParameterIndexes : List Int }
     }
     -> List (ElmSyntaxTypeInfer.TypedNode ElmSyntaxTypeInfer.Pattern)
     ->
@@ -3533,6 +3614,7 @@ referencedPatternListExact context elements =
                             |> referencedPattern
                                 { isRefRef = False
                                 , rustEnumTypes = context.rustEnumTypes
+                                , rustTypeAliases = context.rustTypeAliases
                                 , typeAliasesInModule = context.typeAliasesInModule
                                 }
                 in
@@ -7933,6 +8015,10 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                             , isPartialEq : Bool
                             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
                             }
+                    , rustTypeAliases :
+                        FastDict.Dict
+                            String
+                            { unusedElmTypeParameterIndexes : List Int }
                     , rustConsts : FastSet.Set String
                     , rustFns : FastDict.Dict String { requiresAllocator : Bool }
                     , declarations :
@@ -8111,6 +8197,11 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                 , isPartialEq : Bool
                                                 , variantReferencedValueIndexes : FastDict.Dict String (List Int)
                                                 }
+                                        , rustTypeAliases :
+                                            FastDict.Dict
+                                                String
+                                                { unusedElmTypeParameterIndexes : List Int
+                                                }
                                         }
                                     transpiledModuleDeclaredRustTypes =
                                         inferredTypeDeclarationsToMostToLeastDependedOn
@@ -8128,25 +8219,36 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                         rustTypeAliasDeclaration :
                                                                             { lifetimeParameters : List String
                                                                             , parameters : List String
+                                                                            , unusedElmTypeParameterIndexes : List Int
                                                                             , type_ : RustType
                                                                             }
                                                                         rustTypeAliasDeclaration =
                                                                             typeAliasDeclaration
                                                                                 { typeAliasesInModule = typeAliasesInModule
                                                                                 , rustEnumTypes = soFar.rustEnumTypes
+                                                                                , rustTypeAliases = soFar.rustTypeAliases
                                                                                 }
                                                                                 { parameters = inferredTypeAliasDeclaration.parameters
                                                                                 , type_ = inferredTypeAliasDeclaration.type_
                                                                                 }
-                                                                    in
-                                                                    { rustEnumTypes = soFar.rustEnumTypes
-                                                                    , rustEnumDeclarations = soFar.rustEnumDeclarations
-                                                                    , rustTypeAliasDeclarations =
-                                                                        { name =
+
+                                                                        rustTypeAliasName : String
+                                                                        rustTypeAliasName =
                                                                             { moduleOrigin = moduleName
                                                                             , name = inferredTypeAliasDeclaration.name
                                                                             }
                                                                                 |> elmReferenceToPascalCaseRustName
+                                                                    in
+                                                                    { rustEnumTypes = soFar.rustEnumTypes
+                                                                    , rustEnumDeclarations = soFar.rustEnumDeclarations
+                                                                    , rustTypeAliases =
+                                                                        soFar.rustTypeAliases
+                                                                            |> FastDict.insert rustTypeAliasName
+                                                                                { unusedElmTypeParameterIndexes =
+                                                                                    rustTypeAliasDeclaration.unusedElmTypeParameterIndexes
+                                                                                }
+                                                                    , rustTypeAliasDeclarations =
+                                                                        { name = rustTypeAliasName
                                                                         , lifetimeParameters = rustTypeAliasDeclaration.lifetimeParameters
                                                                         , parameters = rustTypeAliasDeclaration.parameters
                                                                         , type_ = rustTypeAliasDeclaration.type_
@@ -8176,12 +8278,14 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                             choiceTypeDeclaration
                                                                                 { typeAliasesInModule = typeAliasesInModule
                                                                                 , rustEnumTypes = soFar.rustEnumTypes
+                                                                                , rustTypeAliases = soFar.rustTypeAliases
                                                                                 }
                                                                                 { parameters = inferredChoiceAliasDeclaration.parameters
                                                                                 , variants = inferredChoiceAliasDeclaration.variants
                                                                                 }
                                                                     in
-                                                                    { rustTypeAliasDeclarations = soFar.rustTypeAliasDeclarations
+                                                                    { rustTypeAliases = soFar.rustTypeAliases
+                                                                    , rustTypeAliasDeclarations = soFar.rustTypeAliasDeclarations
                                                                     , rustEnumTypes =
                                                                         soFar.rustEnumTypes
                                                                             |> FastDict.insert rustName
@@ -8239,11 +8343,13 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                     rustTypeAliasDeclaration :
                                                                                         { lifetimeParameters : List String
                                                                                         , parameters : List String
+                                                                                        , unusedElmTypeParameterIndexes : List Int
                                                                                         , type_ : RustType
                                                                                         }
                                                                                     rustTypeAliasDeclaration =
                                                                                         typeAliasDeclaration
                                                                                             { typeAliasesInModule = typeAliasesInModule
+                                                                                            , rustTypeAliases = withCycleDeclarationsSoFar.rustTypeAliases
                                                                                             , rustEnumTypes =
                                                                                                 -- same effect as withCycleDeclarationsSoFar.rustEnumTypes
                                                                                                 soFar.rustEnumTypes
@@ -8251,15 +8357,24 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                             { parameters = inferredTypeAliasDeclaration.parameters
                                                                                             , type_ = inferredTypeAliasDeclaration.type_
                                                                                             }
-                                                                                in
-                                                                                { rustEnumTypes = withCycleDeclarationsSoFar.rustEnumTypes
-                                                                                , rustEnumDeclarations = withCycleDeclarationsSoFar.rustEnumDeclarations
-                                                                                , rustTypeAliasDeclarations =
-                                                                                    { name =
+
+                                                                                    rustTypeAliasName : String
+                                                                                    rustTypeAliasName =
                                                                                         { moduleOrigin = moduleName
                                                                                         , name = inferredTypeAliasDeclaration.name
                                                                                         }
                                                                                             |> elmReferenceToPascalCaseRustName
+                                                                                in
+                                                                                { rustEnumTypes = withCycleDeclarationsSoFar.rustEnumTypes
+                                                                                , rustEnumDeclarations = withCycleDeclarationsSoFar.rustEnumDeclarations
+                                                                                , rustTypeAliases =
+                                                                                    soFar.rustTypeAliases
+                                                                                        |> FastDict.insert rustTypeAliasName
+                                                                                            { unusedElmTypeParameterIndexes =
+                                                                                                rustTypeAliasDeclaration.unusedElmTypeParameterIndexes
+                                                                                            }
+                                                                                , rustTypeAliasDeclarations =
+                                                                                    { name = rustTypeAliasName
                                                                                     , lifetimeParameters = rustTypeAliasDeclaration.lifetimeParameters
                                                                                     , parameters = rustTypeAliasDeclaration.parameters
                                                                                     , type_ = rustTypeAliasDeclaration.type_
@@ -8288,6 +8403,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                     rustEnumDeclaration =
                                                                                         choiceTypeDeclaration
                                                                                             { typeAliasesInModule = typeAliasesInModule
+                                                                                            , rustTypeAliases = withCycleDeclarationsSoFar.rustTypeAliases
                                                                                             , rustEnumTypes = withCycleDeclarationsSoFar.rustEnumTypes
                                                                                             }
                                                                                             { parameters = inferredChoiceTypeDeclaration.parameters
@@ -8295,6 +8411,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                             }
                                                                                 in
                                                                                 { rustTypeAliasDeclarations = withCycleDeclarationsSoFar.rustTypeAliasDeclarations
+                                                                                , rustTypeAliases = withCycleDeclarationsSoFar.rustTypeAliases
                                                                                 , rustEnumTypes =
                                                                                     withCycleDeclarationsSoFar.rustEnumTypes
                                                                                         |> FastDict.insert rustName
@@ -8350,6 +8467,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                 { rustEnumDeclarations = []
                                                 , rustTypeAliasDeclarations = []
                                                 , rustEnumTypes = soFarAcrossModules.rustEnumTypes
+                                                , rustTypeAliases = soFarAcrossModules.rustTypeAliases
                                                 }
                                 in
                                 moduleInferred.declarationsInferred
@@ -8366,6 +8484,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                             |> valueOrFunctionDeclaration
                                                                 { moduleInfo = moduleInfo
                                                                 , rustEnumTypes = transpiledModuleDeclaredRustTypes.rustEnumTypes
+                                                                , rustTypeAliases = transpiledModuleDeclaredRustTypes.rustTypeAliases
                                                                 , rustConsts = withInferredValeAndFunctionDeclarationsSoFar.rustConsts
                                                                 , rustFns = withInferredValeAndFunctionDeclarationsSoFar.rustFns
                                                                 }
@@ -8383,6 +8502,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                 Just parameters ->
                                                                     { errors = withInferredValeAndFunctionDeclarationsSoFar.errors
                                                                     , rustEnumTypes = withInferredValeAndFunctionDeclarationsSoFar.rustEnumTypes
+                                                                    , rustTypeAliases = withInferredValeAndFunctionDeclarationsSoFar.rustTypeAliases
                                                                     , rustConsts = withInferredValeAndFunctionDeclarationsSoFar.rustConsts
                                                                     , rustFns =
                                                                         withInferredValeAndFunctionDeclarationsSoFar.rustFns
@@ -8408,6 +8528,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                 Nothing ->
                                                                     { errors = withInferredValeAndFunctionDeclarationsSoFar.errors
                                                                     , rustEnumTypes = withInferredValeAndFunctionDeclarationsSoFar.rustEnumTypes
+                                                                    , rustTypeAliases = withInferredValeAndFunctionDeclarationsSoFar.rustTypeAliases
                                                                     , rustFns = withInferredValeAndFunctionDeclarationsSoFar.rustFns
                                                                     , rustConsts =
                                                                         withInferredValeAndFunctionDeclarationsSoFar.rustConsts
@@ -8428,6 +8549,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                         Err error ->
                                                             { declarations = withInferredValeAndFunctionDeclarationsSoFar.declarations
                                                             , rustEnumTypes = withInferredValeAndFunctionDeclarationsSoFar.rustEnumTypes
+                                                            , rustTypeAliases = withInferredValeAndFunctionDeclarationsSoFar.rustTypeAliases
                                                             , rustConsts = withInferredValeAndFunctionDeclarationsSoFar.rustConsts
                                                             , rustFns = withInferredValeAndFunctionDeclarationsSoFar.rustFns
                                                             , errors =
@@ -8450,6 +8572,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                         |> valueOrFunctionDeclaration
                                                                             { moduleInfo = moduleInfo
                                                                             , rustEnumTypes = transpiledModuleDeclaredRustTypes.rustEnumTypes
+                                                                            , rustTypeAliases = transpiledModuleDeclaredRustTypes.rustTypeAliases
                                                                             , rustConsts = withCycleMembersSoFar.rustConsts
                                                                             , rustFns = withCycleMembersSoFar.rustFns
                                                                             }
@@ -8465,6 +8588,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                         in
                                                                         { errors = withCycleMembersSoFar.errors
                                                                         , rustEnumTypes = withCycleMembersSoFar.rustEnumTypes
+                                                                        , rustTypeAliases = withCycleMembersSoFar.rustTypeAliases
                                                                         , rustConsts = withCycleMembersSoFar.rustConsts
                                                                         , rustFns =
                                                                             withCycleMembersSoFar.rustFns
@@ -8492,6 +8616,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                     Err error ->
                                                                         { declarations = withCycleMembersSoFar.declarations
                                                                         , rustEnumTypes = withCycleMembersSoFar.rustEnumTypes
+                                                                        , rustTypeAliases = withCycleMembersSoFar.rustTypeAliases
                                                                         , rustConsts = withCycleMembersSoFar.rustConsts
                                                                         , rustFns = withCycleMembersSoFar.rustFns
                                                                         , errors =
@@ -8511,6 +8636,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                             moduleDeclaredInferredTypeAliasesAndChoiceTypes.errors
                                                 ++ soFarAcrossModules.errors
                                         , rustEnumTypes = transpiledModuleDeclaredRustTypes.rustEnumTypes
+                                        , rustTypeAliases = transpiledModuleDeclaredRustTypes.rustTypeAliases
                                         , rustConsts = soFarAcrossModules.rustConsts
                                         , rustFns = soFarAcrossModules.rustFns
                                         , declarations =
@@ -8527,6 +8653,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                             )
                             { errors = []
                             , rustEnumTypes = FastDict.empty
+                            , rustTypeAliases = FastDict.empty
                             , rustConsts = FastSet.empty
                             , rustFns = FastDict.empty
                             , declarations =
@@ -8949,6 +9076,10 @@ valueOrFunctionDeclaration :
             , isPartialEq : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
+    , rustTypeAliases :
+        FastDict.Dict
+            String
+            { unusedElmTypeParameterIndexes : List Int }
     , rustConsts : FastSet.Set String
     , rustFns : FastDict.Dict String { requiresAllocator : Bool }
     }
@@ -9001,6 +9132,7 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
                             additionalParameterInferredType
                                 |> type_
                                     { rustEnumTypes = context.rustEnumTypes
+                                    , rustTypeAliases = context.rustTypeAliases
                                     , typeAliasesInModule = typeAliasesInModule
                                     , isPartOfTypeDeclaration = False
                                     }
@@ -9029,6 +9161,7 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
                                     |> pattern
                                         { typeAliasesInModule = typeAliasesInModule
                                         , rustEnumTypes = context.rustEnumTypes
+                                        , rustTypeAliases = context.rustTypeAliases
                                         }
                         in
                         { patterns =
@@ -9037,6 +9170,7 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
                                 parameter.type_
                                     |> type_
                                         { rustEnumTypes = context.rustEnumTypes
+                                        , rustTypeAliases = context.rustTypeAliases
                                         , typeAliasesInModule = typeAliasesInModule
                                         , isPartOfTypeDeclaration = False
                                         }
@@ -9096,6 +9230,7 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
                     syntaxDeclarationValueOrFunction.type_
                         |> type_
                             { rustEnumTypes = context.rustEnumTypes
+                            , rustTypeAliases = context.rustTypeAliases
                             , typeAliasesInModule = typeAliasesInModule
                             , isPartOfTypeDeclaration = False
                             }
@@ -9182,6 +9317,7 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
                     rustFullTypeAsFunction.output
                         |> type_
                             { rustEnumTypes = context.rustEnumTypes
+                            , rustTypeAliases = context.rustTypeAliases
                             , typeAliasesInModule = typeAliasesInModule
                             , isPartOfTypeDeclaration = False
                             }
@@ -9218,6 +9354,7 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
                             )
                 , letDeclaredValueAndFunctionTypes = FastDict.empty
                 , rustEnumTypes = context.rustEnumTypes
+                , rustTypeAliases = context.rustTypeAliases
                 , rustConsts = context.rustConsts
                 , rustFns = context.rustFns
                 , path = [ "result" ]
@@ -9768,6 +9905,10 @@ type alias ExpressionToRustContext =
             , isPartialEq : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
+    , rustTypeAliases :
+        FastDict.Dict
+            String
+            { unusedElmTypeParameterIndexes : List Int }
     , rustConsts : FastSet.Set String
     , rustFns : FastDict.Dict String { requiresAllocator : Bool }
     , path : List String
@@ -9997,6 +10138,7 @@ expression context expressionTypedNode =
                             typeFunction.input
                                 |> type_
                                     { rustEnumTypes = context.rustEnumTypes
+                                    , rustTypeAliases = context.rustTypeAliases
                                     , typeAliasesInModule = typeAliasesInModule
                                     , isPartOfTypeDeclaration = False
                                     }
@@ -10054,6 +10196,7 @@ expression context expressionTypedNode =
                                     leftInferredType
                                         |> type_
                                             { rustEnumTypes = context.rustEnumTypes
+                                            , rustTypeAliases = context.rustTypeAliases
                                             , typeAliasesInModule = typeAliasesInModule
                                             , isPartOfTypeDeclaration = False
                                             }
@@ -10063,6 +10206,7 @@ expression context expressionTypedNode =
                                     rightInferredType
                                         |> type_
                                             { rustEnumTypes = context.rustEnumTypes
+                                            , rustTypeAliases = context.rustTypeAliases
                                             , typeAliasesInModule = typeAliasesInModule
                                             , isPartOfTypeDeclaration = False
                                             }
@@ -10254,6 +10398,7 @@ expression context expressionTypedNode =
                                                                                     unnestParameterType
                                                                                         |> type_
                                                                                             { rustEnumTypes = context.rustEnumTypes
+                                                                                            , rustTypeAliases = context.rustTypeAliases
                                                                                             , typeAliasesInModule = typeAliasesInModule
                                                                                             , isPartOfTypeDeclaration = False
                                                                                             }
@@ -10310,6 +10455,7 @@ expression context expressionTypedNode =
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustTypeAliases = context.rustTypeAliases
                         , rustConsts = context.rustConsts
                         , rustFns = context.rustFns
                         , path = "called" :: context.path
@@ -10329,6 +10475,7 @@ expression context expressionTypedNode =
                                     , letDeclaredValueAndFunctionTypes =
                                         context.letDeclaredValueAndFunctionTypes
                                     , rustEnumTypes = context.rustEnumTypes
+                                    , rustTypeAliases = context.rustTypeAliases
                                     , rustConsts = context.rustConsts
                                     , rustFns = context.rustFns
                                     , path =
@@ -10358,6 +10505,7 @@ expression context expressionTypedNode =
                                 , letDeclaredValueAndFunctionTypes =
                                     context.letDeclaredValueAndFunctionTypes
                                 , rustEnumTypes = context.rustEnumTypes
+                                , rustTypeAliases = context.rustTypeAliases
                                 , rustConsts = context.rustConsts
                                 , rustFns = context.rustFns
                                 , path = "left" :: context.path
@@ -10373,6 +10521,7 @@ expression context expressionTypedNode =
                                 , letDeclaredValueAndFunctionTypes =
                                     context.letDeclaredValueAndFunctionTypes
                                 , rustEnumTypes = context.rustEnumTypes
+                                , rustTypeAliases = context.rustTypeAliases
                                 , rustConsts = context.rustConsts
                                 , rustFns = context.rustFns
                                 , path = "right" :: context.path
@@ -10397,6 +10546,7 @@ expression context expressionTypedNode =
                                 , letDeclaredValueAndFunctionTypes =
                                     context.letDeclaredValueAndFunctionTypes
                                 , rustEnumTypes = context.rustEnumTypes
+                                , rustTypeAliases = context.rustTypeAliases
                                 , rustConsts = context.rustConsts
                                 , rustFns = context.rustFns
                                 , path = "left" :: context.path
@@ -10412,6 +10562,7 @@ expression context expressionTypedNode =
                                 , letDeclaredValueAndFunctionTypes =
                                     context.letDeclaredValueAndFunctionTypes
                                 , rustEnumTypes = context.rustEnumTypes
+                                , rustTypeAliases = context.rustTypeAliases
                                 , rustConsts = context.rustConsts
                                 , rustFns = context.rustFns
                                 , path = "right" :: context.path
@@ -10466,6 +10617,7 @@ expression context expressionTypedNode =
                                 , letDeclaredValueAndFunctionTypes =
                                     context.letDeclaredValueAndFunctionTypes
                                 , rustEnumTypes = context.rustEnumTypes
+                                , rustTypeAliases = context.rustTypeAliases
                                 , rustConsts = context.rustConsts
                                 , rustFns = context.rustFns
                                 , path = "left" :: context.path
@@ -10481,6 +10633,7 @@ expression context expressionTypedNode =
                                 , letDeclaredValueAndFunctionTypes =
                                     context.letDeclaredValueAndFunctionTypes
                                 , rustEnumTypes = context.rustEnumTypes
+                                , rustTypeAliases = context.rustTypeAliases
                                 , rustConsts = context.rustConsts
                                 , rustFns = context.rustFns
                                 , path = "right" :: context.path
@@ -10523,6 +10676,7 @@ expression context expressionTypedNode =
                                 , letDeclaredValueAndFunctionTypes =
                                     context.letDeclaredValueAndFunctionTypes
                                 , rustEnumTypes = context.rustEnumTypes
+                                , rustTypeAliases = context.rustTypeAliases
                                 , rustConsts = context.rustConsts
                                 , rustFns = context.rustFns
                                 , path = "left" :: context.path
@@ -10538,6 +10692,7 @@ expression context expressionTypedNode =
                                 , letDeclaredValueAndFunctionTypes =
                                     context.letDeclaredValueAndFunctionTypes
                                 , rustEnumTypes = context.rustEnumTypes
+                                , rustTypeAliases = context.rustTypeAliases
                                 , rustConsts = context.rustConsts
                                 , rustFns = context.rustFns
                                 , path = "right" :: context.path
@@ -10579,6 +10734,7 @@ expression context expressionTypedNode =
                                 , letDeclaredValueAndFunctionTypes =
                                     context.letDeclaredValueAndFunctionTypes
                                 , rustEnumTypes = context.rustEnumTypes
+                                , rustTypeAliases = context.rustTypeAliases
                                 , rustConsts = context.rustConsts
                                 , rustFns = context.rustFns
                                 , path = "left" :: context.path
@@ -10594,6 +10750,7 @@ expression context expressionTypedNode =
                                 , letDeclaredValueAndFunctionTypes =
                                     context.letDeclaredValueAndFunctionTypes
                                 , rustEnumTypes = context.rustEnumTypes
+                                , rustTypeAliases = context.rustTypeAliases
                                 , rustConsts = context.rustConsts
                                 , rustFns = context.rustFns
                                 , path = "right" :: context.path
@@ -10686,6 +10843,7 @@ expression context expressionTypedNode =
                                             valueType
                                                 |> type_
                                                     { rustEnumTypes = context.rustEnumTypes
+                                                    , rustTypeAliases = context.rustTypeAliases
                                                     , typeAliasesInModule = typeAliasesInModule
                                                     , isPartOfTypeDeclaration = False
                                                     }
@@ -10801,6 +10959,7 @@ expression context expressionTypedNode =
                                             parameter.type_
                                                 |> type_
                                                     { rustEnumTypes = context.rustEnumTypes
+                                                    , rustTypeAliases = context.rustTypeAliases
                                                     , typeAliasesInModule = typeAliasesInModule
                                                     , isPartOfTypeDeclaration = False
                                                     }
@@ -10902,6 +11061,7 @@ expression context expressionTypedNode =
                                                                 parameterInferredType
                                                                     |> type_
                                                                         { rustEnumTypes = context.rustEnumTypes
+                                                                        , rustTypeAliases = context.rustTypeAliases
                                                                         , typeAliasesInModule = typeAliasesInModule
                                                                         , isPartOfTypeDeclaration = False
                                                                         }
@@ -10974,6 +11134,7 @@ expression context expressionTypedNode =
                                                     inferredParameterType
                                                         |> type_
                                                             { rustEnumTypes = context.rustEnumTypes
+                                                            , rustTypeAliases = context.rustTypeAliases
                                                             , typeAliasesInModule = typeAliasesInModule
                                                             , isPartOfTypeDeclaration = False
                                                             }
@@ -11082,6 +11243,7 @@ expression context expressionTypedNode =
                                                                     |> FastDict.get moduleName
                                                                     |> Maybe.map .typeAliases
                                                         , rustEnumTypes = context.rustEnumTypes
+                                                        , rustTypeAliases = context.rustTypeAliases
                                                         , isPartOfTypeDeclaration = False
                                                         }
                                                     |> Just
@@ -11244,6 +11406,7 @@ expression context expressionTypedNode =
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustTypeAliases = context.rustTypeAliases
                         , rustConsts = context.rustConsts
                         , rustFns = context.rustFns
                         , path = "condition" :: context.path
@@ -11259,6 +11422,7 @@ expression context expressionTypedNode =
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustTypeAliases = context.rustTypeAliases
                         , rustConsts = context.rustConsts
                         , rustFns = context.rustFns
                         , path = "on_true" :: context.path
@@ -11274,6 +11438,7 @@ expression context expressionTypedNode =
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustTypeAliases = context.rustTypeAliases
                         , rustConsts = context.rustConsts
                         , rustFns = context.rustFns
                         , path = "on_false" :: context.path
@@ -11323,6 +11488,7 @@ expression context expressionTypedNode =
                         , functionDeclaredRustParameterEquivalentBindings =
                             context.functionDeclaredRustParameterEquivalentBindings
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustTypeAliases = context.rustTypeAliases
                         , rustConsts = context.rustConsts
                         , rustFns = context.rustFns
                         , path = "part0" :: context.path
@@ -11338,6 +11504,7 @@ expression context expressionTypedNode =
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustTypeAliases = context.rustTypeAliases
                         , rustConsts = context.rustConsts
                         , rustFns = context.rustFns
                         , path = "part1" :: context.path
@@ -11363,6 +11530,7 @@ expression context expressionTypedNode =
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustTypeAliases = context.rustTypeAliases
                         , rustConsts = context.rustConsts
                         , rustFns = context.rustFns
                         , path = "part0" :: context.path
@@ -11378,6 +11546,7 @@ expression context expressionTypedNode =
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustTypeAliases = context.rustTypeAliases
                         , rustConsts = context.rustConsts
                         , rustFns = context.rustFns
                         , path = "part1" :: context.path
@@ -11393,6 +11562,7 @@ expression context expressionTypedNode =
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustTypeAliases = context.rustTypeAliases
                         , rustConsts = context.rustConsts
                         , rustFns = context.rustFns
                         , path = "part2" :: context.path
@@ -11440,6 +11610,7 @@ expression context expressionTypedNode =
                                     , letDeclaredValueAndFunctionTypes =
                                         context.letDeclaredValueAndFunctionTypes
                                     , rustEnumTypes = context.rustEnumTypes
+                                    , rustTypeAliases = context.rustTypeAliases
                                     , rustConsts = context.rustConsts
                                     , rustFns = context.rustFns
                                     , path = (elementIndex |> String.fromInt) :: context.path
@@ -11479,6 +11650,7 @@ expression context expressionTypedNode =
                                         , letDeclaredValueAndFunctionTypes =
                                             context.letDeclaredValueAndFunctionTypes
                                         , rustEnumTypes = context.rustEnumTypes
+                                        , rustTypeAliases = context.rustTypeAliases
                                         , rustConsts = context.rustConsts
                                         , rustFns = context.rustFns
                                         , path =
@@ -11564,6 +11736,7 @@ expression context expressionTypedNode =
                                                 , letDeclaredValueAndFunctionTypes =
                                                     context.letDeclaredValueAndFunctionTypes
                                                 , rustEnumTypes = context.rustEnumTypes
+                                                , rustTypeAliases = context.rustTypeAliases
                                                 , rustConsts = context.rustConsts
                                                 , rustFns = context.rustFns
                                                 , path =
@@ -11606,6 +11779,7 @@ expression context expressionTypedNode =
                                             |> pattern
                                                 { typeAliasesInModule = typeAliasesInModule
                                                 , rustEnumTypes = context.rustEnumTypes
+                                                , rustTypeAliases = context.rustTypeAliases
                                                 }
 
                                     rustParameterType : RustType
@@ -11613,6 +11787,7 @@ expression context expressionTypedNode =
                                         parameter.type_
                                             |> type_
                                                 { rustEnumTypes = context.rustEnumTypes
+                                                , rustTypeAliases = context.rustTypeAliases
                                                 , typeAliasesInModule = typeAliasesInModule
                                                 , isPartOfTypeDeclaration = False
                                                 }
@@ -11650,6 +11825,7 @@ expression context expressionTypedNode =
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustTypeAliases = context.rustTypeAliases
                         , rustConsts = context.rustConsts
                         , rustFns = context.rustFns
                         , path = "result" :: context.path
@@ -11681,6 +11857,7 @@ expression context expressionTypedNode =
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustTypeAliases = context.rustTypeAliases
                         , rustConsts = context.rustConsts
                         , rustFns = context.rustFns
                         , path = "matched" :: context.path
@@ -11707,6 +11884,7 @@ expression context expressionTypedNode =
                                                 |> pattern
                                                     { typeAliasesInModule = typeAliasesInModule
                                                     , rustEnumTypes = context.rustEnumTypes
+                                                    , rustTypeAliases = context.rustTypeAliases
                                                     }
                                     in
                                     { pattern = rustPattern.pattern
@@ -11733,6 +11911,7 @@ expression context expressionTypedNode =
                                         , letDeclaredValueAndFunctionTypes =
                                             context.letDeclaredValueAndFunctionTypes
                                         , rustEnumTypes = context.rustEnumTypes
+                                        , rustTypeAliases = context.rustTypeAliases
                                         , rustConsts = context.rustConsts
                                         , rustFns = context.rustFns
                                         , path =
@@ -11792,6 +11971,7 @@ expression context expressionTypedNode =
                                                 (letValueOrFunctionDeclarationToRustKindAndParameters
                                                     { moduleInfo = context.moduleInfo
                                                     , rustEnumTypes = context.rustEnumTypes
+                                                    , rustTypeAliases = context.rustTypeAliases
                                                     , localElmBindingsInScope =
                                                         context.localElmBindingsInScope
                                                             |> FastDict.union
@@ -11830,6 +12010,7 @@ expression context expressionTypedNode =
                                     , letDeclaredValueAndFunctionTypes =
                                         letDeclaredValueAndFunctionTypesIncludingFromContext
                                     , rustEnumTypes = context.rustEnumTypes
+                                    , rustTypeAliases = context.rustTypeAliases
                                     , rustConsts = context.rustConsts
                                     , rustFns = context.rustFns
                                     , path =
@@ -11849,6 +12030,7 @@ expression context expressionTypedNode =
                         , letDeclaredValueAndFunctionTypes =
                             letDeclaredValueAndFunctionTypesIncludingFromContext
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustTypeAliases = context.rustTypeAliases
                         , rustConsts = context.rustConsts
                         , rustFns = context.rustFns
                         , path = "let_result" :: context.path
@@ -11982,6 +12164,7 @@ rustExpressionReferenceDeclaredFnAppliedLazilyOrCurriedIfNecessary context rustR
                         parameterInferredType
                             |> type_
                                 { rustEnumTypes = context.rustEnumTypes
+                                , rustTypeAliases = context.rustTypeAliases
                                 , typeAliasesInModule = typeAliasesInModule
                                 , isPartOfTypeDeclaration = False
                                 }
@@ -15341,6 +15524,7 @@ letDeclaration context syntaxLetDeclarationNode =
                                                 |> FastDict.get moduleNameToAccess
                                                 |> Maybe.map .typeAliases
                                     , rustEnumTypes = context.rustEnumTypes
+                                    , rustTypeAliases = context.rustTypeAliases
                                     }
                     in
                     RustStatementLetDestructuring
@@ -15362,6 +15546,7 @@ letDeclaration context syntaxLetDeclarationNode =
                         , letDeclaredValueAndFunctionTypes =
                             context.letDeclaredValueAndFunctionTypes
                         , rustEnumTypes = context.rustEnumTypes
+                        , rustTypeAliases = context.rustTypeAliases
                         , rustConsts = context.rustConsts
                         , rustFns = context.rustFns
                         , path =
@@ -15401,6 +15586,10 @@ letValueOrFunctionDeclarationToRustKindAndParameters :
             , isPartialEq : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
+    , rustTypeAliases :
+        FastDict.Dict
+            String
+            { unusedElmTypeParameterIndexes : List Int }
     , moduleInfo :
         FastDict.Dict
             {- module origin -} String
@@ -15458,6 +15647,7 @@ letValueOrFunctionDeclarationToRustKindAndParameters context inferredLetDeclarat
             inferredLetDeclarationValueOrFunctionNode.declaration.type_
                 |> type_
                     { rustEnumTypes = context.rustEnumTypes
+                    , rustTypeAliases = context.rustTypeAliases
                     , typeAliasesInModule = typeAliasesInModule
                     , isPartOfTypeDeclaration = False
                     }
@@ -15584,6 +15774,7 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
             inferredLetDeclarationValueOrFunctionNode.declaration.type_
                 |> type_
                     { rustEnumTypes = context.rustEnumTypes
+                    , rustTypeAliases = context.rustTypeAliases
                     , typeAliasesInModule = typeAliasesInModule
                     , isPartOfTypeDeclaration = False
                     }
@@ -15655,6 +15846,7 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                             (inferredLetDeclarationValueOrFunctionNode.declaration.type_
                                 |> type_
                                     { rustEnumTypes = context.rustEnumTypes
+                                    , rustTypeAliases = context.rustTypeAliases
                                     , typeAliasesInModule = typeAliasesInModule
                                     , isPartOfTypeDeclaration = False
                                     }
@@ -15673,6 +15865,7 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                     , functionDeclaredRustParameterEquivalentBindings =
                         context.functionDeclaredRustParameterEquivalentBindings
                     , rustEnumTypes = context.rustEnumTypes
+                    , rustTypeAliases = context.rustTypeAliases
                     , rustFns = context.rustFns
                     , rustConsts = context.rustConsts
                     }
@@ -15699,6 +15892,7 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                                 additionalParameterInferredType
                                     |> type_
                                         { rustEnumTypes = context.rustEnumTypes
+                                        , rustTypeAliases = context.rustTypeAliases
                                         , typeAliasesInModule = typeAliasesInModule
                                         , isPartOfTypeDeclaration = False
                                         }
@@ -15726,6 +15920,7 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                                         |> pattern
                                             { typeAliasesInModule = typeAliasesInModule
                                             , rustEnumTypes = context.rustEnumTypes
+                                            , rustTypeAliases = context.rustTypeAliases
                                             }
                             in
                             { patterns =
@@ -15734,6 +15929,7 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                                     parameter.type_
                                         |> type_
                                             { rustEnumTypes = context.rustEnumTypes
+                                            , rustTypeAliases = context.rustTypeAliases
                                             , typeAliasesInModule = typeAliasesInModule
                                             , isPartOfTypeDeclaration = False
                                             }
@@ -15801,6 +15997,7 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                         inferredFullTypeAsFunction.output
                             |> type_
                                 { rustEnumTypes = context.rustEnumTypes
+                                , rustTypeAliases = context.rustTypeAliases
                                 , typeAliasesInModule = typeAliasesInModule
                                 , isPartOfTypeDeclaration = False
                                 }
@@ -15828,6 +16025,7 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                                             parameter.type_
                                                 |> type_
                                                     { rustEnumTypes = context.rustEnumTypes
+                                                    , rustTypeAliases = context.rustTypeAliases
                                                     , typeAliasesInModule = typeAliasesInModule
                                                     , isPartOfTypeDeclaration = False
                                                     }
@@ -15895,6 +16093,7 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                                             (capturedVariable.type_
                                                 |> type_
                                                     { rustEnumTypes = context.rustEnumTypes
+                                                    , rustTypeAliases = context.rustTypeAliases
                                                     , typeAliasesInModule = typeAliasesInModule
                                                     , isPartOfTypeDeclaration = False
                                                     }
@@ -15941,6 +16140,7 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                     , letDeclaredValueAndFunctionTypes =
                         context.letDeclaredValueAndFunctionTypes
                     , rustEnumTypes = context.rustEnumTypes
+                    , rustTypeAliases = context.rustTypeAliases
                     , rustConsts = context.rustConsts
                     , rustFns = context.rustFns
                     , path = "result" :: context.path
