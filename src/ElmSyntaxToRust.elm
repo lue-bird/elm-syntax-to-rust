@@ -539,7 +539,12 @@ choiceTypeDeclaration :
     , rustTypeAliases :
         FastDict.Dict
             String
-            { unusedElmTypeParameterIndexes : List Int }
+            { lifetimeParameters : List String
+            , unusedElmTypeParameterIndexes : List Int
+            , isCopy : Bool
+            , isDebug : Bool
+            , isPartialEq : Bool
+            }
     }
     ->
         { parameters : List String
@@ -571,7 +576,6 @@ choiceTypeDeclaration context syntaxChoiceType =
                                                 |> type_
                                                     { rustEnumTypes = context.rustEnumTypes
                                                     , rustTypeAliases = context.rustTypeAliases
-                                                    , typeAliasesInModule = context.typeAliasesInModule
                                                     , isPartOfTypeDeclaration = True
                                                     }
                                         )
@@ -1106,7 +1110,12 @@ typeAliasDeclaration :
     , rustTypeAliases :
         FastDict.Dict
             String
-            { unusedElmTypeParameterIndexes : List Int }
+            { lifetimeParameters : List String
+            , unusedElmTypeParameterIndexes : List Int
+            , isCopy : Bool
+            , isDebug : Bool
+            , isPartialEq : Bool
+            }
     }
     ->
         { parameters : List String
@@ -1127,7 +1136,6 @@ typeAliasDeclaration context inferredTypeAlias =
                 |> type_
                     { rustEnumTypes = context.rustEnumTypes
                     , rustTypeAliases = context.rustTypeAliases
-                    , typeAliasesInModule = context.typeAliasesInModule
                     , isPartOfTypeDeclaration = True
                     }
 
@@ -1204,17 +1212,6 @@ printRustTypeAliasDeclaration rustTypeAliasDeclaration =
 
 type_ :
     { isPartOfTypeDeclaration : Bool
-    , typeAliasesInModule :
-        String
-        ->
-            Maybe
-                (FastDict.Dict
-                    String
-                    { parameters : List String
-                    , recordFieldOrder : Maybe (List String)
-                    , type_ : ElmSyntaxTypeInfer.Type
-                    }
-                )
     , rustEnumTypes :
         FastDict.Dict
             String
@@ -1228,7 +1225,12 @@ type_ :
     , rustTypeAliases :
         FastDict.Dict
             String
-            { unusedElmTypeParameterIndexes : List Int }
+            { lifetimeParameters : List String
+            , unusedElmTypeParameterIndexes : List Int
+            , isCopy : Bool
+            , isDebug : Bool
+            , isPartialEq : Bool
+            }
     }
     -> ElmSyntaxTypeInfer.Type
     -> RustType
@@ -1275,17 +1277,6 @@ generatedLifetimeVariableName =
 
 typeNotVariable :
     { isPartOfTypeDeclaration : Bool
-    , typeAliasesInModule :
-        String
-        ->
-            Maybe
-                (FastDict.Dict
-                    String
-                    { parameters : List String
-                    , recordFieldOrder : Maybe (List String)
-                    , type_ : ElmSyntaxTypeInfer.Type
-                    }
-                )
     , rustEnumTypes :
         FastDict.Dict
             String
@@ -1299,7 +1290,12 @@ typeNotVariable :
     , rustTypeAliases :
         FastDict.Dict
             String
-            { unusedElmTypeParameterIndexes : List Int }
+            { lifetimeParameters : List String
+            , unusedElmTypeParameterIndexes : List Int
+            , isCopy : Bool
+            , isDebug : Bool
+            , isPartialEq : Bool
+            }
     }
     -> ElmSyntaxTypeInfer.TypeNotVariable
     -> RustType
@@ -1321,7 +1317,7 @@ typeNotVariable context inferredTypeNotVariable =
                         { arguments =
                             typeConstruct.arguments
                                 |> List.map
-                                    (\argument -> argument |> type_ context)
+                                    (\elmArgument -> elmArgument |> type_ context)
                         , name = coreRust.name
                         , qualification = coreRust.qualification
                         , lifetimeArguments = coreRust.lifetimeParameters
@@ -1338,97 +1334,79 @@ typeNotVariable context inferredTypeNotVariable =
                             , name = typeConstruct.name
                             }
                                 |> elmReferenceToPascalCaseRustName
-
-                        isTypeAlias : Bool
-                        isTypeAlias =
-                            case context.typeAliasesInModule typeConstruct.moduleOrigin of
-                                Nothing ->
-                                    False
-
-                                Just inModule ->
-                                    inModule |> FastDict.member typeConstruct.name
                     in
-                    if isTypeAlias then
-                        let
-                            typeAliasExpanded : ElmSyntaxTypeInfer.Type
-                            typeAliasExpanded =
-                                ElmSyntaxTypeInfer.TypeConstruct typeConstruct
-                                    |> inferredTypeNotVariableExpandInnerAliases
-                                        context.typeAliasesInModule
+                    case context.rustTypeAliases |> FastDict.get rustName of
+                        Just originRustTypeAlias ->
+                            RustTypeConstruct
+                                { arguments =
+                                    typeConstruct.arguments
+                                        |> List.indexedMap Tuple.pair
+                                        |> List.filterMap
+                                            (\( elmArgumentIndex, elmArgument ) ->
+                                                if
+                                                    originRustTypeAlias.unusedElmTypeParameterIndexes
+                                                        |> List.member elmArgumentIndex
+                                                then
+                                                    Nothing
 
-                            expandedRustType : RustType
-                            expandedRustType =
-                                typeAliasExpanded
-                                    |> type_ context
-                        in
-                        RustTypeConstruct
-                            { arguments =
-                                typeConstruct.arguments
-                                    |> List.map
-                                        (\argument -> argument |> type_ context)
-                            , lifetimeArguments =
-                                expandedRustType
-                                    |> rustTypeUsedLifetimeVariables
-                                    |> FastSet.toList
-                            , qualification = []
-                            , name = rustName
-                            , isCopy =
-                                expandedRustType
-                                    |> rustTypeIsCopy { variablesAreCopy = True }
-                            , isDebug =
-                                expandedRustType
-                                    |> rustTypeIsDebug { variablesAreDebug = True }
-                            , isPartialEq =
-                                expandedRustType
-                                    |> rustTypeIsPartialEq { variablesArePartialEq = True }
-                            }
+                                                else
+                                                    Just (elmArgument |> type_ context)
+                                            )
+                                , lifetimeArguments =
+                                    originRustTypeAlias.lifetimeParameters
+                                , qualification = []
+                                , name = rustName
+                                , isCopy = originRustTypeAlias.isCopy
+                                , isDebug = originRustTypeAlias.isDebug
+                                , isPartialEq = originRustTypeAlias.isPartialEq
+                                }
 
-                    else
-                        case context.rustEnumTypes |> FastDict.get rustName of
-                            -- it's a (mutually) recursive enum, so it must have referenced parts
-                            -- and therefore also has a lifetime parameter
-                            Nothing ->
-                                RustTypeConstruct
-                                    { arguments =
-                                        typeConstruct.arguments
-                                            |> List.map
-                                                (\argument -> argument |> type_ context)
-                                    , lifetimeArguments =
-                                        [ generatedLifetimeVariableName ]
-                                    , qualification = []
-                                    , name = rustName
-                                    , isCopy =
-                                        -- this assumption works because any mention
-                                        -- of a mutually recursive type will
-                                        -- be behind a & in practice
-                                        True
-                                    , isDebug = {- TODO this is a wrong assumption -} True
-                                    , isPartialEq = {- TODO this is a wrong assumption -} True
-                                    }
+                        Nothing ->
+                            case context.rustEnumTypes |> FastDict.get rustName of
+                                Just originRustEnumType ->
+                                    RustTypeConstruct
+                                        { arguments =
+                                            typeConstruct.arguments
+                                                |> List.indexedMap Tuple.pair
+                                                |> List.filterMap
+                                                    (\( argumentIndex, argument ) ->
+                                                        if
+                                                            originRustEnumType.unusedElmTypeParameterIndexes
+                                                                |> List.member argumentIndex
+                                                        then
+                                                            Nothing
 
-                            Just originRustEnumType ->
-                                RustTypeConstruct
-                                    { arguments =
-                                        typeConstruct.arguments
-                                            |> List.indexedMap Tuple.pair
-                                            |> List.filterMap
-                                                (\( argumentIndex, argument ) ->
-                                                    if
-                                                        originRustEnumType.unusedElmTypeParameterIndexes
-                                                            |> List.member argumentIndex
-                                                    then
-                                                        Nothing
+                                                        else
+                                                            Just (argument |> type_ context)
+                                                    )
+                                        , lifetimeArguments = originRustEnumType.lifetimeParameters
+                                        , qualification = []
+                                        , name = rustName
+                                        , isCopy = originRustEnumType.isCopy
+                                        , isDebug = originRustEnumType.isDebug
+                                        , isPartialEq = originRustEnumType.isPartialEq
+                                        }
 
-                                                    else
-                                                        Just (argument |> type_ context)
-                                                )
-                                    , lifetimeArguments = originRustEnumType.lifetimeParameters
-                                    , qualification = []
-                                    , name = rustName
-                                    , isCopy = originRustEnumType.isCopy
-                                    , isDebug = originRustEnumType.isDebug
-                                    , isPartialEq = originRustEnumType.isPartialEq
-                                    }
+                                -- it's a (mutually) recursive enum, so it must have referenced parts
+                                -- and therefore also has a lifetime parameter
+                                Nothing ->
+                                    RustTypeConstruct
+                                        { arguments =
+                                            typeConstruct.arguments
+                                                |> List.map
+                                                    (\argument -> argument |> type_ context)
+                                        , lifetimeArguments =
+                                            [ generatedLifetimeVariableName ]
+                                        , qualification = []
+                                        , name = rustName
+                                        , isCopy =
+                                            -- this assumption works because any mention
+                                            -- of a mutually recursive type will
+                                            -- be behind a & in practice
+                                            True
+                                        , isDebug = {- TODO this is a wrong assumption -} True
+                                        , isPartialEq = {- TODO this is a wrong assumption -} True
+                                        }
 
         ElmSyntaxTypeInfer.TypeTuple typeTuple ->
             RustTypeTuple
@@ -2437,7 +2415,12 @@ pattern :
     , rustTypeAliases :
         FastDict.Dict
             String
-            { unusedElmTypeParameterIndexes : List Int }
+            { lifetimeParameters : List String
+            , unusedElmTypeParameterIndexes : List Int
+            , isCopy : Bool
+            , isDebug : Bool
+            , isPartialEq : Bool
+            }
     }
     -> ElmSyntaxTypeInfer.TypedNode ElmSyntaxTypeInfer.Pattern
     ->
@@ -2513,7 +2496,6 @@ pattern context patternInferred =
                             |> type_
                                 { rustEnumTypes = context.rustEnumTypes
                                 , rustTypeAliases = context.rustTypeAliases
-                                , typeAliasesInModule = context.typeAliasesInModule
                                 , isPartOfTypeDeclaration = False
                                 }
                     }
@@ -2662,7 +2644,6 @@ pattern context patternInferred =
                                                                 |> type_
                                                                     { rustEnumTypes = context.rustEnumTypes
                                                                     , rustTypeAliases = context.rustTypeAliases
-                                                                    , typeAliasesInModule = context.typeAliasesInModule
                                                                     , isPartOfTypeDeclaration = False
                                                                     }
                                                 }
@@ -2893,7 +2874,6 @@ pattern context patternInferred =
                         |> type_
                             { rustEnumTypes = context.rustEnumTypes
                             , rustTypeAliases = context.rustTypeAliases
-                            , typeAliasesInModule = context.typeAliasesInModule
                             , isPartOfTypeDeclaration = False
                             }
             in
@@ -3038,7 +3018,12 @@ referencedPattern :
     , rustTypeAliases :
         FastDict.Dict
             String
-            { unusedElmTypeParameterIndexes : List Int }
+            { lifetimeParameters : List String
+            , unusedElmTypeParameterIndexes : List Int
+            , isCopy : Bool
+            , isDebug : Bool
+            , isPartialEq : Bool
+            }
     , isRefRef : Bool
     }
     -> ElmSyntaxTypeInfer.TypedNode ElmSyntaxTypeInfer.Pattern
@@ -3124,7 +3109,6 @@ referencedPattern context patternInferred =
                         |> type_
                             { rustEnumTypes = context.rustEnumTypes
                             , rustTypeAliases = context.rustTypeAliases
-                            , typeAliasesInModule = context.typeAliasesInModule
                             , isPartOfTypeDeclaration = False
                             }
 
@@ -3319,7 +3303,6 @@ referencedPattern context patternInferred =
                                                     |> type_
                                                         { rustEnumTypes = context.rustEnumTypes
                                                         , rustTypeAliases = context.rustTypeAliases
-                                                        , typeAliasesInModule = context.typeAliasesInModule
                                                         , isPartOfTypeDeclaration = False
                                                         }
                                 in
@@ -3516,7 +3499,6 @@ referencedPattern context patternInferred =
                         |> type_
                             { rustEnumTypes = context.rustEnumTypes
                             , rustTypeAliases = context.rustTypeAliases
-                            , typeAliasesInModule = context.typeAliasesInModule
                             , isPartOfTypeDeclaration = False
                             }
 
@@ -3589,7 +3571,12 @@ referencedPatternListExact :
     , rustTypeAliases :
         FastDict.Dict
             String
-            { unusedElmTypeParameterIndexes : List Int }
+            { lifetimeParameters : List String
+            , unusedElmTypeParameterIndexes : List Int
+            , isCopy : Bool
+            , isDebug : Bool
+            , isPartialEq : Bool
+            }
     }
     -> List (ElmSyntaxTypeInfer.TypedNode ElmSyntaxTypeInfer.Pattern)
     ->
@@ -8018,7 +8005,12 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                     , rustTypeAliases :
                         FastDict.Dict
                             String
-                            { unusedElmTypeParameterIndexes : List Int }
+                            { lifetimeParameters : List String
+                            , unusedElmTypeParameterIndexes : List Int
+                            , isCopy : Bool
+                            , isDebug : Bool
+                            , isPartialEq : Bool
+                            }
                     , rustConsts : FastSet.Set String
                     , rustFns : FastDict.Dict String { requiresAllocator : Bool }
                     , declarations :
@@ -8200,7 +8192,11 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                         , rustTypeAliases :
                                             FastDict.Dict
                                                 String
-                                                { unusedElmTypeParameterIndexes : List Int
+                                                { lifetimeParameters : List String
+                                                , unusedElmTypeParameterIndexes : List Int
+                                                , isCopy : Bool
+                                                , isDebug : Bool
+                                                , isPartialEq : Bool
                                                 }
                                         }
                                     transpiledModuleDeclaredRustTypes =
@@ -8246,6 +8242,16 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                             |> FastDict.insert rustTypeAliasName
                                                                                 { unusedElmTypeParameterIndexes =
                                                                                     rustTypeAliasDeclaration.unusedElmTypeParameterIndexes
+                                                                                , lifetimeParameters = rustTypeAliasDeclaration.lifetimeParameters
+                                                                                , isCopy =
+                                                                                    rustTypeAliasDeclaration.type_
+                                                                                        |> rustTypeIsCopy { variablesAreCopy = True }
+                                                                                , isDebug =
+                                                                                    rustTypeAliasDeclaration.type_
+                                                                                        |> rustTypeIsDebug { variablesAreDebug = True }
+                                                                                , isPartialEq =
+                                                                                    rustTypeAliasDeclaration.type_
+                                                                                        |> rustTypeIsPartialEq { variablesArePartialEq = True }
                                                                                 }
                                                                     , rustTypeAliasDeclarations =
                                                                         { name = rustTypeAliasName
@@ -8372,6 +8378,16 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                         |> FastDict.insert rustTypeAliasName
                                                                                             { unusedElmTypeParameterIndexes =
                                                                                                 rustTypeAliasDeclaration.unusedElmTypeParameterIndexes
+                                                                                            , lifetimeParameters = rustTypeAliasDeclaration.lifetimeParameters
+                                                                                            , isCopy =
+                                                                                                rustTypeAliasDeclaration.type_
+                                                                                                    |> rustTypeIsCopy { variablesAreCopy = True }
+                                                                                            , isDebug =
+                                                                                                rustTypeAliasDeclaration.type_
+                                                                                                    |> rustTypeIsDebug { variablesAreDebug = True }
+                                                                                            , isPartialEq =
+                                                                                                rustTypeAliasDeclaration.type_
+                                                                                                    |> rustTypeIsPartialEq { variablesArePartialEq = True }
                                                                                             }
                                                                                 , rustTypeAliasDeclarations =
                                                                                     { name = rustTypeAliasName
@@ -9079,7 +9095,12 @@ valueOrFunctionDeclaration :
     , rustTypeAliases :
         FastDict.Dict
             String
-            { unusedElmTypeParameterIndexes : List Int }
+            { lifetimeParameters : List String
+            , unusedElmTypeParameterIndexes : List Int
+            , isCopy : Bool
+            , isDebug : Bool
+            , isPartialEq : Bool
+            }
     , rustConsts : FastSet.Set String
     , rustFns : FastDict.Dict String { requiresAllocator : Bool }
     }
@@ -9133,7 +9154,6 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
                                 |> type_
                                     { rustEnumTypes = context.rustEnumTypes
                                     , rustTypeAliases = context.rustTypeAliases
-                                    , typeAliasesInModule = typeAliasesInModule
                                     , isPartOfTypeDeclaration = False
                                     }
                                 |> rustTypeUnnestFn
@@ -9171,7 +9191,6 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
                                     |> type_
                                         { rustEnumTypes = context.rustEnumTypes
                                         , rustTypeAliases = context.rustTypeAliases
-                                        , typeAliasesInModule = typeAliasesInModule
                                         , isPartOfTypeDeclaration = False
                                         }
                              }
@@ -9231,7 +9250,6 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
                         |> type_
                             { rustEnumTypes = context.rustEnumTypes
                             , rustTypeAliases = context.rustTypeAliases
-                            , typeAliasesInModule = typeAliasesInModule
                             , isPartOfTypeDeclaration = False
                             }
             in
@@ -9318,7 +9336,6 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
                         |> type_
                             { rustEnumTypes = context.rustEnumTypes
                             , rustTypeAliases = context.rustTypeAliases
-                            , typeAliasesInModule = typeAliasesInModule
                             , isPartOfTypeDeclaration = False
                             }
                 , result =
@@ -9908,7 +9925,12 @@ type alias ExpressionToRustContext =
     , rustTypeAliases :
         FastDict.Dict
             String
-            { unusedElmTypeParameterIndexes : List Int }
+            { lifetimeParameters : List String
+            , unusedElmTypeParameterIndexes : List Int
+            , isCopy : Bool
+            , isDebug : Bool
+            , isPartialEq : Bool
+            }
     , rustConsts : FastSet.Set String
     , rustFns : FastDict.Dict String { requiresAllocator : Bool }
     , path : List String
@@ -10127,19 +10149,12 @@ expression context expressionTypedNode =
             case expressionTypedNode.type_ of
                 ElmSyntaxTypeInfer.TypeNotVariable (ElmSyntaxTypeInfer.TypeFunction typeFunction) ->
                     let
-                        typeAliasesInModule : String -> Maybe (FastDict.Dict String { parameters : List String, recordFieldOrder : Maybe (List String), type_ : ElmSyntaxTypeInfer.Type })
-                        typeAliasesInModule moduleNameToAccess =
-                            context.moduleInfo
-                                |> FastDict.get moduleNameToAccess
-                                |> Maybe.map .typeAliases
-
                         inputRecordRustType : RustType
                         inputRecordRustType =
                             typeFunction.input
                                 |> type_
                                     { rustEnumTypes = context.rustEnumTypes
                                     , rustTypeAliases = context.rustTypeAliases
-                                    , typeAliasesInModule = typeAliasesInModule
                                     , isPartOfTypeDeclaration = False
                                     }
                     in
@@ -10181,13 +10196,6 @@ expression context expressionTypedNode =
             in
             case inferredTypeAsFunction.inputs of
                 leftInferredType :: rightInferredType :: _ ->
-                    let
-                        typeAliasesInModule : String -> Maybe (FastDict.Dict String { parameters : List String, recordFieldOrder : Maybe (List String), type_ : ElmSyntaxTypeInfer.Type })
-                        typeAliasesInModule moduleNameToAccess =
-                            context.moduleInfo
-                                |> FastDict.get moduleNameToAccess
-                                |> Maybe.map .typeAliases
-                    in
                     Result.map
                         (\reference ->
                             let
@@ -10197,7 +10205,6 @@ expression context expressionTypedNode =
                                         |> type_
                                             { rustEnumTypes = context.rustEnumTypes
                                             , rustTypeAliases = context.rustTypeAliases
-                                            , typeAliasesInModule = typeAliasesInModule
                                             , isPartOfTypeDeclaration = False
                                             }
 
@@ -10207,7 +10214,6 @@ expression context expressionTypedNode =
                                         |> type_
                                             { rustEnumTypes = context.rustEnumTypes
                                             , rustTypeAliases = context.rustTypeAliases
-                                            , typeAliasesInModule = typeAliasesInModule
                                             , isPartOfTypeDeclaration = False
                                             }
                             in
@@ -10319,13 +10325,6 @@ expression context expressionTypedNode =
                                     called
 
                         Just calledFnDeclaredParameterTypes ->
-                            let
-                                typeAliasesInModule : String -> Maybe (FastDict.Dict String { parameters : List String, recordFieldOrder : Maybe (List String), type_ : ElmSyntaxTypeInfer.Type })
-                                typeAliasesInModule moduleNameToAccess =
-                                    context.moduleInfo
-                                        |> FastDict.get moduleNameToAccess
-                                        |> Maybe.map .typeAliases
-                            in
                             List.map4
                                 (\index rustArgument originType inferredType ->
                                     { index = index
@@ -10399,7 +10398,6 @@ expression context expressionTypedNode =
                                                                                         |> type_
                                                                                             { rustEnumTypes = context.rustEnumTypes
                                                                                             , rustTypeAliases = context.rustTypeAliases
-                                                                                            , typeAliasesInModule = typeAliasesInModule
                                                                                             , isPartOfTypeDeclaration = False
                                                                                             }
 
@@ -10816,23 +10814,6 @@ expression context expressionTypedNode =
                         rustExpressionVariantValue
 
                     valueType0 :: valueType1Up ->
-                        let
-                            typeAliasesInModule :
-                                String
-                                ->
-                                    Maybe
-                                        (FastDict.Dict
-                                            String
-                                            { parameters : List String
-                                            , recordFieldOrder : Maybe (List String)
-                                            , type_ : ElmSyntaxTypeInfer.Type
-                                            }
-                                        )
-                            typeAliasesInModule moduleNameToAccess =
-                                context.moduleInfo
-                                    |> FastDict.get moduleNameToAccess
-                                    |> Maybe.map .typeAliases
-                        in
                         (valueType0 :: valueType1Up)
                             |> List.indexedMap Tuple.pair
                             |> List.foldr
@@ -10844,7 +10825,6 @@ expression context expressionTypedNode =
                                                 |> type_
                                                     { rustEnumTypes = context.rustEnumTypes
                                                     , rustTypeAliases = context.rustTypeAliases
-                                                    , typeAliasesInModule = typeAliasesInModule
                                                     , isPartOfTypeDeclaration = False
                                                     }
                                     in
@@ -10925,22 +10905,6 @@ expression context expressionTypedNode =
                                                 )
                                     )
                                     FastDict.empty
-
-                        typeAliasesInModule :
-                            String
-                            ->
-                                Maybe
-                                    (FastDict.Dict
-                                        String
-                                        { parameters : List String
-                                        , recordFieldOrder : Maybe (List String)
-                                        , type_ : ElmSyntaxTypeInfer.Type
-                                        }
-                                    )
-                        typeAliasesInModule moduleNameToAccess =
-                            context.moduleInfo
-                                |> FastDict.get moduleNameToAccess
-                                |> Maybe.map .typeAliases
                     in
                     Ok
                         (List.map2
@@ -10960,7 +10924,6 @@ expression context expressionTypedNode =
                                                 |> type_
                                                     { rustEnumTypes = context.rustEnumTypes
                                                     , rustTypeAliases = context.rustTypeAliases
-                                                    , typeAliasesInModule = typeAliasesInModule
                                                     , isPartOfTypeDeclaration = False
                                                     }
                                     in
@@ -11045,12 +11008,6 @@ expression context expressionTypedNode =
 
                                     _ :: _ :: _ ->
                                         let
-                                            typeAliasesInModule : String -> Maybe (FastDict.Dict String { parameters : List String, recordFieldOrder : Maybe (List String), type_ : ElmSyntaxTypeInfer.Type })
-                                            typeAliasesInModule moduleNameToAccess =
-                                                context.moduleInfo
-                                                    |> FastDict.get moduleNameToAccess
-                                                    |> Maybe.map .typeAliases
-
                                             rustParameters : List { name : String, type_ : RustType }
                                             rustParameters =
                                                 inferredReferenceTypeAsFunction.inputs
@@ -11062,7 +11019,6 @@ expression context expressionTypedNode =
                                                                     |> type_
                                                                         { rustEnumTypes = context.rustEnumTypes
                                                                         , rustTypeAliases = context.rustTypeAliases
-                                                                        , typeAliasesInModule = typeAliasesInModule
                                                                         , isPartOfTypeDeclaration = False
                                                                         }
                                                             }
@@ -11115,12 +11071,6 @@ expression context expressionTypedNode =
                                         inferredReferenceTypeAsFunction =
                                             expressionTypedNode.type_
                                                 |> inferredTypeExpandFunction
-
-                                        typeAliasesInModule : String -> Maybe (FastDict.Dict String { parameters : List String, recordFieldOrder : Maybe (List String), type_ : ElmSyntaxTypeInfer.Type })
-                                        typeAliasesInModule moduleNameToAccess =
-                                            context.moduleInfo
-                                                |> FastDict.get moduleNameToAccess
-                                                |> Maybe.map .typeAliases
                                     in
                                     -- number of inferredReferenceTypeAsFunction.inputs
                                     -- == number of functionParameters.parameters
@@ -11135,7 +11085,6 @@ expression context expressionTypedNode =
                                                         |> type_
                                                             { rustEnumTypes = context.rustEnumTypes
                                                             , rustTypeAliases = context.rustTypeAliases
-                                                            , typeAliasesInModule = typeAliasesInModule
                                                             , isPartOfTypeDeclaration = False
                                                             }
                                                 }
@@ -11237,12 +11186,7 @@ expression context expressionTypedNode =
                                             ElmSyntaxTypeInfer.TypeNotVariable (ElmSyntaxTypeInfer.TypeFunction expressionTypeFunction) ->
                                                 expressionTypeFunction.input
                                                     |> type_
-                                                        { typeAliasesInModule =
-                                                            \moduleName ->
-                                                                context.moduleInfo
-                                                                    |> FastDict.get moduleName
-                                                                    |> Maybe.map .typeAliases
-                                                        , rustEnumTypes = context.rustEnumTypes
+                                                        { rustEnumTypes = context.rustEnumTypes
                                                         , rustTypeAliases = context.rustTypeAliases
                                                         , isPartOfTypeDeclaration = False
                                                         }
@@ -11788,7 +11732,6 @@ expression context expressionTypedNode =
                                             |> type_
                                                 { rustEnumTypes = context.rustEnumTypes
                                                 , rustTypeAliases = context.rustTypeAliases
-                                                , typeAliasesInModule = typeAliasesInModule
                                                 , isPartOfTypeDeclaration = False
                                                 }
                                 in
@@ -12165,7 +12108,6 @@ rustExpressionReferenceDeclaredFnAppliedLazilyOrCurriedIfNecessary context rustR
                             |> type_
                                 { rustEnumTypes = context.rustEnumTypes
                                 , rustTypeAliases = context.rustTypeAliases
-                                , typeAliasesInModule = typeAliasesInModule
                                 , isPartOfTypeDeclaration = False
                                 }
                 in
@@ -15589,7 +15531,12 @@ letValueOrFunctionDeclarationToRustKindAndParameters :
     , rustTypeAliases :
         FastDict.Dict
             String
-            { unusedElmTypeParameterIndexes : List Int }
+            { lifetimeParameters : List String
+            , unusedElmTypeParameterIndexes : List Int
+            , isCopy : Bool
+            , isDebug : Bool
+            , isPartialEq : Bool
+            }
     , moduleInfo :
         FastDict.Dict
             {- module origin -} String
@@ -15636,19 +15583,12 @@ letValueOrFunctionDeclarationToRustKindAndParameters :
             }
 letValueOrFunctionDeclarationToRustKindAndParameters context inferredLetDeclarationValueOrFunctionNode =
     let
-        typeAliasesInModule : String -> Maybe (FastDict.Dict String { parameters : List String, recordFieldOrder : Maybe (List String), type_ : ElmSyntaxTypeInfer.Type })
-        typeAliasesInModule moduleNameToAccess =
-            context.moduleInfo
-                |> FastDict.get moduleNameToAccess
-                |> Maybe.map .typeAliases
-
         rustTypeParametersContainedVariables : FastSet.Set String
         rustTypeParametersContainedVariables =
             inferredLetDeclarationValueOrFunctionNode.declaration.type_
                 |> type_
                     { rustEnumTypes = context.rustEnumTypes
                     , rustTypeAliases = context.rustTypeAliases
-                    , typeAliasesInModule = typeAliasesInModule
                     , isPartOfTypeDeclaration = False
                     }
                 |> rustTypeContainedVariables
@@ -15775,7 +15715,6 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                 |> type_
                     { rustEnumTypes = context.rustEnumTypes
                     , rustTypeAliases = context.rustTypeAliases
-                    , typeAliasesInModule = typeAliasesInModule
                     , isPartOfTypeDeclaration = False
                     }
                 |> rustTypeContainedVariables
@@ -15847,7 +15786,6 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                                 |> type_
                                     { rustEnumTypes = context.rustEnumTypes
                                     , rustTypeAliases = context.rustTypeAliases
-                                    , typeAliasesInModule = typeAliasesInModule
                                     , isPartOfTypeDeclaration = False
                                     }
                             )
@@ -15893,7 +15831,6 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                                     |> type_
                                         { rustEnumTypes = context.rustEnumTypes
                                         , rustTypeAliases = context.rustTypeAliases
-                                        , typeAliasesInModule = typeAliasesInModule
                                         , isPartOfTypeDeclaration = False
                                         }
                             }
@@ -15930,7 +15867,6 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                                         |> type_
                                             { rustEnumTypes = context.rustEnumTypes
                                             , rustTypeAliases = context.rustTypeAliases
-                                            , typeAliasesInModule = typeAliasesInModule
                                             , isPartOfTypeDeclaration = False
                                             }
                                  }
@@ -15998,7 +15934,6 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                             |> type_
                                 { rustEnumTypes = context.rustEnumTypes
                                 , rustTypeAliases = context.rustTypeAliases
-                                , typeAliasesInModule = typeAliasesInModule
                                 , isPartOfTypeDeclaration = False
                                 }
 
@@ -16026,7 +15961,6 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                                                 |> type_
                                                     { rustEnumTypes = context.rustEnumTypes
                                                     , rustTypeAliases = context.rustTypeAliases
-                                                    , typeAliasesInModule = typeAliasesInModule
                                                     , isPartOfTypeDeclaration = False
                                                     }
                                                 |> rustTypeUnnestFn
@@ -16094,7 +16028,6 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                                                 |> type_
                                                     { rustEnumTypes = context.rustEnumTypes
                                                     , rustTypeAliases = context.rustTypeAliases
-                                                    , typeAliasesInModule = typeAliasesInModule
                                                     , isPartOfTypeDeclaration = False
                                                     }
                                                 |> rustTypeContainedVariables
@@ -18940,6 +18873,9 @@ inferredTypeExpandInnerAliases typeAliasesInModule syntaxType =
 
 {-| Caution! This is only an approximation that's good enough for
 resolving type aliases for specialization but not much else.
+
+TODO remove most uses
+
 -}
 inferredTypeNotVariableExpandInnerAliases :
     (String
