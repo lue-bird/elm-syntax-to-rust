@@ -515,18 +515,7 @@ syntaxExpressionContainedConstructedRecords syntaxExpressionNode =
 
 
 choiceTypeDeclaration :
-    { typeAliasesInModule :
-        String
-        ->
-            Maybe
-                (FastDict.Dict
-                    String
-                    { parameters : List String
-                    , recordFieldOrder : Maybe (List String)
-                    , type_ : ElmSyntaxTypeInfer.Type
-                    }
-                )
-    , rustEnumTypes :
+    { rustEnumTypes :
         FastDict.Dict
             String
             { lifetimeParameters : List String
@@ -1086,18 +1075,7 @@ printRustEnumVariantDeclaration rustVariant =
 
 
 typeAliasDeclaration :
-    { typeAliasesInModule :
-        String
-        ->
-            Maybe
-                (FastDict.Dict
-                    String
-                    { parameters : List String
-                    , recordFieldOrder : Maybe (List String)
-                    , type_ : ElmSyntaxTypeInfer.Type
-                    }
-                )
-    , rustEnumTypes :
+    { rustEnumTypes :
         FastDict.Dict
             String
             { lifetimeParameters : List String
@@ -1132,7 +1110,6 @@ typeAliasDeclaration context inferredTypeAlias =
         aliasedAsRustType : RustType
         aliasedAsRustType =
             inferredTypeAlias.type_
-                |> inferredTypeExpandInnerAliases context.typeAliasesInModule
                 |> type_
                     { rustEnumTypes = context.rustEnumTypes
                     , rustTypeAliases = context.rustTypeAliases
@@ -2391,18 +2368,7 @@ as variant patterns seem to always automatically "peel back" any further layer
 
 -}
 pattern :
-    { typeAliasesInModule :
-        String
-        ->
-            Maybe
-                (FastDict.Dict
-                    String
-                    { parameters : List String
-                    , recordFieldOrder : Maybe (List String)
-                    , type_ : ElmSyntaxTypeInfer.Type
-                    }
-                )
-    , rustEnumTypes :
+    { rustEnumTypes :
         FastDict.Dict
             String
             { lifetimeParameters : List String
@@ -2679,7 +2645,6 @@ pattern context patternInferred =
                             { isRefRef = False
                             , rustEnumTypes = context.rustEnumTypes
                             , rustTypeAliases = context.rustTypeAliases
-                            , typeAliasesInModule = context.typeAliasesInModule
                             }
             in
             { pattern =
@@ -2805,7 +2770,6 @@ pattern context patternInferred =
                                                     { isRefRef = False
                                                     , rustEnumTypes = context.rustEnumTypes
                                                     , rustTypeAliases = context.rustTypeAliases
-                                                    , typeAliasesInModule = context.typeAliasesInModule
                                                     }
                                     in
                                     { patterns =
@@ -2919,7 +2883,6 @@ pattern context patternInferred =
                                 { isRefRef = False
                                 , rustEnumTypes = context.rustEnumTypes
                                 , rustTypeAliases = context.rustTypeAliases
-                                , typeAliasesInModule = context.typeAliasesInModule
                                 }
                 in
                 { pattern =
@@ -2994,18 +2957,7 @@ stringAsGeneratedRustPatternBindingName stringValue =
 
 
 referencedPattern :
-    { typeAliasesInModule :
-        String
-        ->
-            Maybe
-                (FastDict.Dict
-                    String
-                    { parameters : List String
-                    , recordFieldOrder : Maybe (List String)
-                    , type_ : ElmSyntaxTypeInfer.Type
-                    }
-                )
-    , rustEnumTypes :
+    { rustEnumTypes :
         FastDict.Dict
             String
             { lifetimeParameters : List String
@@ -3160,7 +3112,6 @@ referencedPattern context patternInferred =
                             { isRefRef = False
                             , rustEnumTypes = context.rustEnumTypes
                             , rustTypeAliases = context.rustTypeAliases
-                            , typeAliasesInModule = context.typeAliasesInModule
                             }
 
                 rustPart1 :
@@ -3175,7 +3126,6 @@ referencedPattern context patternInferred =
                             { isRefRef = False
                             , rustEnumTypes = context.rustEnumTypes
                             , rustTypeAliases = context.rustTypeAliases
-                            , typeAliasesInModule = context.typeAliasesInModule
                             }
             in
             { pattern =
@@ -3209,7 +3159,6 @@ referencedPattern context patternInferred =
                             { isRefRef = False
                             , rustEnumTypes = context.rustEnumTypes
                             , rustTypeAliases = context.rustTypeAliases
-                            , typeAliasesInModule = context.typeAliasesInModule
                             }
 
                 rustPart1 :
@@ -3224,7 +3173,6 @@ referencedPattern context patternInferred =
                             { isRefRef = False
                             , rustEnumTypes = context.rustEnumTypes
                             , rustTypeAliases = context.rustTypeAliases
-                            , typeAliasesInModule = context.typeAliasesInModule
                             }
 
                 rustPart2 :
@@ -3239,7 +3187,6 @@ referencedPattern context patternInferred =
                             { isRefRef = False
                             , rustEnumTypes = context.rustEnumTypes
                             , rustTypeAliases = context.rustTypeAliases
-                            , typeAliasesInModule = context.typeAliasesInModule
                             }
             in
             { pattern =
@@ -3354,7 +3301,6 @@ referencedPattern context patternInferred =
                             { isRefRef = False
                             , rustEnumTypes = context.rustEnumTypes
                             , rustTypeAliases = context.rustTypeAliases
-                            , typeAliasesInModule = context.typeAliasesInModule
                             }
 
                 rustTail :
@@ -3369,7 +3315,6 @@ referencedPattern context patternInferred =
                             { isRefRef = True
                             , rustEnumTypes = context.rustEnumTypes
                             , rustTypeAliases = context.rustTypeAliases
-                            , typeAliasesInModule = context.typeAliasesInModule
                             }
             in
             { pattern = rustPatternListCons rustHead.pattern rustTail.pattern
@@ -3388,7 +3333,6 @@ referencedPattern context patternInferred =
             referencedPatternListExact
                 { rustEnumTypes = context.rustEnumTypes
                 , rustTypeAliases = context.rustTypeAliases
-                , typeAliasesInModule = context.typeAliasesInModule
                 }
                 elements
 
@@ -3459,7 +3403,6 @@ referencedPattern context patternInferred =
                                                         |> List.member variantValueIndex
                                                 , rustEnumTypes = context.rustEnumTypes
                                                 , rustTypeAliases = context.rustTypeAliases
-                                                , typeAliasesInModule = context.typeAliasesInModule
                                                 }
                                 in
                                 { patterns = rustValue.pattern :: soFar.patterns
@@ -3547,18 +3490,7 @@ referencedPattern context patternInferred =
 
 
 referencedPatternListExact :
-    { typeAliasesInModule :
-        String
-        ->
-            Maybe
-                (FastDict.Dict
-                    String
-                    { parameters : List String
-                    , recordFieldOrder : Maybe (List String)
-                    , type_ : ElmSyntaxTypeInfer.Type
-                    }
-                )
-    , rustEnumTypes :
+    { rustEnumTypes :
         FastDict.Dict
             String
             { lifetimeParameters : List String
@@ -3602,7 +3534,6 @@ referencedPatternListExact context elements =
                                 { isRefRef = False
                                 , rustEnumTypes = context.rustEnumTypes
                                 , rustTypeAliases = context.rustTypeAliases
-                                , typeAliasesInModule = context.typeAliasesInModule
                                 }
                 in
                 { pattern = rustPatternListCons rustElement.pattern soFar.pattern
@@ -8220,8 +8151,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                             }
                                                                         rustTypeAliasDeclaration =
                                                                             typeAliasDeclaration
-                                                                                { typeAliasesInModule = typeAliasesInModule
-                                                                                , rustEnumTypes = soFar.rustEnumTypes
+                                                                                { rustEnumTypes = soFar.rustEnumTypes
                                                                                 , rustTypeAliases = soFar.rustTypeAliases
                                                                                 }
                                                                                 { parameters = inferredTypeAliasDeclaration.parameters
@@ -8282,8 +8212,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                             }
                                                                         rustEnumDeclaration =
                                                                             choiceTypeDeclaration
-                                                                                { typeAliasesInModule = typeAliasesInModule
-                                                                                , rustEnumTypes = soFar.rustEnumTypes
+                                                                                { rustEnumTypes = soFar.rustEnumTypes
                                                                                 , rustTypeAliases = soFar.rustTypeAliases
                                                                                 }
                                                                                 { parameters = inferredChoiceAliasDeclaration.parameters
@@ -8354,8 +8283,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                         }
                                                                                     rustTypeAliasDeclaration =
                                                                                         typeAliasDeclaration
-                                                                                            { typeAliasesInModule = typeAliasesInModule
-                                                                                            , rustTypeAliases = withCycleDeclarationsSoFar.rustTypeAliases
+                                                                                            { rustTypeAliases = withCycleDeclarationsSoFar.rustTypeAliases
                                                                                             , rustEnumTypes =
                                                                                                 -- same effect as withCycleDeclarationsSoFar.rustEnumTypes
                                                                                                 soFar.rustEnumTypes
@@ -8418,8 +8346,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                         }
                                                                                     rustEnumDeclaration =
                                                                                         choiceTypeDeclaration
-                                                                                            { typeAliasesInModule = typeAliasesInModule
-                                                                                            , rustTypeAliases = withCycleDeclarationsSoFar.rustTypeAliases
+                                                                                            { rustTypeAliases = withCycleDeclarationsSoFar.rustTypeAliases
                                                                                             , rustEnumTypes = withCycleDeclarationsSoFar.rustEnumTypes
                                                                                             }
                                                                                             { parameters = inferredChoiceTypeDeclaration.parameters
@@ -9179,8 +9106,7 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
                             rustParameter =
                                 parameter
                                     |> pattern
-                                        { typeAliasesInModule = typeAliasesInModule
-                                        , rustEnumTypes = context.rustEnumTypes
+                                        { rustEnumTypes = context.rustEnumTypes
                                         , rustTypeAliases = context.rustTypeAliases
                                         }
                         in
@@ -11699,13 +11625,6 @@ expression context expressionTypedNode =
                         )
 
         ElmSyntaxTypeInfer.ExpressionLambda lambda ->
-            let
-                typeAliasesInModule : String -> Maybe (FastDict.Dict String { parameters : List String, recordFieldOrder : Maybe (List String), type_ : ElmSyntaxTypeInfer.Type })
-                typeAliasesInModule moduleNameToAccess =
-                    context.moduleInfo
-                        |> FastDict.get moduleNameToAccess
-                        |> Maybe.map .typeAliases
-            in
             Result.map
                 (\result ->
                     (lambda.parameter0 :: lambda.parameter1Up)
@@ -11721,8 +11640,7 @@ expression context expressionTypedNode =
                                     rustParameterPattern =
                                         parameter
                                             |> pattern
-                                                { typeAliasesInModule = typeAliasesInModule
-                                                , rustEnumTypes = context.rustEnumTypes
+                                                { rustEnumTypes = context.rustEnumTypes
                                                 , rustTypeAliases = context.rustTypeAliases
                                                 }
 
@@ -11776,13 +11694,6 @@ expression context expressionTypedNode =
                 )
 
         ElmSyntaxTypeInfer.ExpressionCaseOf caseOf ->
-            let
-                typeAliasesInModule : String -> Maybe (FastDict.Dict String { parameters : List String, recordFieldOrder : Maybe (List String), type_ : ElmSyntaxTypeInfer.Type })
-                typeAliasesInModule moduleNameToAccess =
-                    context.moduleInfo
-                        |> FastDict.get moduleNameToAccess
-                        |> Maybe.map .typeAliases
-            in
             Result.map2
                 (\matched cases ->
                     RustExpressionMatch
@@ -11825,8 +11736,7 @@ expression context expressionTypedNode =
                                         rustPattern =
                                             syntaxCase.pattern
                                                 |> pattern
-                                                    { typeAliasesInModule = typeAliasesInModule
-                                                    , rustEnumTypes = context.rustEnumTypes
+                                                    { rustEnumTypes = context.rustEnumTypes
                                                     , rustTypeAliases = context.rustTypeAliases
                                                     }
                                     in
@@ -15460,12 +15370,7 @@ letDeclaration context syntaxLetDeclarationNode =
                         rustPattern =
                             letDestructuring.pattern
                                 |> pattern
-                                    { typeAliasesInModule =
-                                        \moduleNameToAccess ->
-                                            context.moduleInfo
-                                                |> FastDict.get moduleNameToAccess
-                                                |> Maybe.map .typeAliases
-                                    , rustEnumTypes = context.rustEnumTypes
+                                    { rustEnumTypes = context.rustEnumTypes
                                     , rustTypeAliases = context.rustTypeAliases
                                     }
                     in
@@ -15855,8 +15760,7 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                                 rustParameter =
                                     parameter
                                         |> pattern
-                                            { typeAliasesInModule = typeAliasesInModule
-                                            , rustEnumTypes = context.rustEnumTypes
+                                            { rustEnumTypes = context.rustEnumTypes
                                             , rustTypeAliases = context.rustTypeAliases
                                             }
                             in
