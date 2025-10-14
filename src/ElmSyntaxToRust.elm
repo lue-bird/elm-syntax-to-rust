@@ -8040,13 +8040,11 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                     }
 
                                                                 Just inferredTypeAliasDeclaration ->
-                                                                    let
-                                                                        inferredAliasedTypeWithExpandedAliases : ElmSyntaxTypeInfer.Type
-                                                                        inferredAliasedTypeWithExpandedAliases =
-                                                                            inferredTypeAliasDeclaration.type_
-                                                                                |> inferredTypeExpandInnerAliases typeAliasesInModule
-                                                                    in
-                                                                    if inferredAliasedTypeWithExpandedAliases |> inferredTypeContainsExtensibleRecord then
+                                                                    if
+                                                                        inferredTypeAliasDeclaration.type_
+                                                                            |> inferredTypeExpandInnerAliases typeAliasesInModule
+                                                                            |> inferredTypeContainsExtensibleRecord
+                                                                    then
                                                                         soFar
 
                                                                     else
@@ -8055,7 +8053,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                         , typeAliasDeclarations =
                                                                             { name = typeAliasName
                                                                             , parameters = inferredTypeAliasDeclaration.parameters
-                                                                            , type_ = inferredAliasedTypeWithExpandedAliases
+                                                                            , type_ = inferredTypeAliasDeclaration.type_
                                                                             }
                                                                                 :: soFar.typeAliasDeclarations
                                                                         }
@@ -9049,17 +9047,13 @@ valueOrFunctionDeclaration context syntaxDeclarationValueOrFunction =
                 |> FastDict.get moduleNameToAccess
                 |> Maybe.map .typeAliases
 
-        typeWithExpandedAliases : ElmSyntaxTypeInfer.Type
-        typeWithExpandedAliases =
-            syntaxDeclarationValueOrFunction.type_
-                |> inferredTypeExpandInnerAliases typeAliasesInModule
-
         rustFullTypeAsFunction :
             { inputs : List ElmSyntaxTypeInfer.Type
             , output : ElmSyntaxTypeInfer.Type
             }
         rustFullTypeAsFunction =
-            typeWithExpandedAliases
+            syntaxDeclarationValueOrFunction.type_
+                |> inferredTypeExpandInnerAliases typeAliasesInModule
                 |> inferredTypeExpandFunction
 
         syntaxParameterCount : Int
@@ -12045,24 +12039,25 @@ rustExpressionReferenceDeclaredFnAppliedLazilyOrCurriedIfNecessary context rustR
                         , name = rustReference.name
                         }
                 , arguments =
-                    (if rustReference.requiresAllocator then
-                        [ generatedAllocatorVariableReference ]
+                    listConsJust
+                        (if rustReference.requiresAllocator then
+                            Just generatedAllocatorVariableReference
 
-                     else
-                        []
-                    )
-                        ++ (List.range 0 (parameterCount - 1)
-                                |> List.map
-                                    (\parameterIndex ->
-                                        RustExpressionReference
-                                            { qualification = []
-                                            , name =
-                                                generatedParameterNameForIndexAtPath
-                                                    parameterIndex
-                                                    context.path
-                                            }
-                                    )
-                           )
+                         else
+                            Nothing
+                        )
+                        (List.range 0 (parameterCount - 1)
+                            |> List.map
+                                (\parameterIndex ->
+                                    RustExpressionReference
+                                        { qualification = []
+                                        , name =
+                                            generatedParameterNameForIndexAtPath
+                                                parameterIndex
+                                                context.path
+                                        }
+                                )
+                        )
                 }
             )
 
@@ -12101,39 +12096,6 @@ inferredLetDeclarationNodesSortFromMostToLeastDependedOn :
             }
 inferredLetDeclarationNodesSortFromMostToLeastDependedOn inferredLetDeclarationNodes =
     let
-        letValueOrFunctionDeclarations :
-            List
-                { range : Elm.Syntax.Range.Range
-                , declaration :
-                    { name : String
-                    , nameRange : Elm.Syntax.Range.Range
-                    , signature :
-                        Maybe
-                            { range : Elm.Syntax.Range.Range
-                            , nameRange : Elm.Syntax.Range.Range
-                            , annotationType : Elm.Syntax.TypeAnnotation.TypeAnnotation
-                            , annotationTypeRange : Elm.Syntax.Range.Range
-                            }
-                    , parameters : List (ElmSyntaxTypeInfer.TypedNode ElmSyntaxTypeInfer.Pattern)
-                    , result : ElmSyntaxTypeInfer.TypedNode ElmSyntaxTypeInfer.Expression
-                    , type_ : ElmSyntaxTypeInfer.Type
-                    }
-                }
-        letValueOrFunctionDeclarations =
-            inferredLetDeclarationNodes
-                |> List.filterMap
-                    (\inferredLetDeclarationNode ->
-                        case inferredLetDeclarationNode.declaration of
-                            ElmSyntaxTypeInfer.LetDestructuring _ ->
-                                Nothing
-
-                            ElmSyntaxTypeInfer.LetValueOrFunctionDeclaration inferredLetValueOrFunctionDeclaration ->
-                                Just
-                                    { range = inferredLetDeclarationNode.range
-                                    , declaration = inferredLetValueOrFunctionDeclaration
-                                    }
-                    )
-
         letDestructurings :
             List
                 { range : Elm.Syntax.Range.Range
@@ -12157,19 +12119,25 @@ inferredLetDeclarationNodesSortFromMostToLeastDependedOn inferredLetDeclarationN
                                     }
                     )
     in
-    letValueOrFunctionDeclarations
-        |> List.map
-            (\inferredLetValueOrFunctionDeclarationNode ->
-                ( { range = inferredLetValueOrFunctionDeclarationNode.range
-                  , declaration =
-                        ElmSyntaxTypeInfer.LetValueOrFunctionDeclaration
-                            inferredLetValueOrFunctionDeclarationNode.declaration
-                  }
-                , inferredLetValueOrFunctionDeclarationNode.declaration.name
-                , inferredLetValueOrFunctionDeclarationNode.declaration.result.value
-                    |> inferredExpressionUsedLocalReferences
-                    |> FastSet.toList
-                )
+    inferredLetDeclarationNodes
+        |> List.filterMap
+            (\inferredLetDeclarationNode ->
+                case inferredLetDeclarationNode.declaration of
+                    ElmSyntaxTypeInfer.LetDestructuring _ ->
+                        Nothing
+
+                    ElmSyntaxTypeInfer.LetValueOrFunctionDeclaration inferredLetValueOrFunctionDeclaration ->
+                        Just
+                            ( { range = inferredLetDeclarationNode.range
+                              , declaration =
+                                    ElmSyntaxTypeInfer.LetValueOrFunctionDeclaration
+                                        inferredLetValueOrFunctionDeclaration
+                              }
+                            , inferredLetValueOrFunctionDeclaration.name
+                            , inferredLetValueOrFunctionDeclaration.result.value
+                                |> inferredExpressionUsedLocalReferences
+                                |> FastSet.toList
+                            )
             )
         |> Graph.stronglyConnComponents
         |> List.concatMap
@@ -15524,8 +15492,11 @@ letValueOrFunctionDeclarationToRustKindAndParameters context inferredLetDeclarat
                     )
                     []
 
-        typeWithExpandedAliases : ElmSyntaxTypeInfer.Type
-        typeWithExpandedAliases =
+        rustFullTypeAsFunction :
+            { inputs : List ElmSyntaxTypeInfer.Type
+            , output : ElmSyntaxTypeInfer.Type
+            }
+        rustFullTypeAsFunction =
             inferredLetDeclarationValueOrFunctionNode.declaration.type_
                 |> inferredTypeExpandInnerAliases
                     (\moduleNameToAccess ->
@@ -15533,13 +15504,6 @@ letValueOrFunctionDeclarationToRustKindAndParameters context inferredLetDeclarat
                             |> FastDict.get moduleNameToAccess
                             |> Maybe.map .typeAliases
                     )
-
-        rustFullTypeAsFunction :
-            { inputs : List ElmSyntaxTypeInfer.Type
-            , output : ElmSyntaxTypeInfer.Type
-            }
-        rustFullTypeAsFunction =
-            typeWithExpandedAliases
                 |> inferredTypeExpandFunction
     in
     if
@@ -15651,17 +15615,13 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
                     )
                     []
 
-        typeWithExpandedAliases : ElmSyntaxTypeInfer.Type
-        typeWithExpandedAliases =
-            inferredLetDeclarationValueOrFunctionNode.declaration.type_
-                |> inferredTypeExpandInnerAliases typeAliasesInModule
-
         inferredFullTypeAsFunction :
             { inputs : List ElmSyntaxTypeInfer.Type
             , output : ElmSyntaxTypeInfer.Type
             }
         inferredFullTypeAsFunction =
-            typeWithExpandedAliases
+            inferredLetDeclarationValueOrFunctionNode.declaration.type_
+                |> inferredTypeExpandInnerAliases typeAliasesInModule
                 |> inferredTypeExpandFunction
 
         rustName : String
