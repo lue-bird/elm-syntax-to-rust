@@ -133,6 +133,12 @@ pub enum BasicsNever {}
 pub fn alloc_shared<'a, A>(allocator: &'a bumpalo::Bump, to_allocate: A) -> &'a A {
     allocator.alloc(to_allocate)
 }
+pub fn alloc_dyn_fn<'a, In, Out>(
+    allocator: &'a bumpalo::Bump,
+    to_allocate: impl Fn(In) -> Out + 'a,
+) -> &'a dyn Fn(In) -> Out {
+    allocator.alloc(to_allocate)
+}
 
 pub fn basics_always<Kept, Ignored>(kept: Kept, _: Ignored) -> Kept {
     kept

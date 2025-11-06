@@ -9863,7 +9863,7 @@ rustExpressionClosureReference :
     }
     -> RustExpression
 rustExpressionClosureReference closure =
-    rustExpressionAlloc
+    rustExpressionAllocDynFn
         (rustExpressionClosureReduced
             { parameters = closure.parameters
             , result = closure.result
@@ -10920,7 +10920,7 @@ expression context expressionTypedNode =
                                 in
                                 case inferredReferenceTypeAsFunction.inputs of
                                     [ _ ] ->
-                                        rustExpressionAlloc
+                                        rustExpressionAllocDynFn
                                             rustExpressionReference
 
                                     [] ->
@@ -11937,6 +11937,14 @@ rustExpressionAlloc toAllocate =
         }
 
 
+rustExpressionAllocDynFn : RustExpression -> RustExpression
+rustExpressionAllocDynFn toAllocate =
+    RustExpressionCall
+        { called = rustExpressionReferenceAllocDynFn
+        , arguments = [ generatedAllocatorVariableReference, toAllocate ]
+        }
+
+
 rustExpressionReferenceAllocShared : RustExpression
 rustExpressionReferenceAllocShared =
     RustExpressionReference
@@ -11945,19 +11953,19 @@ rustExpressionReferenceAllocShared =
         }
 
 
+rustExpressionReferenceAllocDynFn : RustExpression
+rustExpressionReferenceAllocDynFn =
+    RustExpressionReference
+        { qualification = []
+        , name = "alloc_dyn_fn"
+        }
+
+
 generatedAllocatorVariableReference : RustExpression
 generatedAllocatorVariableReference =
     RustExpressionReference
         { qualification = []
         , name = generatedAllocatorVariableName
-        }
-
-
-rustExpressionAllocMethod : RustExpression
-rustExpressionAllocMethod =
-    RustExpressionReferenceMethod
-        { subject = generatedAllocatorVariableReference
-        , method = "alloc"
         }
 
 
@@ -12663,15 +12671,10 @@ rustExpressionRemoveImmediateBorrow rustExpression =
             rustExpressionRemoveImmediateBorrow inBorrow
 
         RustExpressionCall calledCall ->
-            if calledCall.called == rustExpressionAllocMethod then
-                case calledCall.arguments of
-                    allocated :: _ ->
-                        rustExpressionRemoveImmediateBorrow allocated
-
-                    [] ->
-                        rustExpression
-
-            else if calledCall.called == rustExpressionReferenceAllocShared then
+            if
+                (calledCall.called == rustExpressionReferenceAllocShared)
+                    || (calledCall.called == rustExpressionReferenceAllocDynFn)
+            then
                 case calledCall.arguments of
                     [ _, allocated ] ->
                         rustExpressionRemoveImmediateBorrow allocated
@@ -13159,17 +13162,12 @@ rustExpressionInnermostLambdaResult rustExpression =
             }
 
         RustExpressionCall call ->
-            if call.called == rustExpressionAllocMethod then
+            if
+                (call.called == rustExpressionReferenceAllocShared)
+                    || (call.called == rustExpressionReferenceAllocDynFn)
+            then
                 case call.arguments of
-                    allocated :: _ ->
-                        rustExpressionInnermostLambdaResult allocated
-
-                    [] ->
-                        { statements = [], result = rustExpression }
-
-            else if call.called == rustExpressionReferenceAllocShared then
-                case call.arguments of
-                    _ :: allocated :: _ ->
+                    [ _, allocated ] ->
                         rustExpressionInnermostLambdaResult allocated
 
                     _ ->
@@ -33779,6 +33777,12 @@ pub enum BasicsNever {}
 /// However, rust sometimes gets confused that &mut != & and throws an error.
 /// Using `alloc_shared` already gives you a shared reference so it will always typecheck.
 pub fn alloc_shared<'a, A>(allocator: &'a bumpalo::Bump, to_allocate: A) -> &'a A {
+    allocator.alloc(to_allocate)
+}
+pub fn alloc_dyn_fn<'a, In, Out>(
+    allocator: &'a bumpalo::Bump,
+    to_allocate: impl Fn(In) -> Out + 'a,
+) -> &'a dyn Fn(In) -> Out {
     allocator.alloc(to_allocate)
 }
 
