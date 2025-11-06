@@ -94,21 +94,21 @@ impl<'a, A> Iterator for ListListRefIterator<'a, A> {
 }
 
 impl<'a, A> ListList<'a, A> {
-    pub fn ref_iter(&'a self) -> ListListRefIterator<'a, A> {
+    pub fn iter(&'a self) -> ListListRefIterator<'a, A> {
         ListListRefIterator {
             remaining_list: self,
         }
     }
 }
 impl<'a, A: Clone> ListList<'a, A> {
-    /// can be nice instead of .ref_iter() because it avoids cloning the head
+    /// can be nice instead of .iter() because it avoids cloning the head
     /// and actually consumes the (first cons of the) list
     pub fn into_iter(self) -> impl Iterator<Item = A> {
         // bit convoluted
         (match self {
             ListList::Empty => Option::None,
             ListList::Cons(head, tail) => {
-                Option::Some(std::iter::once(head).chain(tail.ref_iter().cloned()))
+                Option::Some(std::iter::once(head).chain(tail.iter().cloned()))
             }
         })
         .into_iter()
@@ -118,7 +118,7 @@ impl<'a, A: Clone> ListList<'a, A> {
 impl<'a, A: std::fmt::Debug> std::fmt::Debug for ListList<'a, A> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("List")?;
-        f.debug_list().entries(self.ref_iter()).finish()
+        f.debug_list().entries(self.iter()).finish()
     }
 }
 
@@ -337,19 +337,19 @@ pub fn double_ended_iterator_to_list<'a, A, AIterator: DoubleEndedIterator<Item 
 }
 
 pub fn list_length<A>(list: ListList<A>) -> i64 {
-    list.ref_iter().count() as i64
+    list.iter().count() as i64
 }
 pub fn list_sum_int(list: ListList<i64>) -> i64 {
-    list.ref_iter().sum()
+    list.iter().sum()
 }
 pub fn list_sum_float(list: ListList<f64>) -> f64 {
-    list.ref_iter().sum()
+    list.iter().sum()
 }
 pub fn list_product_int(list: ListList<i64>) -> i64 {
-    list.ref_iter().product()
+    list.iter().product()
 }
 pub fn list_product_float(list: ListList<f64>) -> f64 {
-    list.ref_iter().product()
+    list.iter().product()
 }
 pub fn list_all<A: Clone>(is_expected: impl Fn(A) -> bool, list: ListList<A>) -> bool {
     list.into_iter().all(is_expected)
@@ -358,7 +358,7 @@ pub fn list_any<A: Clone>(is_needle: impl Fn(A) -> bool, list: ListList<A>) -> b
     list.into_iter().any(is_needle)
 }
 pub fn list_member<A: PartialEq>(needle: A, list: ListList<A>) -> bool {
-    list.ref_iter().any(|el| el == &needle)
+    list.iter().any(|el| el == &needle)
 }
 pub fn list_minimum<A: Clone + PartialOrd>(list: ListList<A>) -> Option<A> {
     list.into_iter().min_by(|l, r| basics_compare(l, r))
@@ -387,7 +387,7 @@ pub fn list_drop<'a, A: Clone>(skip_count: i64, list: ListList<'a, A>) -> ListLi
         match list {
             ListList::Empty => ListList::Empty,
             ListList::Cons(_, tail) => {
-                let mut iterator: ListListRefIterator<A> = tail.ref_iter();
+                let mut iterator: ListListRefIterator<A> = tail.iter();
                 for _ in 1..=((skip_count - 1_i64) as usize) {
                     match iterator.next() {
                         None => return ListList::Empty,
@@ -412,7 +412,7 @@ pub fn list_intersperse<'a, A: Clone>(
             head.clone(),
             iterator_to_list(
                 allocator,
-                tail.ref_iter().flat_map(|tail_element| {
+                tail.iter().flat_map(|tail_element| {
                     std::iter::once(in_between.clone()).chain(std::iter::once(tail_element.clone()))
                 }),
             ),
@@ -1195,7 +1195,7 @@ pub fn string_from_list<'a>(
     allocator: &'a bumpalo::Bump,
     list: ListList<char>,
 ) -> StringString<'a> {
-    string_to_rope(allocator, list.ref_iter().collect::<String>())
+    string_to_rope(allocator, list.iter().collect::<String>())
 }
 pub fn string_reverse<'a>(allocator: &'a bumpalo::Bump, string: StringString) -> StringString<'a> {
     string_to_rope(
@@ -1394,7 +1394,7 @@ pub fn string_join<'a>(
         ListList::Cons(head_segment, tail_segments) => {
             let mut joined: StringString = head_segment;
             let in_between_borrowed: StringString = string_rope_flatten(allocator, in_between);
-            for segment in tail_segments.ref_iter() {
+            for segment in tail_segments.iter() {
                 joined = string_append(
                     allocator,
                     joined,
@@ -1605,7 +1605,7 @@ pub fn maybe_map2<A, B, Combined>(
     a_maybe: Option<A>,
     b_maybe: Option<B>,
 ) -> Option<Combined> {
-    a_maybe.zip(b_maybe).map(|(a, b)| combine(a, b))
+    Some(combine(a_maybe?, b_maybe?))
 }
 pub fn maybe_map3<A, B, C, Combined>(
     combine: impl FnOnce(A, B, C) -> Combined,
@@ -1613,10 +1613,7 @@ pub fn maybe_map3<A, B, C, Combined>(
     b_maybe: Option<B>,
     c_maybe: Option<C>,
 ) -> Option<Combined> {
-    a_maybe
-        .zip(b_maybe)
-        .zip(c_maybe)
-        .map(|((a, b), c)| combine(a, b, c))
+    Some(combine(a_maybe?, b_maybe?, c_maybe?))
 }
 pub fn maybe_map4<A, B, C, D, Combined>(
     combine: impl FnOnce(A, B, C, D) -> Combined,
@@ -1625,11 +1622,7 @@ pub fn maybe_map4<A, B, C, D, Combined>(
     c_maybe: Option<C>,
     d_maybe: Option<D>,
 ) -> Option<Combined> {
-    a_maybe
-        .zip(b_maybe)
-        .zip(c_maybe)
-        .zip(d_maybe)
-        .map(|(((a, b), c), d)| combine(a, b, c, d))
+    Some(combine(a_maybe?, b_maybe?, c_maybe?, d_maybe?))
 }
 pub fn maybe_map5<A, B, C, D, E, Combined>(
     combine: impl FnOnce(A, B, C, D, E) -> Combined,
@@ -1639,12 +1632,7 @@ pub fn maybe_map5<A, B, C, D, E, Combined>(
     d_maybe: Option<D>,
     e_maybe: Option<E>,
 ) -> Option<Combined> {
-    a_maybe
-        .zip(b_maybe)
-        .zip(c_maybe)
-        .zip(d_maybe)
-        .zip(e_maybe)
-        .map(|((((a, b), c), d), e)| combine(a, b, c, d, e))
+    Some(combine(a_maybe?, b_maybe?, c_maybe?, d_maybe?, e_maybe?))
 }
 
 pub fn result_with_default<A, X>(value_on_err: A, result: ResultResult<X, A>) -> A {
@@ -2468,11 +2456,11 @@ pub fn json_decode_error_to_string_help<'a>(
                         so_far.push_str(&context);
                     }
                     so_far.push_str(" failed in the following ");
-                    so_far.push_str(&errors.ref_iter().count().to_string());
+                    so_far.push_str(&errors.iter().count().to_string());
                     so_far.push_str(" ways=>");
                     so_far.push_str(linebreak_indented);
                     so_far.push_str(linebreak_indented);
-                    for (i, error) in errors.ref_iter().enumerate() {
+                    for (i, error) in errors.iter().enumerate() {
                         so_far.push_str(linebreak_indented);
                         so_far.push_str(linebreak_indented);
                         so_far.push_str(linebreak_indented);
@@ -2738,7 +2726,7 @@ pub fn json_decode_one_of<'a, A>(
     JsonDecodeDecoder {
         decode: allocator.alloc(move |json| {
             let mut option_decode_errors: Vec<JsonDecodeError<'a>> = Vec::new();
-            for next_option_decoder in options.ref_iter() {
+            for next_option_decoder in options.iter() {
                 match (next_option_decoder.decode)(json) {
                     Result::Ok(value) => return Result::Ok(value),
                     Result::Err(option_decode_error) => {
@@ -3045,7 +3033,7 @@ pub fn json_decode_at<'a, A>(
             move |json: JsonValue<'a>| -> Result<A, JsonDecodeError<'a>> {
                 let mut successfully_decoded_field_names: Vec<&str> = Vec::new();
                 let mut remaining_json: JsonValue = json;
-                for next_field_name in path.ref_iter().map(|field| rope_to_str(allocator, *field)) {
+                for next_field_name in path.iter().map(|field| rope_to_str(allocator, *field)) {
                     match (json_decode_field_value(allocator, next_field_name).decode)(
                         remaining_json,
                     ) {
@@ -5093,7 +5081,7 @@ pub fn random_weighted<'a, A: Clone>(
     fn normalize<Ignored>((weight, _): &(f64, Ignored)) -> f64 {
         f64::abs(*weight)
     }
-    let total: f64 = normalize(&first) + others.ref_iter().map(normalize).sum::<f64>();
+    let total: f64 = normalize(&first) + others.iter().map(normalize).sum::<f64>();
     random_map(
         allocator,
         move |generated_float: f64| {
