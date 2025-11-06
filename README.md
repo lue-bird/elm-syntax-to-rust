@@ -91,6 +91,9 @@ cargo run
 If something unexpected happened,
 please [report an issue](https://github.com/lue-bird/elm-syntax-to-rust/issues/new).
 
+If you find rust takes like 2+ seconds to build and you want a faster feedback cycle,
+follow the tips listed in [Optimizing Build Performance, most importantly "Use an alternative codegen backend"](https://doc.rust-lang.org/nightly/cargo/guide/build-performance.html#use-an-alternative-codegen-backend). In my experience this cuts down build times by around 8 times :).
+
 In the transpiled code, you will find these types:
 
 - elm `Bool` (`True` or `False`) → rust `bool` (`true` or `false`), `Char` (`'a'`) → `char` (`'a'`), `( Bool, Char )` → `( bool, char )`
@@ -123,8 +126,8 @@ You will typically have the transpiled type for the elm state which has a tempor
 which only contains owned types – and conversion functions between the two.
 
 ### improvement ideas
-
-- keep types closer to elm (and do not expand aliases everywhere which currently leads to large and hard to understand transpiled types)
+- TODO: cast allocated functions as dyn, fix `_` being replaced by `_1`, should be `0` or `1`
+- keep types closer to elm in more places (and do not expand aliases everywhere which leads to large and hard to understand transpiled types)
 - try and benchmark switching `String` representation from `One &str | Append String String` to `Rc<Vec<&str>>` or `&dyn Fn(String) -> String` to avoid massive nesting = indirection = expensive memory lookup (+ alloc and dealloc but lesser so)
 - if lambda is called with a function, always inline that function
 - possible optimization: make `JsonValue` lazy at field values and Array level
