@@ -9672,7 +9672,7 @@ variableNameDisambiguateFromRustKeywords variableName =
     if
         (rustKeywords |> FastSet.member variableName)
             || -- to avoid overlaps, push other variables further with -1
-               ((variableName |> String.endsWith "_")
+               ((variableName |> String.endsWith "1")
                     && (rustKeywords |> FastSet.member (variableName |> String.dropRight 1))
                )
     then
