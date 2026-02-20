@@ -2,6 +2,9 @@ Print [`elm-syntax`](https://dark.elm.dmy.fr/packages/stil4m/elm-syntax/latest/)
 To try it out, you can
 run [this script](https://github.com/lue-bird/elm-syntax-to-rust/tree/main/node-elm-to-rust).
 
+> ⚠️ I've discovered that currently the generated rust code can leak memory.
+Do not use this project for long-running programs until I fix those ♥
+
 ```elm
 import Elm.Parser
 import ElmSyntaxToRust
