@@ -71,7 +71,7 @@ In your elm project, add `cargo.toml`
 name = "your-project-name"
 edition = "2024"              # not lower
 [dependencies]
-bumpalo = { version = "3.19.1", features = ["allocator_api"] }
+bumpalo = { version = "3.19.1", features = ["allocator_api", "collections"] }
 ```
 
 and a file `src/main.rs` that uses `elm.rs`:

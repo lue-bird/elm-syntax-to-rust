@@ -34146,9 +34146,9 @@ pub fn list<'a, A: Clone, const ElementCount: usize>(
 ) -> ListList<'a, A> {
     double_ended_iterator_to_list(allocator, elements.into_iter())
 }
-pub fn double_ended_iterator_to_list<'a, A, AIterator: DoubleEndedIterator<Item = A>>(
+pub fn double_ended_iterator_to_list<'a, A>(
     allocator: &'a bumpalo::Bump,
-    iterator: AIterator,
+    iterator: impl DoubleEndedIterator<Item = A>,
 ) -> ListList<'a, A> {
     let mut list_so_far: ListList<A> = ListList::Empty;
     for element in iterator.rev() {
@@ -34848,6 +34848,33 @@ pub fn string_rope_append_to_string(
     }
     builder
 }
+pub fn string_rope_append_to_bump_allocated_string<'a>(
+    allocator: &'a bumpalo::Bump,
+    (full_earlier, full_later): &(StringString, StringString),
+) -> bumpalo::collections::String<'a> {
+    let mut builder: bumpalo::collections::String = bumpalo::collections::String::new_in(allocator);
+    // String::with_capacity(string_ref_length(full_earlier) + string_ref_length(full_later));
+    let mut next_early_sub_rope: &StringString = full_earlier;
+    let mut remaining_later_sub_ropes: Vec<&StringString> = vec![full_later];
+    'the_loop: loop {
+        match next_early_sub_rope {
+            StringString::One(str) => {
+                builder.push_str(str);
+                match remaining_later_sub_ropes.pop() {
+                    Option::None => break 'the_loop,
+                    Option::Some(popped) => {
+                        next_early_sub_rope = popped;
+                    }
+                }
+            }
+            StringString::Append((earlier, later)) => {
+                remaining_later_sub_ropes.push(later);
+                next_early_sub_rope = earlier;
+            }
+        }
+    }
+    builder
+}
 
 pub const string_rope_empty: StringString<'static> = StringString::One("");
 pub fn str_to_rope<'a>(string: &'a str) -> StringString<'a> {
@@ -34865,7 +34892,9 @@ pub fn rope_to_cow_str(string: StringString) -> std::borrow::Cow<str> {
 pub fn rope_to_str<'a>(allocator: &'a bumpalo::Bump, string: StringString<'a>) -> &'a str {
     match string {
         StringString::One(str) => str,
-        StringString::Append(append) => allocator.alloc(string_rope_append_to_string(append)),
+        StringString::Append(append) => allocator.alloc(
+            string_rope_append_to_bump_allocated_string(allocator, append),
+        ),
     }
 }
 pub fn string_rope_flatten<'a>(
@@ -34874,12 +34903,16 @@ pub fn string_rope_flatten<'a>(
 ) -> StringString<'a> {
     match string {
         StringString::One(_) => string,
-        StringString::Append(append) => {
-            string_to_rope(allocator, string_rope_append_to_string(append))
-        }
+        StringString::Append(append) => bump_allocated_string_to_rope(
+            allocator,
+            string_rope_append_to_bump_allocated_string(allocator, append),
+        ),
     }
 }
-pub fn string_to_rope<'a>(allocator: &'a bumpalo::Bump, string: String) -> StringString<'a> {
+pub fn bump_allocated_string_to_rope<'a>(
+    allocator: &'a bumpalo::Bump,
+    string: bumpalo::collections::String<'a>,
+) -> StringString<'a> {
     StringString::One(allocator.alloc(string))
 }
 
@@ -34926,14 +34959,13 @@ pub fn string_ref_length(string: &StringString) -> usize {
     }
 }
 pub fn string_from_int<'a>(allocator: &'a bumpalo::Bump, int: i64) -> StringString<'a> {
-    string_to_rope(allocator, int.to_string())
+    bump_allocated_string_to_rope(allocator, bumpalo::format!(in allocator, "{}", int))
 }
 pub fn string_from_float<'a>(allocator: &'a bumpalo::Bump, float: f64) -> StringString<'a> {
-    string_to_rope(allocator, float.to_string())
+    bump_allocated_string_to_rope(allocator, bumpalo::format!(in allocator, "{}", float))
 }
 pub fn string_from_char<'a>(allocator: &'a bumpalo::Bump, char: char) -> StringString<'a> {
-    // allocating here feels wrong because we know the final string size 1..4
-    string_to_rope(allocator, char.to_string())
+    bump_allocated_string_to_rope(allocator, bumpalo::format!(in allocator, "{}", char))
 }
 pub fn string_repeat<'a>(
     allocator: &'a bumpalo::Bump,
@@ -34943,7 +34975,14 @@ pub fn string_repeat<'a>(
     if length <= 0_i64 {
         string_rope_empty
     } else {
-        string_to_rope(allocator, rope_to_cow_str(segment).repeat(length as usize))
+        let segment = match segment {
+            StringString::One(str) => str,
+            StringString::Append(append) => {
+                &string_rope_append_to_bump_allocated_string(allocator, append)
+            }
+        };
+        // wasteful but haven't found an equivalent function in bumpalo
+        StringString::One(allocator.alloc_str(&segment.repeat(length as usize)))
     }
 }
 pub fn string_cons<'a>(
@@ -34966,26 +35005,33 @@ pub fn string_filter<'a>(
     keep: impl Fn(char) -> bool,
     string: StringString,
 ) -> StringString<'a> {
-    string_to_rope(
-        allocator,
-        rope_to_cow_str(string)
-            .chars()
-            .filter(|&element| keep(element))
-            .collect::<String>(),
-    )
+    match string {
+        StringString::One(str) => {
+            let mut result = bumpalo::collections::String::new_in(allocator);
+            result.extend(str.chars().filter(|&element| keep(element)));
+            bump_allocated_string_to_rope(allocator, result)
+        }
+        StringString::Append(append) => {
+            let mut result = string_rope_append_to_bump_allocated_string(allocator, append);
+            result.retain(keep);
+            bump_allocated_string_to_rope(allocator, result)
+        }
+    }
 }
 pub fn string_map<'a>(
     allocator: &'a bumpalo::Bump,
     element_change: impl Fn(char) -> char,
     string: StringString,
 ) -> StringString<'a> {
-    string_to_rope(
-        allocator,
-        rope_to_cow_str(string)
-            .chars()
-            .map(element_change)
-            .collect::<String>(),
-    )
+    let mut result = bumpalo::collections::String::new_in(allocator);
+    let str = match string {
+        StringString::One(str) => str,
+        StringString::Append(append) => {
+            &string_rope_append_to_bump_allocated_string(allocator, append)
+        }
+    };
+    result.extend(str.chars().map(element_change));
+    bump_allocated_string_to_rope(allocator, result)
 }
 pub fn string_foldl<State>(
     reduce: impl Fn(char, State) -> State,
@@ -35016,13 +35062,20 @@ pub fn string_from_list<'a>(
     allocator: &'a bumpalo::Bump,
     list: ListList<char>,
 ) -> StringString<'a> {
-    string_to_rope(allocator, list.iter().collect::<String>())
+    let mut result = bumpalo::collections::String::new_in(allocator);
+    result.extend(list.iter());
+    bump_allocated_string_to_rope(allocator, result)
 }
 pub fn string_reverse<'a>(allocator: &'a bumpalo::Bump, string: StringString) -> StringString<'a> {
-    string_to_rope(
-        allocator,
-        rope_to_cow_str(string).chars().rev().collect::<String>(),
-    )
+    let str = match string {
+        StringString::One(str) => str,
+        StringString::Append(append) => {
+            &string_rope_append_to_bump_allocated_string(allocator, append)
+        }
+    };
+    let mut result = bumpalo::collections::String::new_in(allocator);
+    result.extend(str.chars().rev());
+    bump_allocated_string_to_rope(allocator, result)
 }
 pub fn string_uncons<'a>(
     allocator: &'a bumpalo::Bump,
@@ -35177,13 +35230,24 @@ pub fn string_replace<'a>(
 ) -> StringString<'a> {
     let from_str: &str = match from {
         StringString::One(str) => str,
-        StringString::Append(append) => &string_rope_append_to_string(append),
+        StringString::Append(append) => {
+            &string_rope_append_to_bump_allocated_string(allocator, append)
+        }
     };
     let to_str: &str = match to {
         StringString::One(str) => str,
-        StringString::Append(append) => &string_rope_append_to_string(append),
+        StringString::Append(append) => {
+            &string_rope_append_to_bump_allocated_string(allocator, append)
+        }
     };
-    string_to_rope(allocator, rope_to_cow_str(string).replace(from_str, to_str))
+    let str = match string {
+        StringString::One(str) => str,
+        StringString::Append(append) => {
+            &string_rope_append_to_bump_allocated_string(allocator, append)
+        }
+    };
+    // this is a bit wasteful but I couldn't find a replace in bumpalo
+    StringString::One(allocator.alloc_str(&str.replace(from_str, to_str)))
 }
 pub fn string_append<'a>(
     allocator: &'a bumpalo::Bump,
@@ -35269,7 +35333,7 @@ pub fn string_indexes<'a>(
     needle: StringString,
     string: StringString<'a>,
 ) -> ListList<'a, i64> {
-    let as_str: &str = match string {
+    let str: &str = match string {
         StringString::One(str) => str,
         StringString::Append(append) => &string_rope_append_to_string(append),
     };
@@ -35280,12 +35344,10 @@ pub fn string_indexes<'a>(
     // this is a fairly expensive operation, O(chars * matches). Anyone know something faster?
     iterator_to_list(
         allocator,
-        as_str
-            .match_indices(needle_str)
+        str.match_indices(needle_str)
             .filter_map(|(instance_byte_index, _)| {
                 // translate byte index to char position
-                as_str
-                    .char_indices()
+                str.char_indices()
                     .map(|(char_index, _)| char_index)
                     .find(|&char_index| instance_byte_index >= char_index)
                     // find should always succeed
@@ -35313,10 +35375,20 @@ pub fn string_to_int(string: StringString) -> Option<i64> {
     rope_to_cow_str(string).parse::<i64>().ok()
 }
 pub fn string_to_upper<'a>(allocator: &'a bumpalo::Bump, string: StringString) -> StringString<'a> {
-    string_to_rope(allocator, rope_to_cow_str(string).to_uppercase())
+    let str: &str = match string {
+        StringString::One(str) => str,
+        StringString::Append(append) => &string_rope_append_to_string(append),
+    };
+    // wasteful but haven't found an equivalent function in bumpalo
+    StringString::One(allocator.alloc_str(&str.to_uppercase()))
 }
 pub fn string_to_lower<'a>(allocator: &'a bumpalo::Bump, string: StringString) -> StringString<'a> {
-    string_to_rope(allocator, rope_to_cow_str(string).to_lowercase())
+    let str: &str = match string {
+        StringString::One(str) => str,
+        StringString::Append(append) => &string_rope_append_to_string(append),
+    };
+    // wasteful but haven't found an equivalent function in bumpalo
+    StringString::One(allocator.alloc_str(&str.to_lowercase()))
 }
 pub fn string_pad<'a>(
     allocator: &'a bumpalo::Bump,
@@ -35328,11 +35400,13 @@ pub fn string_pad<'a>(
     let padding_str: &str = &padding.to_string();
     string_append(
         allocator,
-        string_to_rope(allocator, padding_str.repeat(half_to_pad as usize + 1)),
+        // wasteful but haven't found an equivalent function in bumpalo
+        StringString::One(allocator.alloc_str(&padding_str.repeat(half_to_pad as usize + 1))),
         string_append(
             allocator,
             string,
-            string_to_rope(allocator, padding_str.repeat(half_to_pad as usize)),
+            // wasteful but haven't found an equivalent function in bumpalo
+            StringString::One(allocator.alloc_str(&padding_str.repeat(half_to_pad as usize))),
         ),
     )
 }
@@ -35342,14 +35416,14 @@ pub fn string_pad_left<'a>(
     padding: char,
     string: StringString<'a>,
 ) -> StringString<'a> {
+    let mut padding_string = bumpalo::collections::String::new_in(allocator);
+    padding_string.extend(std::iter::repeat_n(
+        padding,
+        (minimum_length - string_length(string)) as usize,
+    ));
     string_append(
         allocator,
-        string_to_rope(
-            allocator,
-            padding
-                .to_string()
-                .repeat((minimum_length - string_length(string)) as usize),
-        ),
+        bump_allocated_string_to_rope(allocator, padding_string),
         string,
     )
 }
@@ -35359,15 +35433,15 @@ pub fn string_pad_right<'a>(
     padding: char,
     string: StringString<'a>,
 ) -> StringString<'a> {
+    let mut padding_string = bumpalo::collections::String::new_in(allocator);
+    padding_string.extend(std::iter::repeat_n(
+        padding,
+        (minimum_length - string_length(string)) as usize,
+    ));
     string_append(
         allocator,
         string,
-        string_to_rope(
-            allocator,
-            padding
-                .to_string()
-                .repeat((minimum_length - string_length(string)) as usize),
-        ),
+        bump_allocated_string_to_rope(allocator, padding_string),
     )
 }
 pub fn string_trim<'a>(allocator: &'a bumpalo::Bump, string: StringString<'a>) -> StringString<'a> {
@@ -35390,7 +35464,7 @@ pub fn debug_to_string<'a, A: std::fmt::Debug>(
     allocator: &'a bumpalo::Bump,
     data: A,
 ) -> StringString<'a> {
-    string_to_rope(allocator, format!("{:?}", data))
+    bump_allocated_string_to_rope(allocator, bumpalo::format!(in allocator, "{:?}", data))
 }
 pub fn debug_log<A: std::fmt::Debug>(tag: StringString, data: A) -> A {
     println!("{tag}: {:?}", data);
@@ -36022,25 +36096,24 @@ pub enum JsonValue<'a> {
     Number(f64),
     String(&'a str),
     Array(&'a [JsonValue<'a>]),
-    Object(&'a std::collections::BTreeMap<&'a str, JsonValue<'a>>),
+    Object(&'a std::collections::BTreeMap<&'a str, JsonValue<'a>, &'a bumpalo::Bump>),
 }
 pub fn json_encode_encode<'a>(
     allocator: &'a bumpalo::Bump,
     indent_size: i64,
     json: JsonValue<'a>,
 ) -> StringString<'a> {
-    string_to_rope(
-        allocator,
-        json_encode_encode_from(indent_size as usize, 0, String::new(), json),
-    )
+    let mut result = bumpalo::collections::String::new_in(allocator);
+    json_encode_encode_from(indent_size as usize, 0, &mut result, json);
+    bump_allocated_string_to_rope(allocator, result)
 }
 
 pub fn json_encode_encode_from<'a>(
     indent_size: usize,
     current_indent: usize,
-    mut so_far: String,
-    json: JsonValue<'a>,
-) -> String {
+    so_far: &mut bumpalo::collections::String<'a>,
+    json: JsonValue,
+) {
     match json {
         JsonValue::Null => so_far.push_str("null"),
         JsonValue::Bool(bool) => so_far.push_str(match bool {
@@ -36049,7 +36122,7 @@ pub fn json_encode_encode_from<'a>(
         }),
         JsonValue::Number(number) => so_far.push_str(&number.to_string()),
         JsonValue::String(str) => {
-            push_json_string(&mut so_far, str);
+            push_json_string(so_far, str);
         }
         JsonValue::Array(json_elements) => {
             let mut json_elements_iterator = json_elements.iter();
@@ -36070,7 +36143,7 @@ pub fn json_encode_encode_from<'a>(
                     };
                     so_far.push('[');
                     so_far.push_str(inner_linebreak_indented);
-                    so_far = json_encode_encode_from(
+                    json_encode_encode_from(
                         indent_size,
                         current_indent + 1,
                         so_far,
@@ -36079,7 +36152,7 @@ pub fn json_encode_encode_from<'a>(
                     for json_element in json_elements_iterator {
                         so_far.push(',');
                         so_far.push_str(inner_linebreak_indented);
-                        so_far = json_encode_encode_from(
+                        json_encode_encode_from(
                             indent_size,
                             current_indent + 1,
                             so_far,
@@ -36111,9 +36184,9 @@ pub fn json_encode_encode_from<'a>(
                     let between_field_name_and_value = if indent_size == 0 { ":" } else { ": " };
                     so_far.push('{');
                     so_far.push_str(inner_linebreak_indented);
-                    push_json_object_key(&mut so_far, first_field_name);
+                    push_json_object_key(so_far, first_field_name);
                     so_far.push_str(between_field_name_and_value);
-                    so_far = json_encode_encode_from(
+                    json_encode_encode_from(
                         indent_size,
                         current_indent + 1,
                         so_far,
@@ -36122,9 +36195,9 @@ pub fn json_encode_encode_from<'a>(
                     for (field_name, &field_value) in json_elements_iterator {
                         so_far.push(',');
                         so_far.push_str(inner_linebreak_indented);
-                        push_json_object_key(&mut so_far, field_name);
+                        push_json_object_key(so_far, field_name);
                         so_far.push_str(between_field_name_and_value);
-                        so_far = json_encode_encode_from(
+                        json_encode_encode_from(
                             indent_size,
                             current_indent + 1,
                             so_far,
@@ -36137,12 +36210,11 @@ pub fn json_encode_encode_from<'a>(
             }
         }
     }
-    so_far
 }
-fn push_json_object_key(so_far: &mut String, field_name: &str) {
+fn push_json_object_key(so_far: &mut bumpalo::collections::String, field_name: &str) {
     push_json_string(so_far, field_name);
 }
-fn push_json_string(so_far: &mut String, str: &str) {
+fn push_json_string(so_far: &mut bumpalo::collections::String, str: &str) {
     so_far.push('"');
     // can be optimized
     for char in str.chars() {
@@ -36188,51 +36260,52 @@ pub fn json_encode_list<'a, A: Clone>(
     element_to_json: impl Fn(A) -> JsonValue<'a>,
     list: ListList<'a, A>,
 ) -> JsonValue<'a> {
-    JsonValue::Array(
-        allocator.alloc(
-            list.into_iter()
-                .map(element_to_json)
-                .collect::<Vec<JsonValue>>(),
-        ),
-    )
+    let mut json_elements = Vec::new_in(allocator);
+    json_elements.extend(list.into_iter().map(element_to_json));
+    JsonValue::Array(vec_to_array(allocator, json_elements))
 }
 pub fn json_encode_array<'a, A: Clone>(
     allocator: &'a bumpalo::Bump,
     element_to_json: impl Fn(A) -> JsonValue<'a>,
     array: ArrayArray<A>,
 ) -> JsonValue<'a> {
-    JsonValue::Array(allocator.alloc(array_map(allocator, element_to_json, array)))
+    JsonValue::Array(array_map(allocator, element_to_json, array))
 }
 pub fn json_encode_set<'a, A: Clone>(
     allocator: &'a bumpalo::Bump,
     element_to_json: impl Fn(A) -> JsonValue<'a>,
     set: SetSet<A>,
 ) -> JsonValue<'a> {
-    JsonValue::Array(
-        allocator.alloc(match std::rc::Rc::try_unwrap(set) {
-            Result::Ok(set_owned) => set_owned
-                .into_iter()
-                .map(|PretendNotPartial(k)| element_to_json(k))
-                .collect::<Vec<JsonValue>>(),
-            Result::Err(set_shared) => set_shared
-                .iter()
-                .map(|PretendNotPartial(k)| element_to_json(k.clone()))
-                .collect::<Vec<JsonValue>>(),
-        }),
-    )
+    let mut json_elements = Vec::new_in(allocator);
+    match std::rc::Rc::try_unwrap(set) {
+        Result::Ok(set_owned) => {
+            json_elements.extend(
+                set_owned
+                    .into_iter()
+                    .map(|PretendNotPartial(k)| element_to_json(k)),
+            );
+        }
+        Result::Err(set_shared) => {
+            json_elements.extend(
+                set_shared
+                    .iter()
+                    .map(|PretendNotPartial(k)| element_to_json(k.clone())),
+            );
+        }
+    }
+    JsonValue::Array(vec_to_array(allocator, json_elements))
 }
 pub fn json_encode_object<'a>(
     allocator: &'a bumpalo::Bump,
     entries: ListList<'a, (StringString, JsonValue)>,
 ) -> JsonValue<'a> {
-    JsonValue::Object(
-        allocator.alloc(
-            entries
-                .into_iter()
-                .map(|(field_name, field_value)| (rope_to_str(allocator, field_name), field_value))
-                .collect::<std::collections::BTreeMap<&str, JsonValue>>(),
-        ),
-    )
+    let mut json_fields = std::collections::BTreeMap::new_in(allocator);
+    json_fields.extend(
+        entries
+            .into_iter()
+            .map(|(field_name, field_value)| (rope_to_str(allocator, field_name), field_value)),
+    );
+    JsonValue::Object(allocator.alloc(json_fields))
 }
 pub fn json_encode_dict<'a, K: Clone, V: Clone>(
     allocator: &'a bumpalo::Bump,
@@ -36240,28 +36313,30 @@ pub fn json_encode_dict<'a, K: Clone, V: Clone>(
     value_to_json: impl Fn(V) -> JsonValue<'a>,
     dict: DictDict<K, V>,
 ) -> JsonValue<'a> {
-    JsonValue::Object(
-        allocator.alloc(match std::rc::Rc::try_unwrap(dict) {
-            Result::Ok(dict_owned) => dict_owned
-                .iter()
-                .map(|(PretendNotPartial(field_name), field_value)| {
+    let mut json_fields = std::collections::BTreeMap::new_in(allocator);
+    match std::rc::Rc::try_unwrap(dict) {
+        Result::Ok(dict_owned) => {
+            json_fields.extend(dict_owned.iter().map(
+                |(PretendNotPartial(field_name), field_value)| {
                     (
                         rope_to_str(allocator, key_to_string(field_name.clone())),
                         value_to_json(field_value.clone()),
                     )
-                })
-                .collect::<std::collections::BTreeMap<&str, JsonValue>>(),
-            Result::Err(dict_shared) => dict_shared
-                .iter()
-                .map(|(PretendNotPartial(field_name), field_value)| {
+                },
+            ));
+        }
+        Result::Err(dict_shared) => {
+            json_fields.extend(dict_shared.iter().map(
+                |(PretendNotPartial(field_name), field_value)| {
                     (
                         rope_to_str(allocator, key_to_string(field_name.clone())),
                         value_to_json(field_value.clone()),
                     )
-                })
-                .collect::<std::collections::BTreeMap<&str, JsonValue>>(),
-        }),
-    )
+                },
+            ));
+        }
+    }
+    JsonValue::Object(allocator.alloc(json_fields))
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum JsonDecodeError<'a> {
@@ -36278,14 +36353,14 @@ pub fn json_decode_error_to_string<'a>(
     allocator: &'a bumpalo::Bump,
     error: JsonDecodeError<'a>,
 ) -> StringString<'a> {
-    let mut builder = String::new();
+    let mut builder = bumpalo::collections::String::new_in(allocator);
     json_decode_error_to_string_help(error, String::new(), &mut builder, 0);
-    string_to_rope(allocator, builder)
+    bump_allocated_string_to_rope(allocator, builder)
 }
 pub fn json_decode_error_to_string_help(
     error: JsonDecodeError,
     mut context: String,
-    so_far: &mut String,
+    so_far: &mut bumpalo::collections::String,
     indent: usize,
 ) {
     let mut current_error = error;
@@ -36362,7 +36437,7 @@ pub fn json_decode_error_to_string_help(
                     so_far.push_str(linebreak_indented);
                     so_far.push_str("    ");
                 };
-                so_far.push_str(&json_encode_encode_from(4, indent + 4, String::new(), json));
+                json_encode_encode_from(4, indent + 4, so_far, json);
                 so_far.push_str(linebreak_indented);
                 so_far.push_str(linebreak_indented);
                 so_far.push_str(&rope_to_cow_str(message));
@@ -36824,9 +36899,9 @@ pub fn json_decode_field_value<'a>(
                 Option::None => {
                     let field_description: &str = &json_field_description(field_name);
                     Result::Err(JsonDecodeError::Failure(
-                        string_to_rope(
+                        bump_allocated_string_to_rope(
                             allocator,
-                            format!("Expecting an OBJECT with a field {field_description}"),
+                            bumpalo::format!(in allocator, "Expecting an OBJECT with a field {}", field_description),
                         ),
                         json,
                     ))
@@ -36873,9 +36948,9 @@ pub fn json_decode_field<'a, A>(
                 Option::None => {
                     let field_description: &str = &json_field_description(field_name);
                     Result::Err(JsonDecodeError::Failure(
-                        string_to_rope(
+                        bump_allocated_string_to_rope(
                             allocator,
-                            format!("Expecting an OBJECT with a field {field_description}"),
+                            bumpalo::format!(in allocator, "Expecting an OBJECT with a field {}", field_description),
                         ),
                         json,
                     ))
@@ -37017,7 +37092,10 @@ pub fn json_decode_decode_string<'a, A>(
     match json_parse_to_end(str_to_parse.chars(), allocator) {
         Result::Ok(parsed_json) => (decoder.decode)(parsed_json),
         Result::Err(parse_error) => Result::Err(JsonDecodeError::Failure(
-            string_to_rope(allocator, parse_error.to_string()),
+            bump_allocated_string_to_rope(
+                allocator,
+                parse_error.to_bump_allocated_string(allocator),
+            ),
             JsonValue::String(str_to_parse),
         )),
     }
@@ -37048,12 +37126,17 @@ struct JsonParseError {
     line: usize,
     col: usize,
 }
-impl std::fmt::Display for JsonParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(
-            f,
+impl JsonParseError {
+    fn to_bump_allocated_string<'a>(
+        &self,
+        allocator: &'a bumpalo::Bump,
+    ) -> bumpalo::collections::String<'a> {
+        bumpalo::format!(
+            in allocator,
             "Parse error at line:{}, col:{}: {}",
-            self.line, self.col, &self.msg,
+            self.line,
+            self.col,
+            self.msg,
         )
     }
 }
@@ -37165,10 +37248,11 @@ impl<'a> JsonParser<'a> {
         if self.peek()? == '}' {
             self.consume().unwrap();
             return Result::Ok(JsonValue::Object(
-                allocator.alloc(std::collections::BTreeMap::new()),
+                allocator.alloc(std::collections::BTreeMap::new_in(allocator)),
             ));
         }
-        let mut m: std::collections::BTreeMap<&str, JsonValue> = std::collections::BTreeMap::new();
+        let mut m: std::collections::BTreeMap<&str, JsonValue, _> =
+            std::collections::BTreeMap::new_in(allocator);
         loop {
             let key: &str = match self.parse_any(allocator)? {
                 JsonValue::String(s) => s,
@@ -37212,7 +37296,8 @@ impl<'a> JsonParser<'a> {
             return Result::Ok(JsonValue::Array(&[]));
         }
 
-        let mut v: Vec<JsonValue> = vec![self.parse_any(allocator)?];
+        let mut v: Vec<JsonValue, _> = Vec::new_in(allocator);
+        v.push(self.parse_any(allocator)?);
         loop {
             match self.consume()? {
                 ',' => {}
@@ -37236,7 +37321,7 @@ impl<'a> JsonParser<'a> {
             return Result::Err(self.error(String::from("String must starts with double quote")));
         }
         let mut utf16: Vec<u16> = Vec::new(); // Buffer for parsing \\uXXXX UTF-16 characters
-        let mut s: String = String::new();
+        let mut s = bumpalo::collections::String::new_in(allocator);
         loop {
             let c: char = match self.consume_no_skip()? {
                 '\\\\' => match self.consume_no_skip()? {
@@ -37290,7 +37375,11 @@ impl<'a> JsonParser<'a> {
             s.push(c);
         }
     }
-    fn push_utf16(&self, s: &mut String, utf16: &mut Vec<u16>) -> Result<(), JsonParseError> {
+    fn push_utf16(
+        &self,
+        s: &mut bumpalo::collections::String,
+        utf16: &mut Vec<u16>,
+    ) -> Result<(), JsonParseError> {
         if utf16.is_empty() {
             return Result::Ok(());
         }
@@ -37803,9 +37892,9 @@ pub fn bytes_encode_sequence<'a>(
     allocator: &'a bumpalo::Bump,
     in_order: ListList<'a, BytesEncodeEncoder<'a>>,
 ) -> BytesEncodeEncoder<'a> {
-    BytesEncodeEncoder::Sequence(
-        allocator.alloc(in_order.into_iter().collect::<Vec<BytesEncodeEncoder>>()),
-    )
+    let mut element_encoders = Vec::new_in(allocator);
+    element_encoders.extend(in_order.into_iter());
+    BytesEncodeEncoder::Sequence(allocator.alloc(element_encoders))
 }
 
 fn bytes_encoder_byte_count(encoder: BytesEncodeEncoder) -> usize {
@@ -37837,7 +37926,7 @@ pub fn bytes_encode_encode<'a>(
     allocator: &'a bumpalo::Bump,
     encoder: BytesEncodeEncoder,
 ) -> BytesBytes<'a> {
-    let mut bytes: Vec<u8> = Vec::with_capacity(bytes_encoder_byte_count(encoder));
+    let mut bytes: Vec<u8, _> = Vec::with_capacity_in(bytes_encoder_byte_count(encoder), allocator);
     let mut next_encoder: BytesEncodeEncoder = encoder;
     let mut remaining_encoders: Vec<BytesEncodeEncoder> = Vec::new();
     'the_loop: loop {
@@ -38244,14 +38333,10 @@ pub fn platform_cmd_batch<'a, Event: Clone>(
     allocator: &'a bumpalo::Bump,
     cmds: ListList<'a, PlatformCmdCmd<'a, Event>>,
 ) -> PlatformCmdCmd<'a, Event> {
+    let mut cmd_trees = Vec::new_in(allocator);
+    cmd_trees.extend(cmds.into_iter().map(|sub_cmd| sub_cmd.tree));
     PlatformCmdCmd {
-        tree: PlatformCmdTree::Batch(
-            allocator.alloc(
-                cmds.into_iter()
-                    .map(|sub_cmd| sub_cmd.tree)
-                    .collect::<Vec<PlatformCmdTree<'a>>>(),
-            ),
-        ),
+        tree: PlatformCmdTree::Batch(allocator.alloc(cmd_trees)),
         phantom_data: std::marker::PhantomData,
     }
 }
@@ -38287,9 +38372,7 @@ pub fn platform_sub_batch<'a, Event: Clone>(
     allocator: &'a bumpalo::Bump,
     subs: ListList<'a, PlatformSubSub<'a, Event>>,
 ) -> PlatformSubSub<'a, Event> {
-    PlatformSubSub::Batch(
-        allocator.alloc(subs.into_iter().collect::<Vec<PlatformSubSub<'a, Event>>>()),
-    )
+    PlatformSubSub::Batch(array_from_list(allocator, subs))
 }
 pub fn platform_sub_map<'a, A: Clone, B>(
     allocator: &'a bumpalo::Bump,
@@ -38297,15 +38380,15 @@ pub fn platform_sub_map<'a, A: Clone, B>(
     sub: PlatformSubSub<'a, A>,
 ) -> PlatformSubSub<'a, B> {
     match sub {
-        PlatformSubSub::Batch(subs) => PlatformSubSub::Batch(
-            allocator.alloc(
-                subs.iter()
-                    .map(|sub_sub| {
-                        platform_sub_map(allocator, event_change.clone(), sub_sub.clone())
-                    })
-                    .collect::<Vec<PlatformSubSub<'a, B>>>(),
-            ),
-        ),
+        PlatformSubSub::Batch(subs) => {
+            let mut mapped_subs = Vec::new_in(allocator);
+            mapped_subs.extend(
+                subs.iter().map(|sub_sub| {
+                    platform_sub_map(allocator, event_change.clone(), sub_sub.clone())
+                }),
+            );
+            PlatformSubSub::Batch(allocator.alloc(mapped_subs))
+        }
         PlatformSubSub::PortIncoming(name, on_data) => PlatformSubSub::PortIncoming(
             name,
             alloc_shared(allocator, move |data| event_change.clone()(on_data(data))),
@@ -38431,8 +38514,8 @@ pub fn virtual_dom_node<'a, Event: Clone>(
     VirtualDomNode::Element {
         tag: rope_to_str(allocator, tag),
         namespace: Option::None,
-        subs: allocator.alloc(subs.into_iter().collect::<Vec<_>>()),
-        modifiers: allocator.alloc(modifiers.into_iter().collect::<Vec<_>>()),
+        subs: array_from_list(allocator, subs),
+        modifiers: array_from_list(allocator, modifiers),
     }
 }
 pub fn virtual_dom_node_ns<'a, Event: Clone>(
@@ -38445,8 +38528,8 @@ pub fn virtual_dom_node_ns<'a, Event: Clone>(
     VirtualDomNode::Element {
         tag: rope_to_str(allocator, tag),
         namespace: Option::Some(rope_to_str(allocator, namespace_)),
-        subs: allocator.alloc(subs.into_iter().collect::<Vec<_>>()),
-        modifiers: allocator.alloc(modifiers.into_iter().collect::<Vec<_>>()),
+        subs: array_from_list(allocator, subs),
+        modifiers: array_from_list(allocator, modifiers),
     }
 }
 pub fn virtual_dom_keyed_node<'a, Event: Clone>(
@@ -38455,15 +38538,16 @@ pub fn virtual_dom_keyed_node<'a, Event: Clone>(
     modifiers: ListList<VirtualDomAttribute<'a, Event>>,
     subs: ListList<(StringString<'a>, VirtualDomNode<'a, Event>)>,
 ) -> VirtualDomNode<'a, Event> {
+    let mut keyed_sub_nodes = Vec::new_in(allocator);
+    keyed_sub_nodes.extend(
+        subs.into_iter()
+            .map(|(key, node)| (rope_to_str(allocator, key), node)),
+    );
     VirtualDomNode::ElementKeyed {
         tag: rope_to_str(allocator, tag),
         namespace: Option::None,
-        subs: allocator.alloc(
-            subs.into_iter()
-                .map(|(key, node)| (rope_to_str(allocator, key), node))
-                .collect::<Vec<_>>(),
-        ),
-        modifiers: allocator.alloc(modifiers.into_iter().collect::<Vec<_>>()),
+        subs: allocator.alloc(keyed_sub_nodes),
+        modifiers: array_from_list(allocator, modifiers),
     }
 }
 pub fn virtual_dom_keyed_node_ns<'a, Event: Clone>(
@@ -38473,15 +38557,16 @@ pub fn virtual_dom_keyed_node_ns<'a, Event: Clone>(
     modifiers: ListList<VirtualDomAttribute<'a, Event>>,
     subs: ListList<(StringString<'a>, VirtualDomNode<'a, Event>)>,
 ) -> VirtualDomNode<'a, Event> {
+    let mut keyed_sub_nodes = Vec::new_in(allocator);
+    keyed_sub_nodes.extend(
+        subs.into_iter()
+            .map(|(key, node)| (rope_to_str(allocator, key), node)),
+    );
     VirtualDomNode::ElementKeyed {
         tag: rope_to_str(allocator, tag),
         namespace: Option::Some(rope_to_str(allocator, namespace_)),
-        subs: allocator.alloc(
-            subs.into_iter()
-                .map(|(key, node)| (rope_to_str(allocator, key), node))
-                .collect::<Vec<_>>(),
-        ),
-        modifiers: allocator.alloc(modifiers.into_iter().collect::<Vec<_>>()),
+        subs: allocator.alloc(keyed_sub_nodes),
+        modifiers: array_from_list(allocator, modifiers),
     }
 }
 pub fn virtual_dom_lazy<'a, A, Event>(
@@ -38699,52 +38784,47 @@ pub fn virtual_dom_map<'a, Event: Clone, EventMapped>(
             namespace: namespace,
             subs: subs,
             modifiers: modifiers,
-        } => VirtualDomNode::Element {
-            tag: tag,
-            namespace: namespace,
-            subs: allocator.alloc(
+        } => {
+            let mut mapped_subs = Vec::new_in(allocator);
+            mapped_subs.extend(
                 subs.iter()
-                    .map(|sub| virtual_dom_map(allocator, event_change.clone(), sub.clone()))
-                    .collect::<Vec<_>>(),
-            ),
-            modifiers: allocator.alloc(
-                modifiers
-                    .iter()
-                    .map(|modifier| {
-                        virtual_dom_map_attribute(allocator, event_change.clone(), modifier.clone())
-                    })
-                    .collect::<Vec<_>>(),
-            ),
-        },
+                    .map(|sub| virtual_dom_map(allocator, event_change.clone(), sub.clone())),
+            );
+            let mut mapped_modifiers = Vec::new_in(allocator);
+            mapped_modifiers.extend(modifiers.iter().map(|modifier| {
+                virtual_dom_map_attribute(allocator, event_change.clone(), modifier.clone())
+            }));
+            VirtualDomNode::Element {
+                tag: tag,
+                namespace: namespace,
+                subs: allocator.alloc(mapped_subs),
+                modifiers: allocator.alloc(mapped_modifiers),
+            }
+        }
         VirtualDomNode::ElementKeyed {
             tag: tag,
             namespace: namespace,
             subs: subs,
             modifiers: modifiers,
-        } => VirtualDomNode::ElementKeyed {
-            tag: tag,
-            namespace: namespace,
-            subs: allocator
-                .alloc(
-                    subs.iter()
-                        .map(|(key, sub)| {
-                            (
-                                *key,
-                                virtual_dom_map(allocator, event_change.clone(), sub.clone()),
-                            )
-                        })
-                        .collect::<Vec<_>>(),
+        } => {
+            let mut mapped_subs = Vec::new_in(allocator);
+            mapped_subs.extend(subs.iter().map(|(key, sub)| {
+                (
+                    *key,
+                    virtual_dom_map(allocator, event_change.clone(), sub.clone()),
                 )
-                .as_slice(),
-            modifiers: allocator.alloc(
-                modifiers
-                    .iter()
-                    .map(|modifier| {
-                        virtual_dom_map_attribute(allocator, event_change.clone(), modifier.clone())
-                    })
-                    .collect::<Vec<_>>(),
-            ),
-        },
+            }));
+            let mut mapped_modifiers = Vec::new_in(allocator);
+            mapped_modifiers.extend(modifiers.iter().map(|modifier| {
+                virtual_dom_map_attribute(allocator, event_change.clone(), modifier.clone())
+            }));
+            VirtualDomNode::ElementKeyed {
+                tag: tag,
+                namespace: namespace,
+                subs: allocator.alloc(mapped_subs),
+                modifiers: allocator.alloc(mapped_modifiers),
+            }
+        }
     }
 }
 
