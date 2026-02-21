@@ -1704,9 +1704,14 @@ pub fn result_map5<A, B, C, D, E, Combined, X>(
 
 /// because types like elm Float can be used as dictionary keys
 /// while rust `f64` being `PartialOrd` for exampled can not
-#[derive(Copy, Clone, PartialEq, PartialOrd)]
+#[derive(Copy, Clone, PartialEq)]
 pub struct PretendNotPartial<A>(pub A);
 impl<A: PartialEq> Eq for PretendNotPartial<A> {}
+impl<A: PartialEq + PartialOrd> PartialOrd for PretendNotPartial<A> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
 impl<A: PartialEq + PartialOrd> Ord for PretendNotPartial<A> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.0
