@@ -2349,7 +2349,7 @@ and need to be "extracted" to values with
     -- or for Copy values simply
     let binding_name = *generated_ref_binding_name;
 
-to get the "generated_ref_" name, use `generatedPatternRefBindingName`.
+to get the "generated\_ref\_" name, use `generatedPatternRefBindingName`.
 (you might ask why not shadow? Not shadowing makes later clone insertion etc easier)
 
 Note that sometimes pattern variables can end up as double-references, e.g `tail` in:
@@ -4575,7 +4575,6 @@ justRustReferenceIdentity =
 {-| Use `typeConstructReferenceToCoreRust` for types
 
 TODO change to
-
 
     { qualification : List String
     , name : String
@@ -9317,7 +9316,9 @@ rustParameterUnnestFn parameter =
 
 {-| E.g. in
 
-    (a @ ((b) @ ( first, second @ third )))
+```rust
+(a @ ((b) @ ( first, second @ third )))
+```
 
 the "directly capturing" bindings are `a` and `b`
 as they reference the whole matched expression.
@@ -9436,7 +9437,7 @@ listPrependInReverse earlierReverse later =
                 (earlierLast :: later)
 
 
-{-| https://doc.rust-lang.org/reference/const_eval.html#constant-expressions
+{-| <https://doc.rust-lang.org/reference/const_eval.html#constant-expressions>
 -}
 rustExpressionIsConst : { customConsts : FastSet.Set String } -> RustExpression -> Bool
 rustExpressionIsConst context rustExpression =
@@ -9683,7 +9684,7 @@ variableNameDisambiguateFromRustKeywords variableName =
 
 
 {-| both weak, reserved and strong.
-see https://doc.rust-lang.org/reference/keywords.html
+see <https://doc.rust-lang.org/reference/keywords.html>
 
 Make sure to apply this to _both_ lower and uppercase names,
 even those that have underscores
@@ -15945,7 +15946,9 @@ letValueOrFunctionDeclaration context inferredLetDeclarationValueOrFunctionNode 
 
 {-| E.g. in
 
-    (a @ ((b) @ ( first, second @ third )))
+```rust
+(a @ ((b) @ ( first, second @ third )))
+```
 
 the "directly capturing" bindings are `a` and `b`
 as they reference the whole matched expression.
@@ -18253,7 +18256,7 @@ typeNodeExpand expansions syntaxTypeNode =
             )
 
 
-{-| *Caution!* only use when resulting type construct qualification does not matter
+{-| _Caution!_ only use when resulting type construct qualification does not matter
 -}
 inferredTypeToSyntax :
     Elm.Syntax.Range.Range
@@ -18270,7 +18273,7 @@ inferredTypeToSyntax rootRange inferredType =
                 (inferredTypeNotVariableToSyntax rootRange inferredTypeNotVariable)
 
 
-{-| *Caution!* only use when resulting type construct qualification does not matter
+{-| _Caution!_ only use when resulting type construct qualification does not matter
 -}
 inferredTypeNotVariableToSyntax :
     Elm.Syntax.Range.Range
