@@ -1702,7 +1702,7 @@ pub fn result_map5<A, B, C, D, E, Combined, X>(
 
 /// because types like elm Float can be used as dictionary keys
 /// while rust `f64` being `PartialOrd` for exampled can not
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Hash)]
 pub struct PretendNotPartial<A>(pub A);
 impl<A: PartialEq> Eq for PretendNotPartial<A> {}
 impl<A: PartialEq + PartialOrd> PartialOrd for PretendNotPartial<A> {
@@ -1728,67 +1728,71 @@ impl<A: std::fmt::Debug> std::fmt::Debug for PretendNotPartial<A> {
     }
 }
 
-type DictDict<K, V> = std::rc::Rc<std::collections::BTreeMap<PretendNotPartial<K>, V>>;
+type DictDict<'a, K, V> = std::rc::Rc<
+    std::collections::BTreeMap<PretendNotPartial<K>, V, &'a bumpalo::Bump>,
+    &'a bumpalo::Bump,
+>;
 
-pub fn dict_empty<K, V>() -> DictDict<K, V> {
-    std::rc::Rc::new(std::collections::BTreeMap::new())
+pub fn dict_empty<'a, K, V>(allocator: &'a bumpalo::Bump) -> DictDict<'a, K, V> {
+    std::rc::Rc::new_in(std::collections::BTreeMap::new_in(allocator), allocator)
 }
-pub fn dict_singleton<K: PartialOrd, V>(only_key: K, only_value: V) -> DictDict<K, V> {
-    let mut dict: std::collections::BTreeMap<PretendNotPartial<K>, V> =
-        std::collections::BTreeMap::new();
+pub fn dict_singleton<'a, K: PartialOrd, V>(
+    allocator: &'a bumpalo::Bump,
+    only_key: K,
+    only_value: V,
+) -> DictDict<'a, K, V> {
+    let mut dict = std::collections::BTreeMap::new_in(allocator);
     dict.insert(PretendNotPartial(only_key), only_value);
-    std::rc::Rc::new(dict)
+    std::rc::Rc::new_in(dict, allocator)
 }
-pub fn dict_insert<K: PartialOrd + Clone, V: Clone>(
+pub fn dict_insert<'a, K: PartialOrd + Clone, V: Clone>(
+    allocator: &'a bumpalo::Bump,
     key: K,
     value: V,
-    dict: DictDict<K, V>,
-) -> DictDict<K, V> {
-    let mut dict_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> =
-        std::rc::Rc::unwrap_or_clone(dict);
+    dict: DictDict<'a, K, V>,
+) -> DictDict<'a, K, V> {
+    let mut dict_owned = std::rc::Rc::unwrap_or_clone(dict);
     dict_owned.insert(PretendNotPartial(key), value);
-    std::rc::Rc::new(dict_owned)
+    std::rc::Rc::new_in(dict_owned, allocator)
 }
-pub fn dict_update<K: PartialOrd + Clone, V: Clone>(
+pub fn dict_update<'a, K: PartialOrd + Clone, V: Clone>(
+    allocator: &'a bumpalo::Bump,
     key: K,
     value_change: impl Fn(Option<V>) -> Option<V>,
-    dict: DictDict<K, V>,
-) -> DictDict<K, V> {
+    dict: DictDict<'a, K, V>,
+) -> DictDict<'a, K, V> {
     let key_pretend_not_partial: PretendNotPartial<K> = PretendNotPartial(key);
     match dict.get(&key_pretend_not_partial) {
         Option::Some(value) => match value_change(Option::Some(value.clone())) {
             Option::None => {
-                let mut dict_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> =
-                    std::rc::Rc::unwrap_or_clone(dict);
+                let mut dict_owned = std::rc::Rc::unwrap_or_clone(dict);
                 dict_owned.remove(&key_pretend_not_partial);
-                std::rc::Rc::new(dict_owned)
+                std::rc::Rc::new_in(dict_owned, allocator)
             }
             Option::Some(changed_value) => {
-                let mut dict_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> =
-                    std::rc::Rc::unwrap_or_clone(dict);
+                let mut dict_owned = std::rc::Rc::unwrap_or_clone(dict);
                 dict_owned.insert(key_pretend_not_partial, changed_value);
-                std::rc::Rc::new(dict_owned)
+                std::rc::Rc::new_in(dict_owned, allocator)
             }
         },
         Option::None => match value_change(Option::None) {
             Option::None => dict,
             Option::Some(changed_value) => {
-                let mut dict_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> =
-                    std::rc::Rc::unwrap_or_clone(dict);
+                let mut dict_owned = std::rc::Rc::unwrap_or_clone(dict);
                 dict_owned.insert(key_pretend_not_partial, changed_value);
-                std::rc::Rc::new(dict_owned)
+                std::rc::Rc::new_in(dict_owned, allocator)
             }
         },
     }
 }
-pub fn dict_remove<K: PartialOrd + Clone, V: Clone>(
+pub fn dict_remove<'a, K: PartialOrd + Clone, V: Clone>(
+    allocator: &'a bumpalo::Bump,
     key: K,
-    dict: DictDict<K, V>,
-) -> DictDict<K, V> {
-    let mut dict_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> =
-        std::rc::Rc::unwrap_or_clone(dict);
+    dict: DictDict<'a, K, V>,
+) -> DictDict<'a, K, V> {
+    let mut dict_owned = std::rc::Rc::unwrap_or_clone(dict);
     dict_owned.remove(&PretendNotPartial(key));
-    std::rc::Rc::new(dict_owned)
+    std::rc::Rc::new_in(dict_owned, allocator)
 }
 
 pub fn dict_is_empty<K: Clone, V: Clone>(dict: DictDict<K, V>) -> bool {
@@ -1809,11 +1813,9 @@ pub fn dict_keys<'a, K: Clone, V>(
     dict: DictDict<K, V>,
 ) -> ListList<'a, K> {
     match std::rc::Rc::try_unwrap(dict) {
-        Result::Ok(dict_owned) => {
-            double_ended_iterator_to_list(allocator, dict_owned.into_keys().map(|k| k.0))
-        }
+        Result::Ok(dict_owned) => iterator_to_list(allocator, dict_owned.into_keys().map(|k| k.0)),
         Result::Err(dict_shared) => {
-            double_ended_iterator_to_list(allocator, dict_shared.keys().map(|k| k.0.clone()))
+            iterator_to_list(allocator, dict_shared.keys().map(|k| k.0.clone()))
         }
     }
 }
@@ -1822,12 +1824,8 @@ pub fn dict_values<'a, K, V: Clone>(
     dict: DictDict<K, V>,
 ) -> ListList<'a, V> {
     match std::rc::Rc::try_unwrap(dict) {
-        Result::Ok(dict_owned) => {
-            double_ended_iterator_to_list(allocator, dict_owned.into_values())
-        }
-        Result::Err(dict_shared) => {
-            double_ended_iterator_to_list(allocator, dict_shared.values().cloned())
-        }
+        Result::Ok(dict_owned) => iterator_to_list(allocator, dict_owned.into_values()),
+        Result::Err(dict_shared) => iterator_to_list(allocator, dict_shared.values().cloned()),
     }
 }
 pub fn dict_to_list<'a, K: Clone, V: Clone>(
@@ -1836,59 +1834,71 @@ pub fn dict_to_list<'a, K: Clone, V: Clone>(
 ) -> ListList<'a, (K, V)> {
     match std::rc::Rc::try_unwrap(dict) {
         Result::Ok(dict_owned) => {
-            double_ended_iterator_to_list(allocator, dict_owned.into_iter().map(|(k, v)| (k.0, v)))
+            iterator_to_list(allocator, dict_owned.into_iter().map(|(k, v)| (k.0, v)))
         }
-        Result::Err(dict_shared) => double_ended_iterator_to_list(
+        Result::Err(dict_shared) => iterator_to_list(
             allocator,
             dict_shared.iter().map(|(k, v)| (k.0.clone(), v.clone())),
         ),
     }
 }
-pub fn dict_from_list<K: PartialOrd + Clone, V: Clone>(
+pub fn dict_from_list<'a, K: PartialOrd + Clone, V: Clone>(
+    allocator: &'a bumpalo::Bump,
     entries: ListList<(K, V)>,
-) -> DictDict<K, V> {
-    std::rc::Rc::new(
-        entries
-            .into_iter()
-            .map(|(k, v)| (PretendNotPartial(k), v))
-            .collect::<std::collections::BTreeMap<PretendNotPartial<K>, V>>(),
-    )
+) -> DictDict<'a, K, V> {
+    let mut dict = std::collections::BTreeMap::new_in(allocator);
+    dict.extend(entries.into_iter().map(|(k, v)| (PretendNotPartial(k), v)));
+    std::rc::Rc::new_in(dict, allocator)
 }
 
-pub fn dict_map<K: PartialOrd + Clone, V: Clone, NewV: Clone>(
+pub fn dict_map<'a, K: PartialOrd + Clone, V: Clone, NewV: Clone>(
+    allocator: &'a bumpalo::Bump,
     key_value_to_new_value: impl Fn(K, V) -> NewV,
     dict: DictDict<K, V>,
-) -> DictDict<K, NewV> {
-    std::rc::Rc::new(match std::rc::Rc::try_unwrap(dict) {
-        Result::Ok(dict_owned) => dict_owned
-            .into_iter()
-            .map(|(k, v)| (k.clone(), key_value_to_new_value(k.0, v)))
-            .collect::<std::collections::BTreeMap<PretendNotPartial<K>, NewV>>(),
-        Result::Err(dict_shared) => dict_shared
-            .iter()
-            .map(|(k, v)| (k.clone(), key_value_to_new_value(k.0.clone(), v.clone())))
-            .collect::<std::collections::BTreeMap<PretendNotPartial<K>, NewV>>(),
-    })
+) -> DictDict<'a, K, NewV> {
+    let mut new_dict = std::collections::BTreeMap::new_in(allocator);
+    match std::rc::Rc::try_unwrap(dict) {
+        Result::Ok(dict_owned) => {
+            new_dict.extend(
+                dict_owned
+                    .into_iter()
+                    .map(|(k, v)| (k.clone(), key_value_to_new_value(k.0, v))),
+            );
+        }
+        Result::Err(dict_shared) => {
+            new_dict.extend(
+                dict_shared
+                    .iter()
+                    .map(|(k, v)| (k.clone(), key_value_to_new_value(k.0.clone(), v.clone()))),
+            );
+        }
+    };
+    std::rc::Rc::new_in(new_dict, allocator)
 }
-pub fn dict_filter<K: PartialOrd + Clone, V: Clone>(
+pub fn dict_filter<'a, K: PartialOrd + Clone, V: Clone>(
+    allocator: &'a bumpalo::Bump,
     keep_key_value: impl Fn(K, V) -> bool,
-    dict: DictDict<K, V>,
-) -> DictDict<K, V> {
-    let mut dict_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> =
-        std::rc::Rc::unwrap_or_clone(dict);
+    dict: DictDict<'a, K, V>,
+) -> DictDict<'a, K, V> {
+    // can be optimized
+    let mut dict_owned = std::rc::Rc::unwrap_or_clone(dict);
     dict_owned.retain(|k, v| keep_key_value(k.0.clone(), v.clone()));
-    std::rc::Rc::new(dict_owned)
+    std::rc::Rc::new_in(dict_owned, allocator)
 }
-pub fn dict_partition<K: PartialOrd + Clone, V: Clone>(
+pub fn dict_partition<'a, K: PartialOrd + Clone, V: Clone>(
+    allocator: &'a bumpalo::Bump,
     key_value_is_left: impl Fn(K, V) -> bool,
-    dict: DictDict<K, V>,
-) -> (DictDict<K, V>, DictDict<K, V>) {
-    let mut lefts: std::collections::BTreeMap<PretendNotPartial<K>, V> = (*dict).clone();
-    let mut rights: std::collections::BTreeMap<PretendNotPartial<K>, V> =
-        std::rc::Rc::unwrap_or_clone(dict);
+    dict: DictDict<'a, K, V>,
+) -> (DictDict<'a, K, V>, DictDict<'a, K, V>) {
+    // can maybe be optimized
+    let mut lefts = (*dict).clone();
+    let mut rights = std::rc::Rc::unwrap_or_clone(dict);
     lefts.retain(|k, v| key_value_is_left(k.0.clone(), v.clone()));
     rights.retain(|k, v| !key_value_is_left(k.0.clone(), v.clone()));
-    (std::rc::Rc::new(lefts), std::rc::Rc::new(rights))
+    (
+        std::rc::Rc::new_in(lefts, allocator),
+        std::rc::Rc::new_in(rights, allocator),
+    )
 }
 pub fn dict_foldl<K: Clone, V: Clone, State>(
     reduce: impl Fn(K, V, State) -> State,
@@ -1923,32 +1933,33 @@ pub fn dict_foldr<K: Clone, V: Clone, State>(
     }
 }
 
-pub fn dict_union<K: PartialOrd + Clone, V: Clone>(
-    base: DictDict<K, V>,
-    additional: DictDict<K, V>,
-) -> DictDict<K, V> {
-    let mut combined: std::collections::BTreeMap<PretendNotPartial<K>, V> =
-        std::rc::Rc::unwrap_or_clone(additional);
+pub fn dict_union<'a, K: PartialOrd + Clone, V: Clone>(
+    allocator: &'a bumpalo::Bump,
+    base: DictDict<'a, K, V>,
+    additional: DictDict<'a, K, V>,
+) -> DictDict<'a, K, V> {
+    let mut combined = std::rc::Rc::unwrap_or_clone(additional);
     // is this optimal for shared?
     combined.append(&mut std::rc::Rc::unwrap_or_clone(base));
-    std::rc::Rc::new(combined)
+    std::rc::Rc::new_in(combined, allocator)
 }
-pub fn dict_intersect<K: PartialOrd + Clone, V: Clone>(
-    base: DictDict<K, V>,
+pub fn dict_intersect<'a, K: PartialOrd + Clone, V: Clone>(
+    allocator: &'a bumpalo::Bump,
+    base: DictDict<'a, K, V>,
     keys_to_retain: DictDict<K, V>,
-) -> DictDict<K, V> {
+) -> DictDict<'a, K, V> {
     let mut base_owned = std::rc::Rc::unwrap_or_clone(base);
     base_owned.retain(|k, _v| keys_to_retain.contains_key(k));
-    std::rc::Rc::new(base_owned)
+    std::rc::Rc::new_in(base_owned, allocator)
 }
-pub fn dict_diff<K: PartialOrd + Clone, V: Clone>(
-    base: DictDict<K, V>,
+pub fn dict_diff<'a, K: PartialOrd + Clone, V: Clone>(
+    allocator: &'a bumpalo::Bump,
+    base: DictDict<'a, K, V>,
     keys_to_remove: DictDict<K, V>,
-) -> DictDict<K, V> {
-    let mut base_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> =
-        std::rc::Rc::unwrap_or_clone(base);
+) -> DictDict<'a, K, V> {
+    let mut base_owned = std::rc::Rc::unwrap_or_clone(base);
     base_owned.retain(|k, _v| !keys_to_remove.contains_key(k));
-    std::rc::Rc::new(base_owned)
+    std::rc::Rc::new_in(base_owned, allocator)
 }
 pub fn dict_merge<K: PartialOrd + Clone, LeftV: Clone, RightV: Clone, State>(
     reduce_only_left: impl Fn(K, LeftV, State) -> State,
@@ -1982,28 +1993,42 @@ pub fn dict_merge<K: PartialOrd + Clone, LeftV: Clone, RightV: Clone, State>(
     })
 }
 
-type SetSet<K> = std::rc::Rc<std::collections::BTreeSet<PretendNotPartial<K>>>;
+type SetSet<'a, K> = std::rc::Rc<
+    std::collections::BTreeSet<PretendNotPartial<K>, &'a bumpalo::Bump>,
+    &'a bumpalo::Bump,
+>;
 
-pub fn set_empty<K>() -> SetSet<K> {
-    std::rc::Rc::new(std::collections::BTreeSet::new())
+pub fn set_empty<'a, K>(allocator: &'a bumpalo::Bump) -> SetSet<'a, K> {
+    std::rc::Rc::new_in(std::collections::BTreeSet::new_in(allocator), allocator)
 }
-pub fn set_singleton<K: PartialOrd>(only_key: K) -> SetSet<K> {
-    let mut set: std::collections::BTreeSet<PretendNotPartial<K>> =
-        std::collections::BTreeSet::new();
+pub fn set_singleton<'a, K: PartialOrd>(
+    allocator: &'a bumpalo::Bump,
+    only_key: K,
+) -> SetSet<'a, K> {
+    let mut set: std::collections::BTreeSet<PretendNotPartial<K>, _> =
+        std::collections::BTreeSet::new_in(allocator);
     set.insert(PretendNotPartial(only_key));
-    std::rc::Rc::new(set)
+    std::rc::Rc::new_in(set, allocator)
 }
-pub fn set_insert<K: PartialOrd + Clone>(key: K, set: SetSet<K>) -> SetSet<K> {
-    let mut set_owned: std::collections::BTreeSet<PretendNotPartial<K>> =
+pub fn set_insert<'a, K: PartialOrd + Clone>(
+    allocator: &'a bumpalo::Bump,
+    key: K,
+    set: SetSet<'a, K>,
+) -> SetSet<'a, K> {
+    let mut set_owned: std::collections::BTreeSet<PretendNotPartial<K>, _> =
         std::rc::Rc::unwrap_or_clone(set);
     set_owned.insert(PretendNotPartial(key));
-    std::rc::Rc::new(set_owned)
+    std::rc::Rc::new_in(set_owned, allocator)
 }
-pub fn set_remove<K: PartialOrd + Clone>(key: K, set: SetSet<K>) -> SetSet<K> {
-    let mut set_owned: std::collections::BTreeSet<PretendNotPartial<K>> =
+pub fn set_remove<'a, K: PartialOrd + Clone>(
+    allocator: &'a bumpalo::Bump,
+    key: K,
+    set: SetSet<'a, K>,
+) -> SetSet<'a, K> {
+    let mut set_owned: std::collections::BTreeSet<PretendNotPartial<K>, _> =
         std::rc::Rc::unwrap_or_clone(set);
     set_owned.remove(&PretendNotPartial(key));
-    std::rc::Rc::new(set_owned)
+    std::rc::Rc::new_in(set_owned, allocator)
 }
 
 pub fn set_is_empty<K>(set: SetSet<K>) -> bool {
@@ -2016,7 +2041,10 @@ pub fn set_member<K: PartialOrd>(key: K, set: SetSet<K>) -> bool {
     set.contains(&PretendNotPartial(key))
 }
 
-pub fn set_to_list<'a, K: Clone>(allocator: &'a bumpalo::Bump, set: SetSet<K>) -> ListList<'a, K> {
+pub fn set_to_list<'a, K: Clone>(
+    allocator: &'a bumpalo::Bump,
+    set: SetSet<'a, K>,
+) -> ListList<'a, K> {
     match std::rc::Rc::try_unwrap(set) {
         Result::Ok(set_owned) => {
             double_ended_iterator_to_list(allocator, set_owned.into_iter().map(|k| k.0))
@@ -2026,49 +2054,64 @@ pub fn set_to_list<'a, K: Clone>(allocator: &'a bumpalo::Bump, set: SetSet<K>) -
         }
     }
 }
-pub fn set_from_list<K: PartialOrd + Clone>(entries: ListList<K>) -> SetSet<K> {
-    std::rc::Rc::new(
-        entries
-            .into_iter()
-            .map(PretendNotPartial)
-            .collect::<std::collections::BTreeSet<PretendNotPartial<K>>>(),
-    )
+pub fn set_from_list<'a, K: PartialOrd + Clone>(
+    allocator: &'a bumpalo::Bump,
+    entries: ListList<K>,
+) -> SetSet<'a, K> {
+    let mut set = std::collections::BTreeSet::new_in(allocator);
+    set.extend(entries.into_iter().map(PretendNotPartial));
+    std::rc::Rc::new_in(set, allocator)
 }
 
-pub fn set_map<K: Clone, NewK: PartialOrd + Clone>(
+pub fn set_map<'a, K: Clone, NewK: PartialOrd + Clone>(
+    allocator: &'a bumpalo::Bump,
     key_change: impl Fn(K) -> NewK,
-    set: SetSet<K>,
-) -> SetSet<NewK> {
-    std::rc::Rc::new(match std::rc::Rc::try_unwrap(set) {
-        Result::Ok(set_owned) => set_owned
-            .into_iter()
-            .map(|k| PretendNotPartial(key_change(k.0)))
-            .collect::<std::collections::BTreeSet<PretendNotPartial<NewK>>>(),
-        Result::Err(set_shared) => set_shared
-            .iter()
-            .map(|k| PretendNotPartial(key_change(k.0.clone())))
-            .collect::<std::collections::BTreeSet<PretendNotPartial<NewK>>>(),
-    })
+    set: SetSet<'a, K>,
+) -> SetSet<'a, NewK> {
+    let mut new_set = std::collections::BTreeSet::new_in(allocator);
+    match std::rc::Rc::try_unwrap(set) {
+        Result::Ok(set_owned) => {
+            new_set.extend(
+                set_owned
+                    .into_iter()
+                    .map(|k| PretendNotPartial(key_change(k.0))),
+            );
+        }
+        Result::Err(set_shared) => {
+            new_set.extend(
+                set_shared
+                    .iter()
+                    .map(|k| PretendNotPartial(key_change(k.0.clone()))),
+            );
+        }
+    }
+    std::rc::Rc::new_in(new_set, allocator)
 }
-pub fn set_filter<K: PartialOrd + Clone>(
+pub fn set_filter<'a, K: PartialOrd + Clone>(
+    allocator: &'a bumpalo::Bump,
     keep_key_value: impl Fn(K) -> bool,
-    set: SetSet<K>,
-) -> SetSet<K> {
-    let mut set_owned: std::collections::BTreeSet<PretendNotPartial<K>> =
+    set: SetSet<'a, K>,
+) -> SetSet<'a, K> {
+    // can be optimized
+    let mut set_owned: std::collections::BTreeSet<PretendNotPartial<K>, _> =
         std::rc::Rc::unwrap_or_clone(set);
     set_owned.retain(|k| keep_key_value(k.0.clone()));
-    std::rc::Rc::new(set_owned)
+    std::rc::Rc::new_in(set_owned, allocator)
 }
-pub fn set_partition<K: PartialOrd + Clone>(
+pub fn set_partition<'a, K: PartialOrd + Clone>(
+    allocator: &'a bumpalo::Bump,
     key_value_is_left: impl Fn(K) -> bool,
-    set: SetSet<K>,
-) -> (SetSet<K>, SetSet<K>) {
-    let mut lefts: std::collections::BTreeSet<PretendNotPartial<K>> = (*set).clone();
-    let mut rights: std::collections::BTreeSet<PretendNotPartial<K>> =
+    set: SetSet<'a, K>,
+) -> (SetSet<'a, K>, SetSet<'a, K>) {
+    let mut lefts: std::collections::BTreeSet<PretendNotPartial<K>, _> = (*set).clone();
+    let mut rights: std::collections::BTreeSet<PretendNotPartial<K>, _> =
         std::rc::Rc::unwrap_or_clone(set);
     lefts.retain(|k| key_value_is_left(k.0.clone()));
     rights.retain(|k| !key_value_is_left(k.0.clone()));
-    (std::rc::Rc::new(lefts), std::rc::Rc::new(rights))
+    (
+        std::rc::Rc::new_in(lefts, allocator),
+        std::rc::Rc::new_in(rights, allocator),
+    )
 }
 pub fn set_foldl<K: Clone, State>(
     reduce: impl Fn(K, State) -> State,
@@ -2101,50 +2144,68 @@ pub fn set_foldr<K: Clone, State>(
     }
 }
 
-pub fn set_union<K: PartialOrd + Clone>(a_set: SetSet<K>, b_set: SetSet<K>) -> SetSet<K> {
+pub fn set_union<'a, K: PartialOrd + Clone>(
+    allocator: &'a bumpalo::Bump,
+    a_set: SetSet<'a, K>,
+    b_set: SetSet<'a, K>,
+) -> SetSet<'a, K> {
     // is this .append for shared?
     if b_set.len() > a_set.len() {
-        let mut combined: std::collections::BTreeSet<PretendNotPartial<K>> =
+        let mut combined: std::collections::BTreeSet<PretendNotPartial<K>, _> =
             std::rc::Rc::unwrap_or_clone(b_set);
         combined.append(&mut std::rc::Rc::unwrap_or_clone(a_set));
-        std::rc::Rc::new(combined)
+        std::rc::Rc::new_in(combined, allocator)
     } else
     /* a_set.len() >= b_set.len() */
     {
-        let mut combined: std::collections::BTreeSet<PretendNotPartial<K>> =
+        let mut combined: std::collections::BTreeSet<PretendNotPartial<K>, _> =
             std::rc::Rc::unwrap_or_clone(a_set);
         combined.append(&mut std::rc::Rc::unwrap_or_clone(b_set));
-        std::rc::Rc::new(combined)
+        std::rc::Rc::new_in(combined, allocator)
     }
 }
-pub fn set_intersect<K: PartialOrd + Clone>(a_set: SetSet<K>, b_set: SetSet<K>) -> SetSet<K> {
+pub fn set_intersect<'a, K: PartialOrd + Clone>(
+    allocator: &'a bumpalo::Bump,
+    a_set: SetSet<'a, K>,
+    b_set: SetSet<'a, K>,
+) -> SetSet<'a, K> {
     // possible optimization: use the smaller vec to reduce amount of removed elements
-    std::rc::Rc::new(match std::rc::Rc::try_unwrap(a_set) {
-        Result::Ok(mut a_set_owned) => {
-            a_set_owned.retain(|k| b_set.contains(k));
-            a_set_owned
-        }
-        Result::Err(a_set_shared) => {
-            let mut b_set_owned: std::collections::BTreeSet<PretendNotPartial<K>> =
-                std::rc::Rc::unwrap_or_clone(b_set);
-            b_set_owned.retain(|k| a_set_shared.contains(k));
-            b_set_owned
-        }
-    })
+    std::rc::Rc::new_in(
+        match std::rc::Rc::try_unwrap(a_set) {
+            Result::Ok(mut a_set_owned) => {
+                a_set_owned.retain(|k| b_set.contains(k));
+                a_set_owned
+            }
+            Result::Err(a_set_shared) => {
+                let mut b_set_owned: std::collections::BTreeSet<PretendNotPartial<K>, _> =
+                    std::rc::Rc::unwrap_or_clone(b_set);
+                b_set_owned.retain(|k| a_set_shared.contains(k));
+                b_set_owned
+            }
+        },
+        allocator,
+    )
 }
-pub fn set_diff<K: PartialOrd + Clone>(a_set: SetSet<K>, b_set: SetSet<K>) -> SetSet<K> {
+pub fn set_diff<'a, K: PartialOrd + Clone>(
+    allocator: &'a bumpalo::Bump,
+    a_set: SetSet<'a, K>,
+    b_set: SetSet<'a, K>,
+) -> SetSet<'a, K> {
     // possible optimization: use the smaller vec to reduce amount of removed elements
-    std::rc::Rc::new(match std::rc::Rc::try_unwrap(a_set) {
-        Result::Ok(mut a_set_owned) => {
-            a_set_owned.retain(|k| !b_set.contains(k));
-            a_set_owned
-        }
-        Result::Err(a_set_shared) => {
-            let mut b_set_owned = std::rc::Rc::unwrap_or_clone(b_set);
-            b_set_owned.retain(|k| !a_set_shared.contains(k));
-            b_set_owned
-        }
-    })
+    std::rc::Rc::new_in(
+        match std::rc::Rc::try_unwrap(a_set) {
+            Result::Ok(mut a_set_owned) => {
+                a_set_owned.retain(|k| !b_set.contains(k));
+                a_set_owned
+            }
+            Result::Err(a_set_shared) => {
+                let mut b_set_owned = std::rc::Rc::unwrap_or_clone(b_set);
+                b_set_owned.retain(|k| !a_set_shared.contains(k));
+                b_set_owned
+            }
+        },
+        allocator,
+    )
 }
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum JsonValue<'a> {
@@ -3106,14 +3167,15 @@ pub fn json_decode_key_value_pairs<'a, A>(
 pub fn json_decode_dict<'a, A>(
     allocator: &'a bumpalo::Bump,
     value_decoder: JsonDecodeDecoder<'a, A>,
-) -> JsonDecodeDecoder<'a, DictDict<StringString<'a>, A>> {
+) -> JsonDecodeDecoder<'a, DictDict<'a, StringString<'a>, A>> {
     JsonDecodeDecoder {
         decode: allocator.alloc(move |json| match json {
             JsonValue::Object(key_value_map) => {
                 let mut decoded_entries: std::collections::BTreeMap<
                     PretendNotPartial<StringString>,
                     A,
-                > = std::collections::BTreeMap::new();
+                    &bumpalo::Bump,
+                > = std::collections::BTreeMap::new_in(allocator);
                 for (&key, &value_json) in key_value_map.iter() {
                     match (value_decoder.decode)(value_json) {
                         Result::Err(value_error) => {
@@ -3128,7 +3190,7 @@ pub fn json_decode_dict<'a, A>(
                         }
                     }
                 }
-                Result::Ok(std::rc::Rc::new(decoded_entries))
+                Result::Ok(std::rc::Rc::new_in(decoded_entries, allocator))
             }
             json_not_object => Result::Err(JsonDecodeError::Failure(
                 StringString::One("Expecting an OBJECT"),

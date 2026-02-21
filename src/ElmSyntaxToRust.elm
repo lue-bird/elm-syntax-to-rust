@@ -43,6 +43,7 @@ type RustType
         , lifetimeArguments : List String
         , isCopy : Bool
         , isPartialEq : Bool
+        , isPartialOrd : Bool
         , isDebug : Bool
         }
     | -- technically a subset of RustTypeConstruct but with extra metadata
@@ -523,6 +524,7 @@ choiceTypeDeclaration :
             , isCopy : Bool
             , isDebug : Bool
             , isPartialEq : Bool
+            , isPartialOrd : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
     , rustTypeAliases :
@@ -533,6 +535,7 @@ choiceTypeDeclaration :
             , isCopy : Bool
             , isDebug : Bool
             , isPartialEq : Bool
+            , isPartialOrd : Bool
             }
     }
     ->
@@ -547,6 +550,7 @@ choiceTypeDeclaration :
         , isCopy : Bool
         , isDebug : Bool
         , isPartialEq : Bool
+        , isPartialOrd : Bool
         }
 choiceTypeDeclaration context syntaxChoiceType =
     let
@@ -659,6 +663,16 @@ choiceTypeDeclaration context syntaxChoiceType =
                                 value |> rustTypeIsPartialEq { variablesArePartialEq = True }
                             )
                 )
+    , isPartialOrd =
+        rustVariants
+            |> fastDictAll
+                (\_ values ->
+                    values
+                        |> List.all
+                            (\value ->
+                                value |> rustTypeIsPartialOrd { variablesArePartialOrd = True }
+                            )
+                )
     }
 
 
@@ -747,54 +761,70 @@ printRustEnumDeclaration :
 printRustEnumDeclaration rustEnumType =
     Print.exactly
         ("#[derive("
-            ++ ([ Just "Clone"
-                , if
-                    rustEnumType.variants
-                        |> fastDictAll
-                            (\_ values ->
-                                values
-                                    |> List.all
-                                        (\value ->
-                                            value |> rustTypeIsCopy { variablesAreCopy = True }
-                                        )
-                            )
-                  then
-                    Just "Copy"
+            ++ ("Clone"
+                    :: ([ if
+                            rustEnumType.variants
+                                |> fastDictAll
+                                    (\_ values ->
+                                        values
+                                            |> List.all
+                                                (\value ->
+                                                    value |> rustTypeIsPartialOrd { variablesArePartialOrd = True }
+                                                )
+                                    )
+                          then
+                            Just "PartialOrd"
 
-                  else
-                    Nothing
-                , if
-                    rustEnumType.variants
-                        |> fastDictAll
-                            (\_ values ->
-                                values
-                                    |> List.all
-                                        (\value ->
-                                            value |> rustTypeIsDebug { variablesAreDebug = True }
-                                        )
-                            )
-                  then
-                    Just "Debug"
+                          else
+                            Nothing
+                        , if
+                            rustEnumType.variants
+                                |> fastDictAll
+                                    (\_ values ->
+                                        values
+                                            |> List.all
+                                                (\value ->
+                                                    value |> rustTypeIsCopy { variablesAreCopy = True }
+                                                )
+                                    )
+                          then
+                            Just "Copy"
 
-                  else
-                    Nothing
-                , if
-                    rustEnumType.variants
-                        |> fastDictAll
-                            (\_ values ->
-                                values
-                                    |> List.all
-                                        (\value ->
-                                            value |> rustTypeIsPartialEq { variablesArePartialEq = True }
-                                        )
-                            )
-                  then
-                    Just "PartialEq"
+                          else
+                            Nothing
+                        , if
+                            rustEnumType.variants
+                                |> fastDictAll
+                                    (\_ values ->
+                                        values
+                                            |> List.all
+                                                (\value ->
+                                                    value |> rustTypeIsDebug { variablesAreDebug = True }
+                                                )
+                                    )
+                          then
+                            Just "Debug"
 
-                  else
-                    Nothing
-                ]
-                    |> List.filterMap identity
+                          else
+                            Nothing
+                        , if
+                            rustEnumType.variants
+                                |> fastDictAll
+                                    (\_ values ->
+                                        values
+                                            |> List.all
+                                                (\value ->
+                                                    value |> rustTypeIsPartialEq { variablesArePartialEq = True }
+                                                )
+                                    )
+                          then
+                            Just "PartialEq"
+
+                          else
+                            Nothing
+                        ]
+                            |> List.filterMap identity
+                       )
                     |> String.join ", "
                )
             ++ ")]"
@@ -972,6 +1002,53 @@ rustTypeIsPartialEq context rustType =
                    )
 
 
+rustTypeIsPartialOrd : { variablesArePartialOrd : Bool } -> RustType -> Bool
+rustTypeIsPartialOrd context rustType =
+    -- IGNORE TCO
+    case rustType of
+        RustTypeInfer ->
+            -- not decide-able at least
+            False
+
+        RustTypeFunction _ ->
+            False
+
+        RustTypeUnit ->
+            True
+
+        RustTypeVariable _ ->
+            context.variablesArePartialOrd
+
+        RustTypeBorrow borrowed ->
+            rustTypeIsPartialOrd context borrowed.type_
+
+        RustTypeTuple parts ->
+            (parts.part0 |> rustTypeIsPartialOrd context)
+                && (parts.part1 |> rustTypeIsPartialOrd context)
+                && (parts.part2Up
+                        |> List.all
+                            (\part ->
+                                part |> rustTypeIsPartialOrd context
+                            )
+                   )
+
+        RustTypeRecordStruct recordStruct ->
+            recordStruct.fields
+                |> fastDictAll
+                    (\_ fieldValue ->
+                        fieldValue |> rustTypeIsPartialOrd context
+                    )
+
+        RustTypeConstruct typeConstruct ->
+            typeConstruct.isPartialOrd
+                && (typeConstruct.arguments
+                        |> List.all
+                            (\argument ->
+                                argument |> rustTypeIsPartialOrd context
+                            )
+                   )
+
+
 printRustStructDeclaration :
     { name : String
     , parameters : List String
@@ -979,7 +1056,7 @@ printRustStructDeclaration :
     }
     -> Print
 printRustStructDeclaration rustEnumType =
-    Print.exactly "#[derive(Copy, Clone, Debug, PartialEq, Eq)]"
+    Print.exactly "#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, std::hash::Hash)]"
         |> Print.followedBy Print.linebreakIndented
         |> Print.followedBy
             (Print.exactly
@@ -1083,6 +1160,7 @@ typeAliasDeclaration :
             , isCopy : Bool
             , isDebug : Bool
             , isPartialEq : Bool
+            , isPartialOrd : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
     , rustTypeAliases :
@@ -1093,6 +1171,7 @@ typeAliasDeclaration :
             , isCopy : Bool
             , isDebug : Bool
             , isPartialEq : Bool
+            , isPartialOrd : Bool
             }
     }
     ->
@@ -1197,6 +1276,7 @@ type_ :
             , isCopy : Bool
             , isDebug : Bool
             , isPartialEq : Bool
+            , isPartialOrd : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
     , rustTypeAliases :
@@ -1207,6 +1287,7 @@ type_ :
             , isCopy : Bool
             , isDebug : Bool
             , isPartialEq : Bool
+            , isPartialOrd : Bool
             }
     }
     -> ElmSyntaxTypeInfer.Type
@@ -1244,6 +1325,7 @@ rustTypeF64 =
         , isCopy = True
         , isDebug = True
         , isPartialEq = True
+        , isPartialOrd = True
         }
 
 
@@ -1262,6 +1344,7 @@ typeNotVariable :
             , isCopy : Bool
             , isDebug : Bool
             , isPartialEq : Bool
+            , isPartialOrd : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
     , rustTypeAliases :
@@ -1272,6 +1355,7 @@ typeNotVariable :
             , isCopy : Bool
             , isDebug : Bool
             , isPartialEq : Bool
+            , isPartialOrd : Bool
             }
     }
     -> ElmSyntaxTypeInfer.TypeNotVariable
@@ -1301,6 +1385,7 @@ typeNotVariable context inferredTypeNotVariable =
                         , isCopy = coreRust.isCopy
                         , isDebug = coreRust.isDebug
                         , isPartialEq = coreRust.isPartialEq
+                        , isPartialOrd = coreRust.isPartialOrd
                         }
 
                 Nothing ->
@@ -1336,6 +1421,7 @@ typeNotVariable context inferredTypeNotVariable =
                                 , isCopy = originRustTypeAlias.isCopy
                                 , isDebug = originRustTypeAlias.isDebug
                                 , isPartialEq = originRustTypeAlias.isPartialEq
+                                , isPartialOrd = originRustTypeAlias.isPartialOrd
                                 }
 
                         Nothing ->
@@ -1362,6 +1448,7 @@ typeNotVariable context inferredTypeNotVariable =
                                         , isCopy = originRustEnumType.isCopy
                                         , isDebug = originRustEnumType.isDebug
                                         , isPartialEq = originRustEnumType.isPartialEq
+                                        , isPartialOrd = False
                                         }
 
                                 -- it's a (mutually) recursive enum, so it must have referenced parts
@@ -1383,6 +1470,7 @@ typeNotVariable context inferredTypeNotVariable =
                                             True
                                         , isDebug = {- TODO this is a wrong assumption -} True
                                         , isPartialEq = {- TODO this is a wrong assumption -} True
+                                        , isPartialOrd = {- TODO this is a wrong assumption -} True
                                         }
 
         ElmSyntaxTypeInfer.TypeTuple typeTuple ->
@@ -2376,6 +2464,7 @@ pattern :
             , isCopy : Bool
             , isDebug : Bool
             , isPartialEq : Bool
+            , isPartialOrd : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
     , rustTypeAliases :
@@ -2386,6 +2475,7 @@ pattern :
             , isCopy : Bool
             , isDebug : Bool
             , isPartialEq : Bool
+            , isPartialOrd : Bool
             }
     }
     -> ElmSyntaxTypeInfer.TypedNode ElmSyntaxTypeInfer.Pattern
@@ -2965,6 +3055,7 @@ referencedPattern :
             , isCopy : Bool
             , isDebug : Bool
             , isPartialEq : Bool
+            , isPartialOrd : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
     , rustTypeAliases :
@@ -2975,6 +3066,7 @@ referencedPattern :
             , isCopy : Bool
             , isDebug : Bool
             , isPartialEq : Bool
+            , isPartialOrd : Bool
             }
     , isRefRef : Bool
     }
@@ -3498,6 +3590,7 @@ referencedPatternListExact :
             , isCopy : Bool
             , isDebug : Bool
             , isPartialEq : Bool
+            , isPartialOrd : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
     , rustTypeAliases :
@@ -3508,6 +3601,7 @@ referencedPatternListExact :
             , isCopy : Bool
             , isDebug : Bool
             , isPartialEq : Bool
+            , isPartialOrd : Bool
             }
     }
     -> List (ElmSyntaxTypeInfer.TypedNode ElmSyntaxTypeInfer.Pattern)
@@ -3775,6 +3869,7 @@ typeConstructReferenceToCoreRust :
             , isCopy : Bool
             , isDebug : Bool
             , isPartialEq : Bool
+            , isPartialOrd : Bool
             }
 typeConstructReferenceToCoreRust reference =
     case reference.moduleOrigin of
@@ -3788,6 +3883,7 @@ typeConstructReferenceToCoreRust reference =
                         , isCopy = True
                         , isDebug = True
                         , isPartialEq = True
+                        , isPartialOrd = True
                         }
 
                 "Bool" ->
@@ -3807,6 +3903,7 @@ typeConstructReferenceToCoreRust reference =
                         , isCopy = True
                         , isDebug = True
                         , isPartialEq = True
+                        , isPartialOrd = True
                         }
 
                 _ ->
@@ -3829,10 +3926,11 @@ typeConstructReferenceToCoreRust reference =
             Just
                 { qualification = []
                 , name = "ArrayArray"
-                , lifetimeParameters = []
+                , lifetimeParameters = [ generatedLifetimeVariableName ]
                 , isCopy = False
                 , isDebug = True
                 , isPartialEq = True
+                , isPartialOrd = True
                 }
 
         "Dict" ->
@@ -3840,10 +3938,11 @@ typeConstructReferenceToCoreRust reference =
             Just
                 { qualification = []
                 , name = "DictDict"
-                , lifetimeParameters = []
+                , lifetimeParameters = [ generatedLifetimeVariableName ]
                 , isCopy = False
                 , isDebug = True
                 , isPartialEq = True
+                , isPartialOrd = False
                 }
 
         "Set" ->
@@ -3851,10 +3950,11 @@ typeConstructReferenceToCoreRust reference =
             Just
                 { qualification = []
                 , name = "SetSet"
-                , lifetimeParameters = []
+                , lifetimeParameters = [ generatedLifetimeVariableName ]
                 , isCopy = False
                 , isDebug = True
                 , isPartialEq = True
+                , isPartialOrd = False
                 }
 
         "Maybe" ->
@@ -3874,6 +3974,7 @@ typeConstructReferenceToCoreRust reference =
                 , isCopy = True
                 , isDebug = True
                 , isPartialEq = True
+                , isPartialOrd = False
                 }
 
         "Json.Decode" ->
@@ -3886,6 +3987,7 @@ typeConstructReferenceToCoreRust reference =
                         , isCopy = True
                         , isDebug = True
                         , isPartialEq = True
+                        , isPartialOrd = False
                         }
 
                 "Decoder" ->
@@ -3896,6 +3998,7 @@ typeConstructReferenceToCoreRust reference =
                         , isCopy = True
                         , isDebug = False
                         , isPartialEq = False
+                        , isPartialOrd = False
                         }
 
                 "Error" ->
@@ -3906,6 +4009,7 @@ typeConstructReferenceToCoreRust reference =
                         , isCopy = True
                         , isDebug = True
                         , isPartialEq = True
+                        , isPartialOrd = False
                         }
 
                 _ ->
@@ -3921,6 +4025,7 @@ typeConstructReferenceToCoreRust reference =
                         , isCopy = True
                         , isDebug = True
                         , isPartialEq = True
+                        , isPartialOrd = True
                         }
 
                 "Generator" ->
@@ -3931,6 +4036,7 @@ typeConstructReferenceToCoreRust reference =
                         , isCopy = False
                         , isDebug = False
                         , isPartialEq = False
+                        , isPartialOrd = False
                         }
 
                 _ ->
@@ -3946,6 +4052,7 @@ typeConstructReferenceToCoreRust reference =
                         , isCopy = True
                         , isDebug = True
                         , isPartialEq = True
+                        , isPartialOrd = True
                         }
 
                 "Zone" ->
@@ -3956,6 +4063,7 @@ typeConstructReferenceToCoreRust reference =
                         , isCopy = True
                         , isDebug = True
                         , isPartialEq = True
+                        , isPartialOrd = True
                         }
 
                 "Month" ->
@@ -3966,6 +4074,7 @@ typeConstructReferenceToCoreRust reference =
                         , isCopy = True
                         , isDebug = True
                         , isPartialEq = True
+                        , isPartialOrd = True
                         }
 
                 "Weekday" ->
@@ -3976,6 +4085,7 @@ typeConstructReferenceToCoreRust reference =
                         , isCopy = True
                         , isDebug = True
                         , isPartialEq = True
+                        , isPartialOrd = True
                         }
 
                 "ZoneName" ->
@@ -3986,6 +4096,7 @@ typeConstructReferenceToCoreRust reference =
                         , isCopy = True
                         , isDebug = True
                         , isPartialEq = True
+                        , isPartialOrd = True
                         }
 
                 _ ->
@@ -4001,6 +4112,7 @@ typeConstructReferenceToCoreRust reference =
                         , isCopy = True
                         , isDebug = True
                         , isPartialEq = True
+                        , isPartialOrd = False
                         }
 
                 "Bytes" ->
@@ -4011,6 +4123,7 @@ typeConstructReferenceToCoreRust reference =
                         , isCopy = True
                         , isDebug = True
                         , isPartialEq = True
+                        , isPartialOrd = True
                         }
 
                 _ ->
@@ -4026,6 +4139,7 @@ typeConstructReferenceToCoreRust reference =
                         , isCopy = True
                         , isDebug = False
                         , isPartialEq = False
+                        , isPartialOrd = False
                         }
 
                 "Step" ->
@@ -4036,6 +4150,7 @@ typeConstructReferenceToCoreRust reference =
                         , isCopy = True
                         , isDebug = True
                         , isPartialEq = True
+                        , isPartialOrd = True
                         }
 
                 _ ->
@@ -4050,6 +4165,7 @@ typeConstructReferenceToCoreRust reference =
                 , isCopy = True
                 , isDebug = True
                 , isPartialEq = True
+                , isPartialOrd = False
                 }
 
         "VirtualDom" ->
@@ -4062,6 +4178,7 @@ typeConstructReferenceToCoreRust reference =
                         , isCopy = True
                         , isDebug = False
                         , isPartialEq = False
+                        , isPartialOrd = False
                         }
 
                 "Attribute" ->
@@ -4072,6 +4189,7 @@ typeConstructReferenceToCoreRust reference =
                         , isCopy = True
                         , isDebug = False
                         , isPartialEq = False
+                        , isPartialOrd = False
                         }
 
                 "Handler" ->
@@ -4082,6 +4200,7 @@ typeConstructReferenceToCoreRust reference =
                         , isCopy = True
                         , isDebug = False
                         , isPartialEq = False
+                        , isPartialOrd = False
                         }
 
                 _ ->
@@ -4097,6 +4216,7 @@ typeConstructReferenceToCoreRust reference =
                         , isCopy = True
                         , isDebug = True
                         , isPartialEq = True
+                        , isPartialOrd = False
                         }
 
                 _ ->
@@ -4112,6 +4232,7 @@ typeConstructReferenceToCoreRust reference =
                         , isCopy = True
                         , isDebug = True
                         , isPartialEq = True
+                        , isPartialOrd = False
                         }
 
                 _ ->
@@ -4127,6 +4248,7 @@ typeConstructReferenceToCoreRust reference =
                         , isCopy = True
                         , isDebug = True
                         , isPartialEq = True
+                        , isPartialOrd = False
                         }
 
                 _ ->
@@ -4146,6 +4268,7 @@ typeConstructReferenceToCoreRust reference =
                         , isCopy = True
                         , isDebug = False
                         , isPartialEq = False
+                        , isPartialOrd = False
                         }
 
                 -- "Task" | "ProcessId" | "Router"
@@ -4161,6 +4284,7 @@ typeConstructReferenceToCoreRust reference =
                 , isCopy = True
                 , isDebug = True
                 , isPartialEq = True
+                , isPartialOrd = False
                 }
 
         "Platform.Sub" ->
@@ -4172,6 +4296,7 @@ typeConstructReferenceToCoreRust reference =
                 , isCopy = True
                 , isDebug = False
                 , isPartialEq = False
+                , isPartialOrd = False
                 }
 
         _ ->
@@ -4186,6 +4311,7 @@ justRustReferenceI64 :
         , isCopy : Bool
         , isDebug : Bool
         , isPartialEq : Bool
+        , isPartialOrd : Bool
         }
 justRustReferenceI64 =
     Just rustReferenceI64
@@ -4198,6 +4324,7 @@ rustReferenceI64 :
     , isCopy : Bool
     , isDebug : Bool
     , isPartialEq : Bool
+    , isPartialOrd : Bool
     }
 rustReferenceI64 =
     { qualification = []
@@ -4206,6 +4333,7 @@ rustReferenceI64 =
     , isCopy = True
     , isDebug = True
     , isPartialEq = True
+    , isPartialOrd = True
     }
 
 
@@ -4217,6 +4345,7 @@ justRustReferenceF64 :
         , isCopy : Bool
         , isDebug : Bool
         , isPartialEq : Bool
+        , isPartialOrd : Bool
         }
 justRustReferenceF64 =
     Just rustReferenceF64
@@ -4229,6 +4358,7 @@ rustReferenceF64 :
     , isCopy : Bool
     , isDebug : Bool
     , isPartialEq : Bool
+    , isPartialOrd : Bool
     }
 rustReferenceF64 =
     { qualification = []
@@ -4237,6 +4367,7 @@ rustReferenceF64 =
     , isCopy = True
     , isDebug = True
     , isPartialEq = True
+    , isPartialOrd = True
     }
 
 
@@ -4248,6 +4379,7 @@ justRustReferenceBool :
         , isCopy : Bool
         , isDebug : Bool
         , isPartialEq : Bool
+        , isPartialOrd : Bool
         }
 justRustReferenceBool =
     Just
@@ -4257,6 +4389,7 @@ justRustReferenceBool =
         , isCopy = True
         , isDebug = True
         , isPartialEq = True
+        , isPartialOrd = True
         }
 
 
@@ -4268,6 +4401,7 @@ justRustReferenceStringString :
         , isCopy : Bool
         , isDebug : Bool
         , isPartialEq : Bool
+        , isPartialOrd : Bool
         }
 justRustReferenceStringString =
     Just
@@ -4277,6 +4411,7 @@ justRustReferenceStringString =
         , isCopy = True
         , isDebug = True
         , isPartialEq = True
+        , isPartialOrd = True
         }
 
 
@@ -4290,6 +4425,7 @@ rustTypeStringString =
         , isCopy = True
         , isDebug = True
         , isPartialEq = True
+        , isPartialOrd = True
         }
 
 
@@ -4301,6 +4437,7 @@ justRustReferenceChar :
         , isCopy : Bool
         , isDebug : Bool
         , isPartialEq : Bool
+        , isPartialOrd : Bool
         }
 justRustReferenceChar =
     Just
@@ -4310,6 +4447,7 @@ justRustReferenceChar =
         , isCopy = True
         , isDebug = True
         , isPartialEq = True
+        , isPartialOrd = True
         }
 
 
@@ -4321,6 +4459,7 @@ justRustReferenceListList :
         , isCopy : Bool
         , isDebug : Bool
         , isPartialEq : Bool
+        , isPartialOrd : Bool
         }
 justRustReferenceListList =
     Just
@@ -4330,6 +4469,7 @@ justRustReferenceListList =
         , isCopy = True
         , isDebug = True
         , isPartialEq = True
+        , isPartialOrd = True
         }
 
 
@@ -4341,6 +4481,7 @@ justRustReferenceOption :
         , isCopy : Bool
         , isDebug : Bool
         , isPartialEq : Bool
+        , isPartialOrd : Bool
         }
 justRustReferenceOption =
     Just
@@ -4350,6 +4491,7 @@ justRustReferenceOption =
         , isCopy = True
         , isDebug = True
         , isPartialEq = True
+        , isPartialOrd = True
         }
 
 
@@ -4361,6 +4503,7 @@ justRustReferenceResultResult :
         , isCopy : Bool
         , isDebug : Bool
         , isPartialEq : Bool
+        , isPartialOrd : Bool
         }
 justRustReferenceResultResult =
     Just
@@ -4370,6 +4513,7 @@ justRustReferenceResultResult =
         , isCopy = True
         , isDebug = True
         , isPartialEq = True
+        , isPartialOrd = True
         }
 
 
@@ -6073,13 +6217,13 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "dict_size", requiresAllocator = False, isValue = False }
 
                 "empty" ->
-                    Just { qualification = [], name = "dict_empty", requiresAllocator = False, isValue = False }
+                    Just { qualification = [], name = "dict_empty", requiresAllocator = True, isValue = False }
 
                 "singleton" ->
-                    Just { qualification = [], name = "dict_singleton", requiresAllocator = False, isValue = False }
+                    Just { qualification = [], name = "dict_singleton", requiresAllocator = True, isValue = False }
 
                 "fromList" ->
-                    Just { qualification = [], name = "dict_from_list", requiresAllocator = False, isValue = False }
+                    Just { qualification = [], name = "dict_from_list", requiresAllocator = True, isValue = False }
 
                 "toList" ->
                     Just { qualification = [], name = "dict_to_list", requiresAllocator = True, isValue = False }
@@ -6094,10 +6238,10 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "dict_is_empty", requiresAllocator = False, isValue = False }
 
                 "map" ->
-                    Just { qualification = [], name = "dict_map", requiresAllocator = False, isValue = False }
+                    Just { qualification = [], name = "dict_map", requiresAllocator = True, isValue = False }
 
                 "partition" ->
-                    Just { qualification = [], name = "dict_partition", requiresAllocator = False, isValue = False }
+                    Just { qualification = [], name = "dict_partition", requiresAllocator = True, isValue = False }
 
                 "foldl" ->
                     Just { qualification = [], name = "dict_foldl", requiresAllocator = False, isValue = False }
@@ -6106,7 +6250,7 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "dict_foldr", requiresAllocator = False, isValue = False }
 
                 "filter" ->
-                    Just { qualification = [], name = "dict_filter", requiresAllocator = False, isValue = False }
+                    Just { qualification = [], name = "dict_filter", requiresAllocator = True, isValue = False }
 
                 "get" ->
                     Just { qualification = [], name = "dict_get", requiresAllocator = False, isValue = False }
@@ -6115,22 +6259,22 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "dict_member", requiresAllocator = False, isValue = False }
 
                 "insert" ->
-                    Just { qualification = [], name = "dict_insert", requiresAllocator = False, isValue = False }
+                    Just { qualification = [], name = "dict_insert", requiresAllocator = True, isValue = False }
 
                 "update" ->
-                    Just { qualification = [], name = "dict_update", requiresAllocator = False, isValue = False }
+                    Just { qualification = [], name = "dict_update", requiresAllocator = True, isValue = False }
 
                 "remove" ->
-                    Just { qualification = [], name = "dict_remove", requiresAllocator = False, isValue = False }
+                    Just { qualification = [], name = "dict_remove", requiresAllocator = True, isValue = False }
 
                 "union" ->
-                    Just { qualification = [], name = "dict_union", requiresAllocator = False, isValue = False }
+                    Just { qualification = [], name = "dict_union", requiresAllocator = True, isValue = False }
 
                 "diff" ->
-                    Just { qualification = [], name = "dict_diff", requiresAllocator = False, isValue = False }
+                    Just { qualification = [], name = "dict_diff", requiresAllocator = True, isValue = False }
 
                 "intersect" ->
-                    Just { qualification = [], name = "dict_intersect", requiresAllocator = False, isValue = False }
+                    Just { qualification = [], name = "dict_intersect", requiresAllocator = True, isValue = False }
 
                 "merge" ->
                     Just { qualification = [], name = "dict_merge", requiresAllocator = False, isValue = False }
@@ -6144,13 +6288,13 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "set_size", requiresAllocator = False, isValue = False }
 
                 "empty" ->
-                    Just { qualification = [], name = "set_empty", requiresAllocator = False, isValue = False }
+                    Just { qualification = [], name = "set_empty", requiresAllocator = True, isValue = False }
 
                 "singleton" ->
-                    Just { qualification = [], name = "set_singleton", requiresAllocator = False, isValue = False }
+                    Just { qualification = [], name = "set_singleton", requiresAllocator = True, isValue = False }
 
                 "fromList" ->
-                    Just { qualification = [], name = "set_from_list", requiresAllocator = False, isValue = False }
+                    Just { qualification = [], name = "set_from_list", requiresAllocator = True, isValue = False }
 
                 "toList" ->
                     Just { qualification = [], name = "set_to_list", requiresAllocator = True, isValue = False }
@@ -6159,10 +6303,10 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "set_is_empty", requiresAllocator = False, isValue = False }
 
                 "insert" ->
-                    Just { qualification = [], name = "set_insert", requiresAllocator = False, isValue = False }
+                    Just { qualification = [], name = "set_insert", requiresAllocator = True, isValue = False }
 
                 "partition" ->
-                    Just { qualification = [], name = "set_partition", requiresAllocator = False, isValue = False }
+                    Just { qualification = [], name = "set_partition", requiresAllocator = True, isValue = False }
 
                 "foldl" ->
                     Just { qualification = [], name = "set_foldl", requiresAllocator = False, isValue = False }
@@ -6171,25 +6315,25 @@ referenceToCoreRust reference =
                     Just { qualification = [], name = "set_foldr", requiresAllocator = False, isValue = False }
 
                 "map" ->
-                    Just { qualification = [], name = "set_map", requiresAllocator = False, isValue = False }
+                    Just { qualification = [], name = "set_map", requiresAllocator = True, isValue = False }
 
                 "filter" ->
-                    Just { qualification = [], name = "set_filter", requiresAllocator = False, isValue = False }
+                    Just { qualification = [], name = "set_filter", requiresAllocator = True, isValue = False }
 
                 "member" ->
                     Just { qualification = [], name = "set_member", requiresAllocator = False, isValue = False }
 
                 "remove" ->
-                    Just { qualification = [], name = "set_remove", requiresAllocator = False, isValue = False }
+                    Just { qualification = [], name = "set_remove", requiresAllocator = True, isValue = False }
 
                 "union" ->
-                    Just { qualification = [], name = "set_union", requiresAllocator = False, isValue = False }
+                    Just { qualification = [], name = "set_union", requiresAllocator = True, isValue = False }
 
                 "diff" ->
-                    Just { qualification = [], name = "set_diff", requiresAllocator = False, isValue = False }
+                    Just { qualification = [], name = "set_diff", requiresAllocator = True, isValue = False }
 
                 "intersect" ->
-                    Just { qualification = [], name = "set_intersect", requiresAllocator = False, isValue = False }
+                    Just { qualification = [], name = "set_intersect", requiresAllocator = True, isValue = False }
 
                 _ ->
                     Nothing
@@ -7930,6 +8074,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                             , isCopy : Bool
                             , isDebug : Bool
                             , isPartialEq : Bool
+                            , isPartialOrd : Bool
                             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
                             }
                     , rustTypeAliases :
@@ -7940,6 +8085,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                             , isCopy : Bool
                             , isDebug : Bool
                             , isPartialEq : Bool
+                            , isPartialOrd : Bool
                             }
                     , rustConsts : FastSet.Set String
                     , rustFns : FastDict.Dict String { requiresAllocator : Bool }
@@ -8115,6 +8261,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                 , isCopy : Bool
                                                 , isDebug : Bool
                                                 , isPartialEq : Bool
+                                                , isPartialOrd : Bool
                                                 , variantReferencedValueIndexes : FastDict.Dict String (List Int)
                                                 }
                                         , rustTypeAliases :
@@ -8125,6 +8272,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                 , isCopy : Bool
                                                 , isDebug : Bool
                                                 , isPartialEq : Bool
+                                                , isPartialOrd : Bool
                                                 }
                                         }
                                     transpiledModuleDeclaredRustTypes =
@@ -8179,6 +8327,9 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                 , isPartialEq =
                                                                                     rustTypeAliasDeclaration.type_
                                                                                         |> rustTypeIsPartialEq { variablesArePartialEq = True }
+                                                                                , isPartialOrd =
+                                                                                    rustTypeAliasDeclaration.type_
+                                                                                        |> rustTypeIsPartialOrd { variablesArePartialOrd = True }
                                                                                 }
                                                                     , rustTypeAliasDeclarations =
                                                                         { name = rustTypeAliasName
@@ -8206,6 +8357,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                             , isCopy : Bool
                                                                             , isDebug : Bool
                                                                             , isPartialEq : Bool
+                                                                            , isPartialOrd : Bool
                                                                             }
                                                                         rustEnumDeclaration =
                                                                             choiceTypeDeclaration
@@ -8226,6 +8378,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                 , isCopy = rustEnumDeclaration.isCopy
                                                                                 , isDebug = rustEnumDeclaration.isDebug
                                                                                 , isPartialEq = rustEnumDeclaration.isPartialEq
+                                                                                , isPartialOrd = rustEnumDeclaration.isPartialOrd
                                                                                 , variantReferencedValueIndexes = FastDict.empty
                                                                                 }
                                                                     , rustEnumDeclarations =
@@ -8313,6 +8466,9 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                             , isPartialEq =
                                                                                                 rustTypeAliasDeclaration.type_
                                                                                                     |> rustTypeIsPartialEq { variablesArePartialEq = True }
+                                                                                            , isPartialOrd =
+                                                                                                rustTypeAliasDeclaration.type_
+                                                                                                    |> rustTypeIsPartialOrd { variablesArePartialOrd = True }
                                                                                             }
                                                                                 , rustTypeAliasDeclarations =
                                                                                     { name = rustTypeAliasName
@@ -8340,6 +8496,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                         , isCopy : Bool
                                                                                         , isDebug : Bool
                                                                                         , isPartialEq : Bool
+                                                                                        , isPartialOrd : Bool
                                                                                         }
                                                                                     rustEnumDeclaration =
                                                                                         choiceTypeDeclaration
@@ -8360,6 +8517,7 @@ modules syntaxDeclarationsIncludingOverwrittenOnes =
                                                                                             , isCopy = rustEnumDeclaration.isCopy
                                                                                             , isDebug = rustEnumDeclaration.isDebug
                                                                                             , isPartialEq = rustEnumDeclaration.isPartialEq
+                                                                                            , isPartialOrd = rustEnumDeclaration.isPartialOrd
                                                                                             , variantReferencedValueIndexes =
                                                                                                 rustEnumDeclaration.variants
                                                                                                     |> FastDict.map
@@ -9014,6 +9172,7 @@ valueOrFunctionDeclaration :
             , isCopy : Bool
             , isDebug : Bool
             , isPartialEq : Bool
+            , isPartialOrd : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
     , rustTypeAliases :
@@ -9024,6 +9183,7 @@ valueOrFunctionDeclaration :
             , isCopy : Bool
             , isDebug : Bool
             , isPartialEq : Bool
+            , isPartialOrd : Bool
             }
     , rustConsts : FastSet.Set String
     , rustFns : FastDict.Dict String { requiresAllocator : Bool }
@@ -9653,6 +9813,7 @@ rustTypeConstructBumpaloBump =
         , isCopy = False
         , isDebug = True
         , isPartialEq = False
+        , isPartialOrd = False
         , arguments = []
         , lifetimeArguments = []
         }
@@ -9841,6 +10002,7 @@ type alias ExpressionToRustContext =
             , isCopy : Bool
             , isDebug : Bool
             , isPartialEq : Bool
+            , isPartialOrd : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
     , rustTypeAliases :
@@ -9851,6 +10013,7 @@ type alias ExpressionToRustContext =
             , isCopy : Bool
             , isDebug : Bool
             , isPartialEq : Bool
+            , isPartialOrd : Bool
             }
     , rustConsts : FastSet.Set String
     , rustFns : FastDict.Dict String { requiresAllocator : Bool }
@@ -11909,6 +12072,7 @@ rustTypeJsonValue =
         , isCopy = True
         , isDebug = True
         , isPartialEq = True
+        , isPartialOrd = False
         , name = "JsonValue"
         , arguments = []
         , lifetimeArguments = [ generatedLifetimeVariableName ]
@@ -15398,6 +15562,7 @@ letValueOrFunctionDeclarationToRustKindAndParameters :
             , isCopy : Bool
             , isDebug : Bool
             , isPartialEq : Bool
+            , isPartialOrd : Bool
             , variantReferencedValueIndexes : FastDict.Dict String (List Int)
             }
     , rustTypeAliases :
@@ -15408,6 +15573,7 @@ letValueOrFunctionDeclarationToRustKindAndParameters :
             , isCopy : Bool
             , isDebug : Bool
             , isPartialEq : Bool
+            , isPartialOrd : Bool
             }
     , moduleInfo :
         FastDict.Dict
@@ -35344,7 +35510,7 @@ pub fn result_map5<A, B, C, D, E, Combined, X>(
 
 /// because types like elm Float can be used as dictionary keys
 /// while rust `f64` being `PartialOrd` for exampled can not
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Hash)]
 pub struct PretendNotPartial<A>(pub A);
 impl<A: PartialEq> Eq for PretendNotPartial<A> {}
 impl<A: PartialEq + PartialOrd> PartialOrd for PretendNotPartial<A> {
@@ -35370,67 +35536,71 @@ impl<A: std::fmt::Debug> std::fmt::Debug for PretendNotPartial<A> {
     }
 }
 
-type DictDict<K, V> = std::rc::Rc<std::collections::BTreeMap<PretendNotPartial<K>, V>>;
+type DictDict<'a, K, V> = std::rc::Rc<
+    std::collections::BTreeMap<PretendNotPartial<K>, V, &'a bumpalo::Bump>,
+    &'a bumpalo::Bump,
+>;
 
-pub fn dict_empty<K, V>() -> DictDict<K, V> {
-    std::rc::Rc::new(std::collections::BTreeMap::new())
+pub fn dict_empty<'a, K, V>(allocator: &'a bumpalo::Bump) -> DictDict<'a, K, V> {
+    std::rc::Rc::new_in(std::collections::BTreeMap::new_in(allocator), allocator)
 }
-pub fn dict_singleton<K: PartialOrd, V>(only_key: K, only_value: V) -> DictDict<K, V> {
-    let mut dict: std::collections::BTreeMap<PretendNotPartial<K>, V> =
-        std::collections::BTreeMap::new();
+pub fn dict_singleton<'a, K: PartialOrd, V>(
+    allocator: &'a bumpalo::Bump,
+    only_key: K,
+    only_value: V,
+) -> DictDict<'a, K, V> {
+    let mut dict = std::collections::BTreeMap::new_in(allocator);
     dict.insert(PretendNotPartial(only_key), only_value);
-    std::rc::Rc::new(dict)
+    std::rc::Rc::new_in(dict, allocator)
 }
-pub fn dict_insert<K: PartialOrd + Clone, V: Clone>(
+pub fn dict_insert<'a, K: PartialOrd + Clone, V: Clone>(
+    allocator: &'a bumpalo::Bump,
     key: K,
     value: V,
-    dict: DictDict<K, V>,
-) -> DictDict<K, V> {
-    let mut dict_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> =
-        std::rc::Rc::unwrap_or_clone(dict);
+    dict: DictDict<'a, K, V>,
+) -> DictDict<'a, K, V> {
+    let mut dict_owned = std::rc::Rc::unwrap_or_clone(dict);
     dict_owned.insert(PretendNotPartial(key), value);
-    std::rc::Rc::new(dict_owned)
+    std::rc::Rc::new_in(dict_owned, allocator)
 }
-pub fn dict_update<K: PartialOrd + Clone, V: Clone>(
+pub fn dict_update<'a, K: PartialOrd + Clone, V: Clone>(
+    allocator: &'a bumpalo::Bump,
     key: K,
     value_change: impl Fn(Option<V>) -> Option<V>,
-    dict: DictDict<K, V>,
-) -> DictDict<K, V> {
+    dict: DictDict<'a, K, V>,
+) -> DictDict<'a, K, V> {
     let key_pretend_not_partial: PretendNotPartial<K> = PretendNotPartial(key);
     match dict.get(&key_pretend_not_partial) {
         Option::Some(value) => match value_change(Option::Some(value.clone())) {
             Option::None => {
-                let mut dict_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> =
-                    std::rc::Rc::unwrap_or_clone(dict);
+                let mut dict_owned = std::rc::Rc::unwrap_or_clone(dict);
                 dict_owned.remove(&key_pretend_not_partial);
-                std::rc::Rc::new(dict_owned)
+                std::rc::Rc::new_in(dict_owned, allocator)
             }
             Option::Some(changed_value) => {
-                let mut dict_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> =
-                    std::rc::Rc::unwrap_or_clone(dict);
+                let mut dict_owned = std::rc::Rc::unwrap_or_clone(dict);
                 dict_owned.insert(key_pretend_not_partial, changed_value);
-                std::rc::Rc::new(dict_owned)
+                std::rc::Rc::new_in(dict_owned, allocator)
             }
         },
         Option::None => match value_change(Option::None) {
             Option::None => dict,
             Option::Some(changed_value) => {
-                let mut dict_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> =
-                    std::rc::Rc::unwrap_or_clone(dict);
+                let mut dict_owned = std::rc::Rc::unwrap_or_clone(dict);
                 dict_owned.insert(key_pretend_not_partial, changed_value);
-                std::rc::Rc::new(dict_owned)
+                std::rc::Rc::new_in(dict_owned, allocator)
             }
         },
     }
 }
-pub fn dict_remove<K: PartialOrd + Clone, V: Clone>(
+pub fn dict_remove<'a, K: PartialOrd + Clone, V: Clone>(
+    allocator: &'a bumpalo::Bump,
     key: K,
-    dict: DictDict<K, V>,
-) -> DictDict<K, V> {
-    let mut dict_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> =
-        std::rc::Rc::unwrap_or_clone(dict);
+    dict: DictDict<'a, K, V>,
+) -> DictDict<'a, K, V> {
+    let mut dict_owned = std::rc::Rc::unwrap_or_clone(dict);
     dict_owned.remove(&PretendNotPartial(key));
-    std::rc::Rc::new(dict_owned)
+    std::rc::Rc::new_in(dict_owned, allocator)
 }
 
 pub fn dict_is_empty<K: Clone, V: Clone>(dict: DictDict<K, V>) -> bool {
@@ -35451,11 +35621,9 @@ pub fn dict_keys<'a, K: Clone, V>(
     dict: DictDict<K, V>,
 ) -> ListList<'a, K> {
     match std::rc::Rc::try_unwrap(dict) {
-        Result::Ok(dict_owned) => {
-            double_ended_iterator_to_list(allocator, dict_owned.into_keys().map(|k| k.0))
-        }
+        Result::Ok(dict_owned) => iterator_to_list(allocator, dict_owned.into_keys().map(|k| k.0)),
         Result::Err(dict_shared) => {
-            double_ended_iterator_to_list(allocator, dict_shared.keys().map(|k| k.0.clone()))
+            iterator_to_list(allocator, dict_shared.keys().map(|k| k.0.clone()))
         }
     }
 }
@@ -35464,12 +35632,8 @@ pub fn dict_values<'a, K, V: Clone>(
     dict: DictDict<K, V>,
 ) -> ListList<'a, V> {
     match std::rc::Rc::try_unwrap(dict) {
-        Result::Ok(dict_owned) => {
-            double_ended_iterator_to_list(allocator, dict_owned.into_values())
-        }
-        Result::Err(dict_shared) => {
-            double_ended_iterator_to_list(allocator, dict_shared.values().cloned())
-        }
+        Result::Ok(dict_owned) => iterator_to_list(allocator, dict_owned.into_values()),
+        Result::Err(dict_shared) => iterator_to_list(allocator, dict_shared.values().cloned()),
     }
 }
 pub fn dict_to_list<'a, K: Clone, V: Clone>(
@@ -35478,59 +35642,71 @@ pub fn dict_to_list<'a, K: Clone, V: Clone>(
 ) -> ListList<'a, (K, V)> {
     match std::rc::Rc::try_unwrap(dict) {
         Result::Ok(dict_owned) => {
-            double_ended_iterator_to_list(allocator, dict_owned.into_iter().map(|(k, v)| (k.0, v)))
+            iterator_to_list(allocator, dict_owned.into_iter().map(|(k, v)| (k.0, v)))
         }
-        Result::Err(dict_shared) => double_ended_iterator_to_list(
+        Result::Err(dict_shared) => iterator_to_list(
             allocator,
             dict_shared.iter().map(|(k, v)| (k.0.clone(), v.clone())),
         ),
     }
 }
-pub fn dict_from_list<K: PartialOrd + Clone, V: Clone>(
+pub fn dict_from_list<'a, K: PartialOrd + Clone, V: Clone>(
+    allocator: &'a bumpalo::Bump,
     entries: ListList<(K, V)>,
-) -> DictDict<K, V> {
-    std::rc::Rc::new(
-        entries
-            .into_iter()
-            .map(|(k, v)| (PretendNotPartial(k), v))
-            .collect::<std::collections::BTreeMap<PretendNotPartial<K>, V>>(),
-    )
+) -> DictDict<'a, K, V> {
+    let mut dict = std::collections::BTreeMap::new_in(allocator);
+    dict.extend(entries.into_iter().map(|(k, v)| (PretendNotPartial(k), v)));
+    std::rc::Rc::new_in(dict, allocator)
 }
 
-pub fn dict_map<K: PartialOrd + Clone, V: Clone, NewV: Clone>(
+pub fn dict_map<'a, K: PartialOrd + Clone, V: Clone, NewV: Clone>(
+    allocator: &'a bumpalo::Bump,
     key_value_to_new_value: impl Fn(K, V) -> NewV,
     dict: DictDict<K, V>,
-) -> DictDict<K, NewV> {
-    std::rc::Rc::new(match std::rc::Rc::try_unwrap(dict) {
-        Result::Ok(dict_owned) => dict_owned
-            .into_iter()
-            .map(|(k, v)| (k.clone(), key_value_to_new_value(k.0, v)))
-            .collect::<std::collections::BTreeMap<PretendNotPartial<K>, NewV>>(),
-        Result::Err(dict_shared) => dict_shared
-            .iter()
-            .map(|(k, v)| (k.clone(), key_value_to_new_value(k.0.clone(), v.clone())))
-            .collect::<std::collections::BTreeMap<PretendNotPartial<K>, NewV>>(),
-    })
+) -> DictDict<'a, K, NewV> {
+    let mut new_dict = std::collections::BTreeMap::new_in(allocator);
+    match std::rc::Rc::try_unwrap(dict) {
+        Result::Ok(dict_owned) => {
+            new_dict.extend(
+                dict_owned
+                    .into_iter()
+                    .map(|(k, v)| (k.clone(), key_value_to_new_value(k.0, v))),
+            );
+        }
+        Result::Err(dict_shared) => {
+            new_dict.extend(
+                dict_shared
+                    .iter()
+                    .map(|(k, v)| (k.clone(), key_value_to_new_value(k.0.clone(), v.clone()))),
+            );
+        }
+    };
+    std::rc::Rc::new_in(new_dict, allocator)
 }
-pub fn dict_filter<K: PartialOrd + Clone, V: Clone>(
+pub fn dict_filter<'a, K: PartialOrd + Clone, V: Clone>(
+    allocator: &'a bumpalo::Bump,
     keep_key_value: impl Fn(K, V) -> bool,
-    dict: DictDict<K, V>,
-) -> DictDict<K, V> {
-    let mut dict_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> =
-        std::rc::Rc::unwrap_or_clone(dict);
+    dict: DictDict<'a, K, V>,
+) -> DictDict<'a, K, V> {
+    // can be optimized
+    let mut dict_owned = std::rc::Rc::unwrap_or_clone(dict);
     dict_owned.retain(|k, v| keep_key_value(k.0.clone(), v.clone()));
-    std::rc::Rc::new(dict_owned)
+    std::rc::Rc::new_in(dict_owned, allocator)
 }
-pub fn dict_partition<K: PartialOrd + Clone, V: Clone>(
+pub fn dict_partition<'a, K: PartialOrd + Clone, V: Clone>(
+    allocator: &'a bumpalo::Bump,
     key_value_is_left: impl Fn(K, V) -> bool,
-    dict: DictDict<K, V>,
-) -> (DictDict<K, V>, DictDict<K, V>) {
-    let mut lefts: std::collections::BTreeMap<PretendNotPartial<K>, V> = (*dict).clone();
-    let mut rights: std::collections::BTreeMap<PretendNotPartial<K>, V> =
-        std::rc::Rc::unwrap_or_clone(dict);
+    dict: DictDict<'a, K, V>,
+) -> (DictDict<'a, K, V>, DictDict<'a, K, V>) {
+    // can maybe be optimized
+    let mut lefts = (*dict).clone();
+    let mut rights = std::rc::Rc::unwrap_or_clone(dict);
     lefts.retain(|k, v| key_value_is_left(k.0.clone(), v.clone()));
     rights.retain(|k, v| !key_value_is_left(k.0.clone(), v.clone()));
-    (std::rc::Rc::new(lefts), std::rc::Rc::new(rights))
+    (
+        std::rc::Rc::new_in(lefts, allocator),
+        std::rc::Rc::new_in(rights, allocator),
+    )
 }
 pub fn dict_foldl<K: Clone, V: Clone, State>(
     reduce: impl Fn(K, V, State) -> State,
@@ -35565,32 +35741,33 @@ pub fn dict_foldr<K: Clone, V: Clone, State>(
     }
 }
 
-pub fn dict_union<K: PartialOrd + Clone, V: Clone>(
-    base: DictDict<K, V>,
-    additional: DictDict<K, V>,
-) -> DictDict<K, V> {
-    let mut combined: std::collections::BTreeMap<PretendNotPartial<K>, V> =
-        std::rc::Rc::unwrap_or_clone(additional);
+pub fn dict_union<'a, K: PartialOrd + Clone, V: Clone>(
+    allocator: &'a bumpalo::Bump,
+    base: DictDict<'a, K, V>,
+    additional: DictDict<'a, K, V>,
+) -> DictDict<'a, K, V> {
+    let mut combined = std::rc::Rc::unwrap_or_clone(additional);
     // is this optimal for shared?
     combined.append(&mut std::rc::Rc::unwrap_or_clone(base));
-    std::rc::Rc::new(combined)
+    std::rc::Rc::new_in(combined, allocator)
 }
-pub fn dict_intersect<K: PartialOrd + Clone, V: Clone>(
-    base: DictDict<K, V>,
+pub fn dict_intersect<'a, K: PartialOrd + Clone, V: Clone>(
+    allocator: &'a bumpalo::Bump,
+    base: DictDict<'a, K, V>,
     keys_to_retain: DictDict<K, V>,
-) -> DictDict<K, V> {
+) -> DictDict<'a, K, V> {
     let mut base_owned = std::rc::Rc::unwrap_or_clone(base);
     base_owned.retain(|k, _v| keys_to_retain.contains_key(k));
-    std::rc::Rc::new(base_owned)
+    std::rc::Rc::new_in(base_owned, allocator)
 }
-pub fn dict_diff<K: PartialOrd + Clone, V: Clone>(
-    base: DictDict<K, V>,
+pub fn dict_diff<'a, K: PartialOrd + Clone, V: Clone>(
+    allocator: &'a bumpalo::Bump,
+    base: DictDict<'a, K, V>,
     keys_to_remove: DictDict<K, V>,
-) -> DictDict<K, V> {
-    let mut base_owned: std::collections::BTreeMap<PretendNotPartial<K>, V> =
-        std::rc::Rc::unwrap_or_clone(base);
+) -> DictDict<'a, K, V> {
+    let mut base_owned = std::rc::Rc::unwrap_or_clone(base);
     base_owned.retain(|k, _v| !keys_to_remove.contains_key(k));
-    std::rc::Rc::new(base_owned)
+    std::rc::Rc::new_in(base_owned, allocator)
 }
 pub fn dict_merge<K: PartialOrd + Clone, LeftV: Clone, RightV: Clone, State>(
     reduce_only_left: impl Fn(K, LeftV, State) -> State,
@@ -35624,28 +35801,42 @@ pub fn dict_merge<K: PartialOrd + Clone, LeftV: Clone, RightV: Clone, State>(
     })
 }
 
-type SetSet<K> = std::rc::Rc<std::collections::BTreeSet<PretendNotPartial<K>>>;
+type SetSet<'a, K> = std::rc::Rc<
+    std::collections::BTreeSet<PretendNotPartial<K>, &'a bumpalo::Bump>,
+    &'a bumpalo::Bump,
+>;
 
-pub fn set_empty<K>() -> SetSet<K> {
-    std::rc::Rc::new(std::collections::BTreeSet::new())
+pub fn set_empty<'a, K>(allocator: &'a bumpalo::Bump) -> SetSet<'a, K> {
+    std::rc::Rc::new_in(std::collections::BTreeSet::new_in(allocator), allocator)
 }
-pub fn set_singleton<K: PartialOrd>(only_key: K) -> SetSet<K> {
-    let mut set: std::collections::BTreeSet<PretendNotPartial<K>> =
-        std::collections::BTreeSet::new();
+pub fn set_singleton<'a, K: PartialOrd>(
+    allocator: &'a bumpalo::Bump,
+    only_key: K,
+) -> SetSet<'a, K> {
+    let mut set: std::collections::BTreeSet<PretendNotPartial<K>, _> =
+        std::collections::BTreeSet::new_in(allocator);
     set.insert(PretendNotPartial(only_key));
-    std::rc::Rc::new(set)
+    std::rc::Rc::new_in(set, allocator)
 }
-pub fn set_insert<K: PartialOrd + Clone>(key: K, set: SetSet<K>) -> SetSet<K> {
-    let mut set_owned: std::collections::BTreeSet<PretendNotPartial<K>> =
+pub fn set_insert<'a, K: PartialOrd + Clone>(
+    allocator: &'a bumpalo::Bump,
+    key: K,
+    set: SetSet<'a, K>,
+) -> SetSet<'a, K> {
+    let mut set_owned: std::collections::BTreeSet<PretendNotPartial<K>, _> =
         std::rc::Rc::unwrap_or_clone(set);
     set_owned.insert(PretendNotPartial(key));
-    std::rc::Rc::new(set_owned)
+    std::rc::Rc::new_in(set_owned, allocator)
 }
-pub fn set_remove<K: PartialOrd + Clone>(key: K, set: SetSet<K>) -> SetSet<K> {
-    let mut set_owned: std::collections::BTreeSet<PretendNotPartial<K>> =
+pub fn set_remove<'a, K: PartialOrd + Clone>(
+    allocator: &'a bumpalo::Bump,
+    key: K,
+    set: SetSet<'a, K>,
+) -> SetSet<'a, K> {
+    let mut set_owned: std::collections::BTreeSet<PretendNotPartial<K>, _> =
         std::rc::Rc::unwrap_or_clone(set);
     set_owned.remove(&PretendNotPartial(key));
-    std::rc::Rc::new(set_owned)
+    std::rc::Rc::new_in(set_owned, allocator)
 }
 
 pub fn set_is_empty<K>(set: SetSet<K>) -> bool {
@@ -35658,7 +35849,10 @@ pub fn set_member<K: PartialOrd>(key: K, set: SetSet<K>) -> bool {
     set.contains(&PretendNotPartial(key))
 }
 
-pub fn set_to_list<'a, K: Clone>(allocator: &'a bumpalo::Bump, set: SetSet<K>) -> ListList<'a, K> {
+pub fn set_to_list<'a, K: Clone>(
+    allocator: &'a bumpalo::Bump,
+    set: SetSet<'a, K>,
+) -> ListList<'a, K> {
     match std::rc::Rc::try_unwrap(set) {
         Result::Ok(set_owned) => {
             double_ended_iterator_to_list(allocator, set_owned.into_iter().map(|k| k.0))
@@ -35668,49 +35862,64 @@ pub fn set_to_list<'a, K: Clone>(allocator: &'a bumpalo::Bump, set: SetSet<K>) -
         }
     }
 }
-pub fn set_from_list<K: PartialOrd + Clone>(entries: ListList<K>) -> SetSet<K> {
-    std::rc::Rc::new(
-        entries
-            .into_iter()
-            .map(PretendNotPartial)
-            .collect::<std::collections::BTreeSet<PretendNotPartial<K>>>(),
-    )
+pub fn set_from_list<'a, K: PartialOrd + Clone>(
+    allocator: &'a bumpalo::Bump,
+    entries: ListList<K>,
+) -> SetSet<'a, K> {
+    let mut set = std::collections::BTreeSet::new_in(allocator);
+    set.extend(entries.into_iter().map(PretendNotPartial));
+    std::rc::Rc::new_in(set, allocator)
 }
 
-pub fn set_map<K: Clone, NewK: PartialOrd + Clone>(
+pub fn set_map<'a, K: Clone, NewK: PartialOrd + Clone>(
+    allocator: &'a bumpalo::Bump,
     key_change: impl Fn(K) -> NewK,
-    set: SetSet<K>,
-) -> SetSet<NewK> {
-    std::rc::Rc::new(match std::rc::Rc::try_unwrap(set) {
-        Result::Ok(set_owned) => set_owned
-            .into_iter()
-            .map(|k| PretendNotPartial(key_change(k.0)))
-            .collect::<std::collections::BTreeSet<PretendNotPartial<NewK>>>(),
-        Result::Err(set_shared) => set_shared
-            .iter()
-            .map(|k| PretendNotPartial(key_change(k.0.clone())))
-            .collect::<std::collections::BTreeSet<PretendNotPartial<NewK>>>(),
-    })
+    set: SetSet<'a, K>,
+) -> SetSet<'a, NewK> {
+    let mut new_set = std::collections::BTreeSet::new_in(allocator);
+    match std::rc::Rc::try_unwrap(set) {
+        Result::Ok(set_owned) => {
+            new_set.extend(
+                set_owned
+                    .into_iter()
+                    .map(|k| PretendNotPartial(key_change(k.0))),
+            );
+        }
+        Result::Err(set_shared) => {
+            new_set.extend(
+                set_shared
+                    .iter()
+                    .map(|k| PretendNotPartial(key_change(k.0.clone()))),
+            );
+        }
+    }
+    std::rc::Rc::new_in(new_set, allocator)
 }
-pub fn set_filter<K: PartialOrd + Clone>(
+pub fn set_filter<'a, K: PartialOrd + Clone>(
+    allocator: &'a bumpalo::Bump,
     keep_key_value: impl Fn(K) -> bool,
-    set: SetSet<K>,
-) -> SetSet<K> {
-    let mut set_owned: std::collections::BTreeSet<PretendNotPartial<K>> =
+    set: SetSet<'a, K>,
+) -> SetSet<'a, K> {
+    // can be optimized
+    let mut set_owned: std::collections::BTreeSet<PretendNotPartial<K>, _> =
         std::rc::Rc::unwrap_or_clone(set);
     set_owned.retain(|k| keep_key_value(k.0.clone()));
-    std::rc::Rc::new(set_owned)
+    std::rc::Rc::new_in(set_owned, allocator)
 }
-pub fn set_partition<K: PartialOrd + Clone>(
+pub fn set_partition<'a, K: PartialOrd + Clone>(
+    allocator: &'a bumpalo::Bump,
     key_value_is_left: impl Fn(K) -> bool,
-    set: SetSet<K>,
-) -> (SetSet<K>, SetSet<K>) {
-    let mut lefts: std::collections::BTreeSet<PretendNotPartial<K>> = (*set).clone();
-    let mut rights: std::collections::BTreeSet<PretendNotPartial<K>> =
+    set: SetSet<'a, K>,
+) -> (SetSet<'a, K>, SetSet<'a, K>) {
+    let mut lefts: std::collections::BTreeSet<PretendNotPartial<K>, _> = (*set).clone();
+    let mut rights: std::collections::BTreeSet<PretendNotPartial<K>, _> =
         std::rc::Rc::unwrap_or_clone(set);
     lefts.retain(|k| key_value_is_left(k.0.clone()));
     rights.retain(|k| !key_value_is_left(k.0.clone()));
-    (std::rc::Rc::new(lefts), std::rc::Rc::new(rights))
+    (
+        std::rc::Rc::new_in(lefts, allocator),
+        std::rc::Rc::new_in(rights, allocator),
+    )
 }
 pub fn set_foldl<K: Clone, State>(
     reduce: impl Fn(K, State) -> State,
@@ -35743,50 +35952,68 @@ pub fn set_foldr<K: Clone, State>(
     }
 }
 
-pub fn set_union<K: PartialOrd + Clone>(a_set: SetSet<K>, b_set: SetSet<K>) -> SetSet<K> {
+pub fn set_union<'a, K: PartialOrd + Clone>(
+    allocator: &'a bumpalo::Bump,
+    a_set: SetSet<'a, K>,
+    b_set: SetSet<'a, K>,
+) -> SetSet<'a, K> {
     // is this .append for shared?
     if b_set.len() > a_set.len() {
-        let mut combined: std::collections::BTreeSet<PretendNotPartial<K>> =
+        let mut combined: std::collections::BTreeSet<PretendNotPartial<K>, _> =
             std::rc::Rc::unwrap_or_clone(b_set);
         combined.append(&mut std::rc::Rc::unwrap_or_clone(a_set));
-        std::rc::Rc::new(combined)
+        std::rc::Rc::new_in(combined, allocator)
     } else
     /* a_set.len() >= b_set.len() */
     {
-        let mut combined: std::collections::BTreeSet<PretendNotPartial<K>> =
+        let mut combined: std::collections::BTreeSet<PretendNotPartial<K>, _> =
             std::rc::Rc::unwrap_or_clone(a_set);
         combined.append(&mut std::rc::Rc::unwrap_or_clone(b_set));
-        std::rc::Rc::new(combined)
+        std::rc::Rc::new_in(combined, allocator)
     }
 }
-pub fn set_intersect<K: PartialOrd + Clone>(a_set: SetSet<K>, b_set: SetSet<K>) -> SetSet<K> {
+pub fn set_intersect<'a, K: PartialOrd + Clone>(
+    allocator: &'a bumpalo::Bump,
+    a_set: SetSet<'a, K>,
+    b_set: SetSet<'a, K>,
+) -> SetSet<'a, K> {
     // possible optimization: use the smaller vec to reduce amount of removed elements
-    std::rc::Rc::new(match std::rc::Rc::try_unwrap(a_set) {
-        Result::Ok(mut a_set_owned) => {
-            a_set_owned.retain(|k| b_set.contains(k));
-            a_set_owned
-        }
-        Result::Err(a_set_shared) => {
-            let mut b_set_owned: std::collections::BTreeSet<PretendNotPartial<K>> =
-                std::rc::Rc::unwrap_or_clone(b_set);
-            b_set_owned.retain(|k| a_set_shared.contains(k));
-            b_set_owned
-        }
-    })
+    std::rc::Rc::new_in(
+        match std::rc::Rc::try_unwrap(a_set) {
+            Result::Ok(mut a_set_owned) => {
+                a_set_owned.retain(|k| b_set.contains(k));
+                a_set_owned
+            }
+            Result::Err(a_set_shared) => {
+                let mut b_set_owned: std::collections::BTreeSet<PretendNotPartial<K>, _> =
+                    std::rc::Rc::unwrap_or_clone(b_set);
+                b_set_owned.retain(|k| a_set_shared.contains(k));
+                b_set_owned
+            }
+        },
+        allocator,
+    )
 }
-pub fn set_diff<K: PartialOrd + Clone>(a_set: SetSet<K>, b_set: SetSet<K>) -> SetSet<K> {
+pub fn set_diff<'a, K: PartialOrd + Clone>(
+    allocator: &'a bumpalo::Bump,
+    a_set: SetSet<'a, K>,
+    b_set: SetSet<'a, K>,
+) -> SetSet<'a, K> {
     // possible optimization: use the smaller vec to reduce amount of removed elements
-    std::rc::Rc::new(match std::rc::Rc::try_unwrap(a_set) {
-        Result::Ok(mut a_set_owned) => {
-            a_set_owned.retain(|k| !b_set.contains(k));
-            a_set_owned
-        }
-        Result::Err(a_set_shared) => {
-            let mut b_set_owned = std::rc::Rc::unwrap_or_clone(b_set);
-            b_set_owned.retain(|k| !a_set_shared.contains(k));
-            b_set_owned
-        }
-    })
+    std::rc::Rc::new_in(
+        match std::rc::Rc::try_unwrap(a_set) {
+            Result::Ok(mut a_set_owned) => {
+                a_set_owned.retain(|k| !b_set.contains(k));
+                a_set_owned
+            }
+            Result::Err(a_set_shared) => {
+                let mut b_set_owned = std::rc::Rc::unwrap_or_clone(b_set);
+                b_set_owned.retain(|k| !a_set_shared.contains(k));
+                b_set_owned
+            }
+        },
+        allocator,
+    )
 }
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum JsonValue<'a> {
@@ -36748,14 +36975,15 @@ pub fn json_decode_key_value_pairs<'a, A>(
 pub fn json_decode_dict<'a, A>(
     allocator: &'a bumpalo::Bump,
     value_decoder: JsonDecodeDecoder<'a, A>,
-) -> JsonDecodeDecoder<'a, DictDict<StringString<'a>, A>> {
+) -> JsonDecodeDecoder<'a, DictDict<'a, StringString<'a>, A>> {
     JsonDecodeDecoder {
         decode: allocator.alloc(move |json| match json {
             JsonValue::Object(key_value_map) => {
                 let mut decoded_entries: std::collections::BTreeMap<
                     PretendNotPartial<StringString>,
                     A,
-                > = std::collections::BTreeMap::new();
+                    &bumpalo::Bump,
+                > = std::collections::BTreeMap::new_in(allocator);
                 for (&key, &value_json) in key_value_map.iter() {
                     match (value_decoder.decode)(value_json) {
                         Result::Err(value_error) => {
@@ -36770,7 +36998,7 @@ pub fn json_decode_dict<'a, A>(
                         }
                     }
                 }
-                Result::Ok(std::rc::Rc::new(decoded_entries))
+                Result::Ok(std::rc::Rc::new_in(decoded_entries, allocator))
             }
             json_not_object => Result::Err(JsonDecodeError::Failure(
                 StringString::One("Expecting an OBJECT"),

@@ -16,7 +16,7 @@ Repeat until subscriptions unordered collection empty.
 (I tried implementing this with only std/smol but I gave up, any tips appreciated!)
 
 */
-#![feature(allocator_api)]
+#![feature(allocator_api, btreemap_alloc)]
 mod elm;
 
 #[tokio::main]

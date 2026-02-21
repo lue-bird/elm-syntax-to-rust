@@ -1,4 +1,4 @@
-#![feature(allocator_api)]
+#![feature(allocator_api, btreemap_alloc)]
 use std::io::Write;
 mod elm;
 

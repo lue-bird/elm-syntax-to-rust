@@ -1,5 +1,5 @@
 #![allow(non_shorthand_field_patterns)]
-#![feature(allocator_api)]
+#![feature(allocator_api, btreemap_alloc)]
 mod elm;
 
 fn main() {

@@ -1,7 +1,6 @@
 // use like  example-elm-formatter < src/...elm
-
+#![feature(allocator_api, btreemap_alloc)]
 use std::io::Read;
-#![feature(allocator_api)]
 mod elm;
 
 pub fn main() {

@@ -2,9 +2,6 @@ Print [`elm-syntax`](https://dark.elm.dmy.fr/packages/stil4m/elm-syntax/latest/)
 To try it out, you can
 run [this script](https://github.com/lue-bird/elm-syntax-to-rust/tree/main/node-elm-to-rust).
 
-> ⚠️ I've discovered that currently the generated rust code can leak memory.
-Do not use this project for long-running programs until I fix those ♥
-
 ```elm
 import Elm.Parser
 import ElmSyntaxToRust
@@ -80,7 +77,7 @@ bumpalo = { version = "3.19.1", features = ["allocator_api"] }
 and a file `src/main.rs` that uses `elm.rs`:
 
 ```rust
-#![feature(allocator_api)]
+#![feature(allocator_api, btreemap_alloc)]
 mod elm
 print(elm::your_module_your_function("yourInput"))
 ```
@@ -89,7 +86,7 @@ where `elm::your_module_your_function(firstArgument, secondArgument)` is the tra
 
 Run with
 ```bash
-cargo run
+cargo +nightly run
 ```
 
 If something unexpected happened,
