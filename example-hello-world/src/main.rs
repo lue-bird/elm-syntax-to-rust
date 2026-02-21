@@ -1,3 +1,4 @@
+#![feature(allocator_api)]
 mod elm;
 
 pub fn main() {

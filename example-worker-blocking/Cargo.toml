@@ -2,4 +2,4 @@
 name = "example-worker-blocking"
 edition = "2024"
 [dependencies]
-bumpalo = "3.19.0"
+bumpalo = { version = "3.19.1", features = ["allocator_api"] }

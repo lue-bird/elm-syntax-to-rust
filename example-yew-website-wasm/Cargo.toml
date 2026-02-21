@@ -2,6 +2,6 @@
 name = "example-yew-website-wasm"
 edition = "2024"
 [dependencies]
-bumpalo = "3.19.0"
+bumpalo = { version = "3.19.1", features = ["allocator_api"] }
 web-sys = { version = "0.3.77", features = ["Event"] }
 yew = { version = "0.21", features = ["csr"] }

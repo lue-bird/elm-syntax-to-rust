@@ -1,5 +1,5 @@
+#![feature(allocator_api)]
 use std::io::Write;
-
 mod elm;
 
 pub fn main() {

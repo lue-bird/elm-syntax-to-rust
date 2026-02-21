@@ -16,6 +16,7 @@ Repeat until subscriptions unordered collection empty.
 (I tried implementing this with only std/smol but I gave up, any tips appreciated!)
 
 */
+#![feature(allocator_api)]
 mod elm;
 
 #[tokio::main]
@@ -289,7 +290,7 @@ fn elm_perform_cmd_tree(cmd_tree: &elm::PlatformCmdTree) -> Option<i32> {
 /// will at least remind you :)
 ///
 /// If you plan to only use persistent structures in your elm model
-/// (that means no strings, lists or recursive choice `type`s)
+/// (that means no strings, collections or recursive choice `type`s)
 /// you can replace all uses of ElmStatePersistent with elm::MainState
 /// and remove the conversions
 #[derive(Clone, PartialEq, Eq)]

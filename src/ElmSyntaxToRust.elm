@@ -5940,7 +5940,7 @@ referenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "array_singleton"
-                        , requiresAllocator = False
+                        , requiresAllocator = True
                         , isValue = False
                         }
 
@@ -5948,7 +5948,7 @@ referenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "array_initialize"
-                        , requiresAllocator = False
+                        , requiresAllocator = True
                         , isValue = False
                         }
 
@@ -5956,7 +5956,7 @@ referenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "array_repeat"
-                        , requiresAllocator = False
+                        , requiresAllocator = True
                         , isValue = False
                         }
 
@@ -5964,7 +5964,7 @@ referenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "array_from_list"
-                        , requiresAllocator = False
+                        , requiresAllocator = True
                         , isValue = False
                         }
 
@@ -5972,7 +5972,7 @@ referenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "array_reverse"
-                        , requiresAllocator = False
+                        , requiresAllocator = True
                         , isValue = False
                         }
 
@@ -5980,7 +5980,7 @@ referenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "array_filter"
-                        , requiresAllocator = False
+                        , requiresAllocator = True
                         , isValue = False
                         }
 
@@ -5988,7 +5988,7 @@ referenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "array_push"
-                        , requiresAllocator = False
+                        , requiresAllocator = True
                         , isValue = False
                         }
 
@@ -5996,7 +5996,7 @@ referenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "array_set"
-                        , requiresAllocator = False
+                        , requiresAllocator = True
                         , isValue = False
                         }
 
@@ -6004,7 +6004,7 @@ referenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "array_slice"
-                        , requiresAllocator = False
+                        , requiresAllocator = True
                         , isValue = False
                         }
 
@@ -6012,7 +6012,7 @@ referenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "array_map"
-                        , requiresAllocator = False
+                        , requiresAllocator = True
                         , isValue = False
                         }
 
@@ -6020,7 +6020,7 @@ referenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "array_indexed_map"
-                        , requiresAllocator = False
+                        , requiresAllocator = True
                         , isValue = False
                         }
 
@@ -6028,7 +6028,7 @@ referenceToCoreRust reference =
                     Just
                         { qualification = []
                         , name = "array_append"
-                        , requiresAllocator = False
+                        , requiresAllocator = True
                         , isValue = False
                         }
 
@@ -33779,7 +33779,7 @@ pub enum BasicsNever {}
 /// which can be implicitly cast to a shared one.
 /// However, rust sometimes gets confused that &mut != & and throws an error.
 /// Using `alloc_shared` already gives you a shared reference so it will always typecheck.
-pub fn alloc_shared<'a, A>(allocator: &'a bumpalo::Bump, to_allocate: A) -> &'a A {
+pub fn alloc_shared<A>(allocator: &bumpalo::Bump, to_allocate: A) -> &A {
     allocator.alloc(to_allocate)
 }
 pub fn alloc_dyn_fn<'a, In, Out>(
@@ -34044,9 +34044,8 @@ pub fn list_drop<'a, A: Clone>(skip_count: i64, list: ListList<'a, A>) -> ListLi
             ListList::Cons(_, tail) => {
                 let mut iterator: ListListRefIterator<A> = tail.iter();
                 for _ in 1..=((skip_count - 1_i64) as usize) {
-                    match iterator.next() {
-                        None => return ListList::Empty,
-                        Some(_) => {}
+                    if iterator.next().is_none() {
+                        return ListList::Empty;
                     }
                 }
                 iterator.remaining_list.clone()
@@ -34303,19 +34302,40 @@ pub fn list_map5<'a, A: Clone, B: Clone, C: Clone, D: Clone, E: Clone, Combined:
     )
 }
 
-pub type ArrayArray<A> = std::rc::Rc<Vec<A>>;
+pub type ArrayArray<'a, A> = &'a [A];
+pub fn vec_to_array<'a, A>(
+    allocator: &'a bumpalo::Bump,
+    vec: Vec<A, &'a bumpalo::Bump>,
+) -> &'a [A] {
+    allocator.alloc(vec)
+}
 
-pub fn array_empty<'a, A>() -> ArrayArray<A> {
-    std::rc::Rc::new(Vec::new())
+pub fn array_empty<'a, A>() -> ArrayArray<'a, A> {
+    &[]
 }
-pub fn array_singleton<'a, A>(only_element: A) -> ArrayArray<A> {
-    std::rc::Rc::new(vec![only_element])
+pub fn array_singleton<'a, A>(allocator: &'a bumpalo::Bump, only_element: A) -> ArrayArray<'a, A> {
+    let mut vec: Vec<A, &bumpalo::Bump> = Vec::new_in(allocator);
+    vec.push(only_element);
+    vec_to_array(allocator, vec)
 }
-pub fn array_repeat<'a, A: Clone>(length: i64, element: A) -> ArrayArray<A> {
-    std::rc::Rc::new(std::vec::from_elem(element, length as usize))
+pub fn array_repeat<A: Clone>(
+    allocator: &bumpalo::Bump,
+    length: i64,
+    element: A,
+) -> ArrayArray<'_, A> {
+    vec_to_array(
+        allocator,
+        std::vec::from_elem_in(element, length as usize, allocator),
+    )
 }
-pub fn array_initialize<'a, A>(length: i64, index_to_element: impl Fn(i64) -> A) -> ArrayArray<A> {
-    std::rc::Rc::new((0..length).map(index_to_element).collect::<Vec<A>>())
+pub fn array_initialize<'a, A>(
+    allocator: &'a bumpalo::Bump,
+    length: i64,
+    index_to_element: impl Fn(i64) -> A,
+) -> ArrayArray<'a, A> {
+    let mut vec = Vec::with_capacity_in(length as usize, allocator);
+    vec.extend((0..length).map(index_to_element));
+    vec_to_array(allocator, vec)
 }
 pub fn array_is_empty<A>(array: ArrayArray<A>) -> bool {
     array.is_empty()
@@ -34326,12 +34346,21 @@ pub fn array_length<A>(array: ArrayArray<A>) -> i64 {
 pub fn array_get<A: Clone>(index: i64, array: ArrayArray<A>) -> Option<A> {
     array.get(index as usize).cloned()
 }
-pub fn array_push<'a, A: Clone>(new_last_element: A, array: ArrayArray<A>) -> ArrayArray<A> {
-    let mut array_as_vec: Vec<A> = std::rc::Rc::unwrap_or_clone(array);
-    array_as_vec.push(new_last_element);
-    std::rc::Rc::new(array_as_vec)
+pub fn array_push<'a, A: Clone>(
+    allocator: &'a bumpalo::Bump,
+    new_last_element: A,
+    array: ArrayArray<A>,
+) -> ArrayArray<'a, A> {
+    let mut vec = array.to_vec_in(allocator);
+    vec.push(new_last_element);
+    vec_to_array(allocator, vec)
 }
-pub fn array_set<'a, A: Clone>(index: i64, new_element: A, array: ArrayArray<A>) -> ArrayArray<A> {
+pub fn array_set<'a, A: Clone>(
+    allocator: &'a bumpalo::Bump,
+    index: i64,
+    new_element: A,
+    array: ArrayArray<'a, A>,
+) -> ArrayArray<'a, A> {
     if index < 0_i64 {
         array
     } else {
@@ -34339,13 +34368,13 @@ pub fn array_set<'a, A: Clone>(index: i64, new_element: A, array: ArrayArray<A>)
         if index_usize > array.len() {
             array
         } else {
-            let mut array_as_vec: Vec<A> = std::rc::Rc::unwrap_or_clone(array);
-            if index_usize == array_as_vec.len() {
-                array_as_vec.push(new_element)
+            let mut array = array.to_vec_in(allocator);
+            if index_usize == array.len() {
+                array.push(new_element)
             } else {
-                array_as_vec[index as usize] = new_element;
+                array[index as usize] = new_element;
             }
-            std::rc::Rc::new(array_as_vec)
+            vec_to_array(allocator, array)
         }
     }
 }
@@ -34353,8 +34382,8 @@ pub fn array_set<'a, A: Clone>(index: i64, new_element: A, array: ArrayArray<A>)
 pub fn array_slice<'a, A: Clone>(
     start_inclusive_possibly_negative: i64,
     end_exclusive_possibly_negative: i64,
-    array: ArrayArray<A>,
-) -> ArrayArray<A> {
+    array: ArrayArray<'a, A>,
+) -> ArrayArray<'a, A> {
     let start_inclusive: usize =
         index_from_end_if_negative(start_inclusive_possibly_negative, array.len());
     let end_exclusive: usize =
@@ -34362,7 +34391,7 @@ pub fn array_slice<'a, A: Clone>(
     if end_exclusive <= start_inclusive {
         array_empty()
     } else {
-        std::rc::Rc::new(array[start_inclusive..end_exclusive].to_owned())
+        &array[start_inclusive..end_exclusive]
     }
 }
 /// For an index where -1 meaning one before the last element, 1 meaning one after the first element,
@@ -34374,133 +34403,106 @@ fn index_from_end_if_negative(index_possibly_negative: i64, full_length: usize) 
         ((full_length as i64 + index_possibly_negative).max(0_i64) as usize).min(full_length)
     }
 }
-pub fn array_from_list<'a, A: Clone>(list: ListList<A>) -> ArrayArray<A> {
-    std::rc::Rc::new(list.into_iter().collect::<Vec<A>>())
+pub fn array_from_list<'a, A: Clone>(
+    allocator: &'a bumpalo::Bump,
+    list: ListList<A>,
+) -> ArrayArray<'a, A> {
+    let mut vec = Vec::new_in(allocator);
+    vec.extend(list.into_iter());
+    vec_to_array(allocator, vec)
 }
 
-pub fn array_reverse<'a, A: Clone>(array: ArrayArray<A>) -> ArrayArray<A> {
-    let mut vec: Vec<A> = std::rc::Rc::unwrap_or_clone(array);
-    vec.reverse();
-    std::rc::Rc::new(vec)
+pub fn array_reverse<'a, A: Clone>(
+    allocator: &'a bumpalo::Bump,
+    array: ArrayArray<A>,
+) -> ArrayArray<'a, A> {
+    let mut array = array.to_vec_in(allocator);
+    array.reverse();
+    vec_to_array(allocator, array)
 }
-pub fn array_filter<'a, A: Clone>(keep: impl Fn(A) -> bool, array: ArrayArray<A>) -> ArrayArray<A> {
-    std::rc::Rc::new(match std::rc::Rc::try_unwrap(array) {
-        Result::Ok(mut array_owned) => {
-            array_owned.retain(|element| keep(element.clone()));
-            array_owned
-        }
-        Result::Err(array_shared) => array_shared
+pub fn array_filter<'a, A: Clone>(
+    allocator: &'a bumpalo::Bump,
+    keep: impl Fn(A) -> bool,
+    array: ArrayArray<A>,
+) -> ArrayArray<'a, A> {
+    let mut vec = Vec::with_capacity_in(array.len(), allocator);
+    vec.extend(
+        array
             .iter()
-            .cloned()
-            .filter(|element| keep(element.clone()))
-            .collect::<Vec<A>>(),
-    })
+            .filter(|&element| keep(element.clone()))
+            .cloned(),
+    );
+    vec_to_array(allocator, vec)
 }
 pub fn array_map<'a, A: Clone, B: Clone>(
+    allocator: &'a bumpalo::Bump,
     element_change: impl Fn(A) -> B,
     array: ArrayArray<A>,
-) -> ArrayArray<B> {
-    std::rc::Rc::new(match std::rc::Rc::try_unwrap(array) {
-        Result::Ok(array_owned) => array_owned
-            .into_iter()
-            .map(|element| element_change(element))
-            .collect::<Vec<B>>(),
-        Result::Err(array_shared) => array_shared
-            .iter()
-            .cloned()
-            .map(element_change)
-            .collect::<Vec<B>>(),
-    })
+) -> ArrayArray<'a, B> {
+    let mut vec = Vec::with_capacity_in(array.len(), allocator);
+    vec.extend(array.iter().map(|element| element_change(element.clone())));
+    vec_to_array(allocator, vec)
 }
-pub fn array_indexed_map<'a, A: Clone, B: Clone>(
+pub fn array_indexed_map<'a, A: Clone, B>(
+    allocator: &'a bumpalo::Bump,
     element_change: impl Fn(i64, A) -> B,
     array: ArrayArray<A>,
-) -> ArrayArray<B> {
-    std::rc::Rc::new(match std::rc::Rc::try_unwrap(array) {
-        Result::Ok(array_owned) => array_owned
-            .into_iter()
-            .enumerate()
-            .map(|(index, element)| element_change(index as i64, element))
-            .collect::<Vec<B>>(),
-        Result::Err(array_shared) => array_shared
+) -> ArrayArray<'a, B> {
+    let mut vec = Vec::with_capacity_in(array.len(), allocator);
+    vec.extend(
+        array
             .iter()
             .enumerate()
-            .map(|(index, element)| element_change(index as i64, element.clone()))
-            .collect::<Vec<B>>(),
-    })
+            .map(|(index, element)| element_change(index as i64, element.clone())),
+    );
+    vec_to_array(allocator, vec)
 }
 
 pub fn array_to_list<'a, A: Clone>(
     allocator: &'a bumpalo::Bump,
     array: ArrayArray<A>,
 ) -> ListList<'a, A> {
-    match std::rc::Rc::try_unwrap(array) {
-        Result::Ok(array_owned) => {
-            double_ended_iterator_to_list(allocator, array_owned.into_iter())
-        }
-        Result::Err(array_shared) => {
-            double_ended_iterator_to_list(allocator, array_shared.iter().cloned())
-        }
-    }
+    double_ended_iterator_to_list(allocator, array.iter().cloned())
 }
 pub fn array_to_indexed_list<'a, A: Clone>(
     allocator: &'a bumpalo::Bump,
     array: ArrayArray<A>,
 ) -> ListList<'a, (i64, A)> {
-    match std::rc::Rc::try_unwrap(array) {
-        Result::Ok(array_owned) => double_ended_iterator_to_list(
-            allocator,
-            array_owned
-                .into_iter()
-                .enumerate()
-                .map(|(index, element)| (index as i64, element)),
-        ),
-        Result::Err(array_shared) => double_ended_iterator_to_list(
-            allocator,
-            array_shared
-                .iter()
-                .enumerate()
-                .map(|(index, element)| (index as i64, element.clone())),
-        ),
-    }
-}
-pub fn array_foldl<'a, A: Clone, State>(
-    reduce: impl Fn(A, State) -> State,
-    initial_state: State,
-    array: ArrayArray<A>,
-) -> State {
-    match std::rc::Rc::try_unwrap(array) {
-        Result::Ok(array_owned) => array_owned
-            .into_iter()
-            .fold(initial_state, |state, element| reduce(element, state)),
-        Result::Err(array_shared) => array_shared.iter().fold(initial_state, |state, element| {
-            reduce(element.clone(), state)
-        }),
-    }
-}
-pub fn array_foldr<'a, A: Clone, State>(
-    reduce: impl Fn(A, State) -> State,
-    initial_state: State,
-    array: ArrayArray<A>,
-) -> State {
-    match std::rc::Rc::try_unwrap(array) {
-        Result::Ok(array_owned) => array_owned
-            .into_iter()
-            .rev()
-            .fold(initial_state, |state, element| reduce(element, state)),
-        Result::Err(array_shared) => array_shared
+    double_ended_iterator_to_list(
+        allocator,
+        array
             .iter()
-            .rev()
-            .fold(initial_state, |state, element| {
-                reduce(element.clone(), state)
-            }),
-    }
+            .enumerate()
+            .map(|(index, element)| (index as i64, element.clone())),
+    )
+}
+pub fn array_foldl<A: Clone, State>(
+    reduce: impl Fn(A, State) -> State,
+    initial_state: State,
+    array: ArrayArray<A>,
+) -> State {
+    array.iter().fold(initial_state, |state, element| {
+        reduce(element.clone(), state)
+    })
+}
+pub fn array_foldr<A: Clone, State>(
+    reduce: impl Fn(A, State) -> State,
+    initial_state: State,
+    array: ArrayArray<A>,
+) -> State {
+    array.iter().rev().fold(initial_state, |state, element| {
+        reduce(element.clone(), state)
+    })
 }
 
-pub fn array_append<'a, A: Clone>(left: ArrayArray<A>, right: ArrayArray<A>) -> ArrayArray<A> {
-    let mut left_as_vec: Vec<A> = std::rc::Rc::unwrap_or_clone(left);
-    left_as_vec.extend_from_slice(&right);
-    std::rc::Rc::new(left_as_vec)
+pub fn array_append<'a, A: Clone>(
+    allocator: &'a bumpalo::Bump,
+    left: ArrayArray<A>,
+    right: ArrayArray<A>,
+) -> ArrayArray<'a, A> {
+    let mut combined = left.to_vec_in(allocator);
+    combined.extend_from_slice(right);
+    vec_to_array(allocator, combined)
 }
 
 pub const fn char_is_upper(char: char) -> bool {
@@ -34651,9 +34653,7 @@ impl<'a> PartialEq for StringString<'a> {
 pub fn string_equals_str(string: StringString, other_str: &str) -> bool {
     match string {
         StringString::One(self_str) => self_str == other_str,
-        StringString::Append(self_append) => {
-            &string_rope_append_to_string(self_append) == other_str
-        }
+        StringString::Append(self_append) => string_rope_append_to_string(self_append) == other_str,
     }
 }
 pub fn string_rope_append_to_string(
@@ -34863,12 +34863,9 @@ pub fn string_uncons<'a>(
     string: StringString<'a>,
 ) -> Option<(char, StringString<'a>)> {
     let str: &str = rope_to_str(allocator, string);
-    match str.chars().next() {
-        Option::None => Option::None,
-        Option::Some(head_char) => {
-            Option::Some((head_char, str_to_rope(&str[char::len_utf8(head_char)..])))
-        }
-    }
+    str.chars()
+        .next()
+        .map(|head_char| (head_char, str_to_rope(&str[char::len_utf8(head_char)..])))
 }
 
 pub fn string_left<'a>(
@@ -34947,7 +34944,7 @@ pub fn string_slice<'a>(
 ) -> StringString<'a> {
     let str: &str = rope_to_str(allocator, string);
     let start_inclusive_or_none_if_too_big: Option<usize> =
-        str_index_normalize_from_end_if_negative(start_inclusive_possibly_negative, &str);
+        str_index_normalize_from_end_if_negative(start_inclusive_possibly_negative, str);
     match start_inclusive_or_none_if_too_big {
         Option::None => string_rope_empty,
         Option::Some(mut start_inclusive) => {
@@ -35049,11 +35046,11 @@ pub fn string_join<'a>(
         ListList::Cons(head_segment, tail_segments) => {
             let mut joined: StringString = head_segment;
             let in_between_borrowed: StringString = string_rope_flatten(allocator, in_between);
-            for segment in tail_segments.iter() {
+            for &segment in tail_segments.iter() {
                 joined = string_append(
                     allocator,
                     joined,
-                    StringString::Append(allocator.alloc((in_between_borrowed, segment.clone()))),
+                    StringString::Append(alloc_shared(allocator, (in_between_borrowed, segment))),
                 );
             }
             joined
@@ -35144,16 +35141,10 @@ pub fn string_ends_with(suffix_to_check_for: StringString, string: StringString)
     rope_to_cow_str(string).ends_with(rope_to_cow_str(suffix_to_check_for).as_ref())
 }
 pub fn string_to_float(string: StringString) -> Option<f64> {
-    match rope_to_cow_str(string).parse::<f64>() {
-        Result::Err(_) => Option::None,
-        Result::Ok(float) => Option::Some(float),
-    }
+    rope_to_cow_str(string).parse::<f64>().ok()
 }
 pub fn string_to_int(string: StringString) -> Option<i64> {
-    match rope_to_cow_str(string).parse::<i64>() {
-        Result::Err(_) => Option::None,
-        Result::Ok(int) => Option::Some(int),
-    }
+    rope_to_cow_str(string).parse::<i64>().ok()
 }
 pub fn string_to_upper<'a>(allocator: &'a bumpalo::Bump, string: StringString) -> StringString<'a> {
     string_to_rope(allocator, rope_to_cow_str(string).to_uppercase())
@@ -35235,7 +35226,7 @@ pub fn debug_to_string<'a, A: std::fmt::Debug>(
 ) -> StringString<'a> {
     string_to_rope(allocator, format!("{:?}", data))
 }
-pub fn debug_log<'a, A: std::fmt::Debug>(tag: StringString, data: A) -> A {
+pub fn debug_log<A: std::fmt::Debug>(tag: StringString, data: A) -> A {
     println!("{tag}: {:?}", data);
     data
 }
@@ -35353,9 +35344,14 @@ pub fn result_map5<A, B, C, D, E, Combined, X>(
 
 /// because types like elm Float can be used as dictionary keys
 /// while rust `f64` being `PartialOrd` for exampled can not
-#[derive(Copy, Clone, PartialEq, PartialOrd)]
+#[derive(Copy, Clone, PartialEq)]
 pub struct PretendNotPartial<A>(pub A);
 impl<A: PartialEq> Eq for PretendNotPartial<A> {}
+impl<A: PartialEq + PartialOrd> PartialOrd for PretendNotPartial<A> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
 impl<A: PartialEq + PartialOrd> Ord for PretendNotPartial<A> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.0
@@ -35874,7 +35870,7 @@ pub fn json_encode_encode_from<'a>(
                 Option::None => {
                     so_far.push_str("{}");
                 }
-                Option::Some((first_field_name, first_field_json)) => {
+                Option::Some((first_field_name, &first_field_json)) => {
                     let linebreak_indented: &str = if indent_size == 0 {
                         ""
                     } else {
@@ -35894,9 +35890,9 @@ pub fn json_encode_encode_from<'a>(
                         indent_size,
                         current_indent + 1,
                         so_far,
-                        first_field_json.clone(),
+                        first_field_json,
                     );
-                    for (field_name, field_value) in json_elements_iterator {
+                    for (field_name, &field_value) in json_elements_iterator {
                         so_far.push(',');
                         so_far.push_str(inner_linebreak_indented);
                         push_json_object_key(&mut so_far, field_name);
@@ -35905,7 +35901,7 @@ pub fn json_encode_encode_from<'a>(
                             indent_size,
                             current_indent + 1,
                             so_far,
-                            field_value.clone(),
+                            field_value,
                         );
                     }
                     so_far.push_str(linebreak_indented);
@@ -35920,7 +35916,7 @@ fn push_json_object_key(so_far: &mut String, field_name: &str) {
     push_json_string(so_far, field_name);
 }
 fn push_json_string(so_far: &mut String, str: &str) {
-    so_far.push_str("\\"");
+    so_far.push('"');
     // can be optimized
     for char in str.chars() {
         match char {
@@ -35933,13 +35929,13 @@ fn push_json_string(so_far: &mut String, str: &str) {
             '\\r' => so_far.push_str("\\\\r"),
             '\\t' => so_far.push_str("\\\\t"),
             unicode_char if char.is_control() => {
-                so_far.push_str("u");
+                so_far.push('u');
                 so_far.push_str(&format!("{:04x}", unicode_char as usize))
             }
             normal_char => so_far.push(normal_char),
         }
     }
-    so_far.push_str("\\"");
+    so_far.push('"');
 }
 
 pub fn json_encode_null<'a>() -> JsonValue<'a> {
@@ -35978,7 +35974,7 @@ pub fn json_encode_array<'a, A: Clone>(
     element_to_json: impl Fn(A) -> JsonValue<'a>,
     array: ArrayArray<A>,
 ) -> JsonValue<'a> {
-    JsonValue::Array(allocator.alloc(array_map(element_to_json, array)))
+    JsonValue::Array(allocator.alloc(array_map(allocator, element_to_json, array)))
 }
 pub fn json_encode_set<'a, A: Clone>(
     allocator: &'a bumpalo::Bump,
@@ -36006,9 +36002,7 @@ pub fn json_encode_object<'a>(
         allocator.alloc(
             entries
                 .into_iter()
-                .map(|(field_name, field_value)| {
-                    (rope_to_str(allocator, field_name), field_value.clone())
-                })
+                .map(|(field_name, field_value)| (rope_to_str(allocator, field_name), field_value))
                 .collect::<std::collections::BTreeMap<&str, JsonValue>>(),
         ),
     )
@@ -36058,11 +36052,11 @@ pub fn json_decode_error_to_string<'a>(
     error: JsonDecodeError<'a>,
 ) -> StringString<'a> {
     let mut builder = String::new();
-    json_decode_error_to_string_help(&error, String::new(), &mut builder, 0);
+    json_decode_error_to_string_help(error, String::new(), &mut builder, 0);
     string_to_rope(allocator, builder)
 }
-pub fn json_decode_error_to_string_help<'a>(
-    error: &JsonDecodeError,
+pub fn json_decode_error_to_string_help(
+    error: JsonDecodeError,
     mut context: String,
     so_far: &mut String,
     indent: usize,
@@ -36071,7 +36065,7 @@ pub fn json_decode_error_to_string_help<'a>(
     'the_loop: loop {
         match current_error {
             JsonDecodeError::Field(field_name, field_value_error) => {
-                let field_name: std::borrow::Cow<str> = rope_to_cow_str(*field_name);
+                let field_name: std::borrow::Cow<str> = rope_to_cow_str(field_name);
                 let field_description: String = match field_name.chars().next() {
                     Option::Some(field_name_first_char)
                         if field_name_first_char.is_alphanumeric() =>
@@ -36081,12 +36075,12 @@ pub fn json_decode_error_to_string_help<'a>(
                     _ => format!("[{field_name}]"),
                 };
                 context.push_str(&field_description);
-                current_error = field_value_error;
+                current_error = *field_value_error;
             }
             JsonDecodeError::Index(index, element_error) => {
-                let index_description: String = format!("[{}]", (*index as usize).to_string());
+                let index_description: String = format!("[{}]", index);
                 context.push_str(&index_description);
-                current_error = element_error;
+                current_error = *element_error;
             }
             JsonDecodeError::OneOf(errors) => match errors {
                 ListList::Empty => {
@@ -36115,12 +36109,12 @@ pub fn json_decode_error_to_string_help<'a>(
                     so_far.push_str(" ways=>");
                     so_far.push_str(linebreak_indented);
                     so_far.push_str(linebreak_indented);
-                    for (i, error) in errors.iter().enumerate() {
+                    for (i, error) in errors.iter().copied().enumerate() {
                         so_far.push_str(linebreak_indented);
                         so_far.push_str(linebreak_indented);
                         so_far.push_str(linebreak_indented);
                         so_far.push_str(linebreak_indented);
-                        so_far.push_str(&(i as usize + 1).to_string());
+                        so_far.push_str(&(i + 1).to_string());
                         so_far.push(' ');
                         json_decode_error_to_string_help(error, String::new(), so_far, indent + 4);
                     }
@@ -36141,15 +36135,10 @@ pub fn json_decode_error_to_string_help<'a>(
                     so_far.push_str(linebreak_indented);
                     so_far.push_str("    ");
                 };
-                so_far.push_str(&json_encode_encode_from(
-                    4,
-                    indent + 4,
-                    String::new(),
-                    json.clone(),
-                ));
+                so_far.push_str(&json_encode_encode_from(4, indent + 4, String::new(), json));
                 so_far.push_str(linebreak_indented);
                 so_far.push_str(linebreak_indented);
-                so_far.push_str(&rope_to_cow_str(*message));
+                so_far.push_str(&rope_to_cow_str(message));
                 break 'the_loop;
             }
         }
@@ -36182,7 +36171,7 @@ pub fn json_decode_fail<'a, A>(
 ) -> JsonDecodeDecoder<'a, A> {
     JsonDecodeDecoder {
         decode: allocator
-            .alloc(move |json| Result::Err(JsonDecodeError::Failure(error_message.clone(), json))),
+            .alloc(move |json| Result::Err(JsonDecodeError::Failure(error_message, json))),
     }
 }
 pub fn json_decode_lazy<'a, A>(
@@ -36210,8 +36199,7 @@ pub fn json_decode_map<'a, A, B>(
     decoder: JsonDecodeDecoder<'a, A>,
 ) -> JsonDecodeDecoder<'a, B> {
     JsonDecodeDecoder {
-        decode: allocator
-            .alloc(move |json| (decoder.decode)(json).map(|decoded| decoded_change(decoded))),
+        decode: allocator.alloc(move |json| (decoder.decode)(json).map(&decoded_change)),
     }
 }
 pub fn json_decode_map2<'a, A, B, Combined>(
@@ -36366,12 +36354,7 @@ pub fn json_decode_maybe<'a, A>(
     decoder: JsonDecodeDecoder<'a, A>,
 ) -> JsonDecodeDecoder<'a, Option<A>> {
     JsonDecodeDecoder {
-        decode: allocator.alloc(|json| {
-            Result::Ok(match (decoder.decode)(json) {
-                Result::Err(_) => Option::None,
-                Result::Ok(decoded) => Option::Some(decoded),
-            })
-        }),
+        decode: allocator.alloc(|json| Result::Ok((decoder.decode)(json).ok())),
     }
 }
 pub fn json_decode_one_of<'a, A>(
@@ -36508,11 +36491,12 @@ pub fn json_decode_index<'a, A>(
 pub fn json_decode_array<'a, A: Clone>(
     allocator: &'a bumpalo::Bump,
     element_decoder: JsonDecodeDecoder<'a, A>,
-) -> JsonDecodeDecoder<'a, ArrayArray<A>> {
+) -> JsonDecodeDecoder<'a, ArrayArray<'a, A>> {
     JsonDecodeDecoder {
-        decode: allocator.alloc(move |json| match json {
+        decode: alloc_dyn_fn(allocator, move |json| match json {
             JsonValue::Array(array_of_json_elements) => {
-                let mut decoded_array: Vec<A> = Vec::with_capacity(array_of_json_elements.len());
+                let mut decoded_array: Vec<A, &bumpalo::Bump> =
+                    Vec::with_capacity_in(array_of_json_elements.len(), allocator);
                 for (index, &value_json) in array_of_json_elements.iter().enumerate() {
                     match (element_decoder.decode)(value_json) {
                         Result::Err(value_error) => {
@@ -36524,7 +36508,7 @@ pub fn json_decode_array<'a, A: Clone>(
                         Result::Ok(decoded_value) => decoded_array.push(decoded_value),
                     }
                 }
-                Result::Ok(std::rc::Rc::new(decoded_array))
+                Result::Ok(vec_to_array(allocator, decoded_array))
             }
             json_not_array => Result::Err(JsonDecodeError::Failure(
                 StringString::One("Expecting an ARRAY"),
@@ -36650,7 +36634,7 @@ pub fn json_decode_field<'a, A>(
         decode: alloc_shared(allocator, move |json| match json {
             JsonValue::Object(decoded_object) => match decoded_object.get(field_name) {
                 Option::Some(&decoded_field_value) => {
-                    ((|json| (field_value_decoder.decode)(json))(decoded_field_value)).map_err({
+                    (field_value_decoder.decode)(decoded_field_value).map_err({
                         move |error| {
                             JsonDecodeError::Field(
                                 StringString::One(field_name),
@@ -37759,7 +37743,7 @@ pub fn time_to_adjusted_minutes_help(
             if era.start < posix_minutes {
                 posix_minutes + era.offset
             } else {
-                time_to_adjusted_minutes_help(default_offset, posix_minutes, older_eras.clone())
+                time_to_adjusted_minutes_help(default_offset, posix_minutes, *older_eras)
             }
         }
     }
@@ -37859,10 +37843,10 @@ pub fn elm_kernel_parser_is_sub_string(
             return (-1_i64, row as i64, col as i64);
         }
         if code == '\\n' {
-            row = row + 1;
+            row += 1;
             col = 1
         } else {
-            col = col + 1;
+            col += 1;
         }
     }
     (
@@ -37911,10 +37895,10 @@ pub fn elm_kernel_parser_chomp_base10(offset_original: i64, string: StringString
         match string_iterator_from_offset.next() {
             Option::None => break 'the_loop,
             Option::Some(char_at_offset) => {
-                if char_at_offset < '0' || char_at_offset > '9' {
+                if !char_at_offset.is_ascii_digit() {
                     break 'the_loop;
                 } else {
-                    offset = offset + char_at_offset.len_utf8()
+                    offset += char_at_offset.len_utf8()
                 }
             }
         }
@@ -37940,7 +37924,7 @@ pub fn elm_kernel_parser_consume_base(
                     break 'the_loop;
                 } else {
                     total = base * total + digit;
-                    offset = offset + char_at_offset.len_utf8()
+                    offset += char_at_offset.len_utf8()
                 }
             }
         }
@@ -37957,15 +37941,15 @@ pub fn elm_kernel_parser_consume_base16(offset_original: i64, string: StringStri
         match string_iterator_from_offset.next() {
             Option::None => break 'the_loop,
             Option::Some(char_at_offset) => {
-                if char_at_offset >= '0' && char_at_offset <= '9' {
+                if char_at_offset.is_ascii_digit() {
                     total = 16 * total + char_at_offset as usize - '0' as usize;
-                    offset = offset + char_at_offset.len_utf8();
-                } else if char_at_offset >= 'A' && char_at_offset <= 'F' {
+                    offset += char_at_offset.len_utf8();
+                } else if ('A'..='F').contains(&char_at_offset) {
                     total = 16 * total + 10 + char_at_offset as usize - ('A' as usize);
-                    offset = offset + char_at_offset.len_utf8();
-                } else if char_at_offset >= 'a' && char_at_offset <= 'f' {
+                    offset += char_at_offset.len_utf8();
+                } else if ('a'..='f').contains(&char_at_offset) {
                     total = 16 * total + 10 + char_at_offset as usize - ('a' as usize);
-                    offset = offset + char_at_offset.len_utf8();
+                    offset += char_at_offset.len_utf8();
                 } else {
                     break 'the_loop;
                 }
@@ -37995,9 +37979,9 @@ pub fn elm_kernel_parser_find_sub_string(
             for char in big_string_cow[offset_original..found_start_index_in_big_string].chars() {
                 if char == '\\n' {
                     col = 1;
-                    row = row + 1
+                    row += 1
                 } else {
-                    col = col + 1;
+                    col += 1;
                 }
             }
             (
@@ -38491,13 +38475,13 @@ pub fn virtual_dom_map<'a, Event: Clone, EventMapped>(
             tag: tag,
             namespace: namespace,
             subs: allocator.alloc(
-                subs.into_iter()
+                subs.iter()
                     .map(|sub| virtual_dom_map(allocator, event_change.clone(), sub.clone()))
                     .collect::<Vec<_>>(),
             ),
             modifiers: allocator.alloc(
                 modifiers
-                    .into_iter()
+                    .iter()
                     .map(|modifier| {
                         virtual_dom_map_attribute(allocator, event_change.clone(), modifier.clone())
                     })
@@ -38514,7 +38498,7 @@ pub fn virtual_dom_map<'a, Event: Clone, EventMapped>(
             namespace: namespace,
             subs: allocator
                 .alloc(
-                    subs.into_iter()
+                    subs.iter()
                         .map(|(key, sub)| {
                             (
                                 *key,
@@ -38526,7 +38510,7 @@ pub fn virtual_dom_map<'a, Event: Clone, EventMapped>(
                 .as_slice(),
             modifiers: allocator.alloc(
                 modifiers
-                    .into_iter()
+                    .iter()
                     .map(|modifier| {
                         virtual_dom_map_attribute(allocator, event_change.clone(), modifier.clone())
                     })
@@ -38740,13 +38724,12 @@ pub fn random_weighted<'a, A: Clone>(
     random_map(
         allocator,
         move |generated_float: f64| {
-            random_get_by_weight(allocator, first.clone(), others.clone(), generated_float)
+            random_get_by_weight(first.clone(), others.clone(), generated_float)
         },
         random_float(allocator, 0_f64, total),
     )
 }
 pub fn random_get_by_weight<A: Clone>(
-    allocator: &bumpalo::Bump,
     (weight, value): (f64, A),
     others: ListList<(f64, A)>,
     countdown: f64,
@@ -38757,12 +38740,7 @@ pub fn random_get_by_weight<A: Clone>(
             if countdown <= f64::abs(weight) {
                 value
             } else {
-                random_get_by_weight(
-                    allocator,
-                    second,
-                    other_others.clone(),
-                    countdown - f64::abs(weight),
-                )
+                random_get_by_weight(second, other_others.clone(), countdown - f64::abs(weight))
             }
         }
     }

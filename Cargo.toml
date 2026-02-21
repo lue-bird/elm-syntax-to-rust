@@ -2,4 +2,4 @@
 name = "default-declarations"
 edition = "2024"              # not lower
 [dependencies]
-bumpalo = "3.19.0"
+bumpalo = { version = "3.19.1", features = ["allocator_api"] }

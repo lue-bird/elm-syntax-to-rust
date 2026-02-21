@@ -1,4 +1,5 @@
 #![allow(non_shorthand_field_patterns)]
+#![feature(allocator_api)]
 mod elm;
 
 fn main() {
