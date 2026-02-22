@@ -102,7 +102,7 @@ In the transpiled code, you will find these types:
 - elm `Float`s will be of type `f64`. Create and match by appending `_f64` to any number literal or using `as f64`
 - elm `String`s (like `"a"`) will be of type `elm::StringString`.
   Create from literals or other string slices with (`elm::StringString::One("a")`). Match with `your_string if elm::string_equals_str(your_string, "some string")`
-- elm `Array a`s (like `Array.fromList [ 'a' ]`) will be of type `Vec<A>` (alias `elm::ArrayArray<A>`).
+- elm `Array a`s (like `Array.fromList [ 'a' ]`) will be of type `&[A]` (alias `elm::ArrayArray<A>`).
   Pass new values with e.g. `&vec!['a']`. To match, use e.g. `match array { [] => ..., [_, ..] => ... etc }`
 - elm records like `{ y : Float, x : Float }` will be of type `elm::GeneratedXY<f64, f64>` with the fields sorted and can be constructed and matched with `elm::GeneratedXY { x: _, y: _ }`. `record.x` access also works
 - a transpiled elm app does not run itself.
@@ -114,8 +114,8 @@ In the transpiled code, you will find these types:
 
 Most transpiled functions require a reference to an allocator to be passed as the first argument.
 When the called function or an indirectly called function then creates a new `List` for example, it will use the given allocator.
-[`bumpalo`](https://docs.rs/bumpalo/latest/bumpalo/index.html) specifically is required because rusts allocator APIs are not stabilized, yet.
-Also note that regular lifetime end + `Drop` stuff will still occur sometimes.
+[`bumpalo`](https://docs.rs/bumpalo/latest/bumpalo/index.html) specifically is required because rusts nightly allocator API does for example not yet include bump-allocated Strings.
+Also note that regular lifetime end memory freeing may still occur sometimes.
 
 So overall, if you intend to let the transpiled code handle a memory-hungry long-running computation, it might run out of memory.
 Use it for classic arena-friendly loop steps like state → interface, request → response etc.
